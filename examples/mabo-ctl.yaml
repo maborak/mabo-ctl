@@ -1,0 +1,180 @@
+# mabo-ctl.yaml — the service registry for one repository.
+#
+# Copy this file to the root of your repo and edit it. mabo-ctl finds it by
+# walking UP from the current directory, the same way git finds .git, so
+# `mabo-ctl status` works from any subdirectory. `mabo-ctl --config <path>` skips
+# discovery entirely.
+#
+# Everything here is validated when the file is LOADED, not when a service is
+# started: a missing directory, an empty command, an unknown dependency, a
+# dependency cycle, a duplicate name, a duplicate port or an unknown runtime is
+# an error before anything is spawned. All problems are reported at once.
+#
+# Runtime state lives in .dev/ next to this file (logs, pid files, resolved
+# ports). It is git-ignored and safe to delete; `mabo-ctl reset` deletes it.
+
+# ---------------------------------------------------------------------------
+# Top-level settings (both optional)
+# ---------------------------------------------------------------------------
+
+# How long `mabo-ctl stop` waits after SIGTERM before escalating to SIGKILL.
+# Signals go to the process GROUP, so the child that `npm run dev` spawns dies
+# with its parent instead of surviving and keeping the port bound.
+stop_grace: 10s
+
+# How long a readiness probe polls before a service is reported "slow".
+# "slow" is not "failed": the process is alive, it just is not answering yet.
+ready_timeout: 30s
+
+# ---------------------------------------------------------------------------
+# services — the registry. At least one is required.
+# ---------------------------------------------------------------------------
+#
+# Per-service fields:
+#
+#   name        REQUIRED. Must match ^[a-zA-Z0-9][a-zA-Z0-9_-]*$. This is a
+#               security rule, not a style rule: the name composes
+#               .dev/logs/<name>.log and .dev/pids/<name>.pid, so a "/" or ".."
+#               in it would write outside .dev/.
+#   dir         Working directory, relative to this file. Must exist, must be a
+#               directory, and must stay inside the repo root. Defaults to the
+#               directory containing mabo-ctl.yaml.
+#   port        1..65535, or omitted/0 for a service that listens on nothing.
+#   health      Readiness URL. Omit for no probe. The probe sends HEAD (falling
+#               back to GET on 405/501) and treats ANY response — including 4xx
+#               and 5xx — as "the server is answering". Point it at something
+#               cheap and small.
+#   cmd         REQUIRED. argv as a list, never a shell string: there is no
+#               shell, so no quoting rules and no word splitting.
+#   env         Extra environment for the child, merged over the caller's.
+#   runtime     Which interpreter to resolve cmd[0] against. One of:
+#                 ""  / system      look cmd[0] up on PATH
+#                 conda:<env>       <conda_base>/envs/<env>/bin/<cmd[0]>
+#                 node:<version>    $NVM_DIR/versions/node/v<version>/bin/<cmd[0]>
+#               An explicit runtime is why mabo-ctl does not care whether your
+#               shell was a login shell. A missing interpreter fails loudly,
+#               naming the exact path it looked for.
+#   autostart   Whether a bare `mabo-ctl start` includes this service. Defaults to true; every config written before the
+#               field existed keeps working. Set it to false for something
+#               expensive or occasional:
+#                 - naming it always starts it (`mabo-ctl start heavy`), and
+#                   so does `--all` and the web console's "Start all" — a
+#                   default is what this narrows, an instruction is not,
+#                 - it still starts as a DEPENDENCY of something that was
+#                   selected, because a service must not come up against a
+#                   dependency that is not there,
+#                 - and stop / status / logs / exec treat it like any
+#                   other service. It is opted out of starting, not hidden.
+#   depends_on  Services started first. Must name declared services; cycles are
+#               rejected at load time.
+#   color       Label colour in status output: red, green, yellow, blue,
+#               magenta, cyan, white.
+#
+# Templates. cmd, env values and health are expanded AFTER every port is
+# resolved, so a service can be told about another service's port:
+#
+#   {{.Port}}            this service's resolved port
+#   {{.Port "backend"}}  another service's resolved port
+#
+# Inside a [flow, list] the braces must be quoted, as below.
+#
+# Port precedence, highest first:
+#   1. --ports=A,B,C,D            (positional; an empty slot keeps the default)
+#   2. <NAME>_PORT in the caller's environment (captured AND unset, so a child
+#      never inherits a value the supervisor overrode)
+#   3. .dev/run.env               (persisted from the last run)
+#   4. the port declared here
+# When a persisted port overrides a changed default, mabo-ctl prints a line
+# saying so — stale state never wins silently.
+
+services:
+  - name: website
+    dir: website
+    port: 7100
+    health: http://localhost:{{.Port}}/robots.txt
+    runtime: node:24.4.1
+    cmd: [npm, run, dev, --, --port, "{{.Port}}"]
+    env:
+      PUBLIC_API_BASE: http://localhost:{{.Port "backend"}}
+    color: green
+
+  - name: frontend
+    dir: frontend
+    port: 7101
+    health: http://localhost:{{.Port}}/
+    runtime: node:24.4.1
+    cmd: [npm, run, dev, --, --port, "{{.Port}}"]
+    env:
+      VITE_API_BASE: http://localhost:{{.Port "backend"}}
+    color: cyan
+
+  - name: backend
+    dir: backend
+    port: 7102
+    health: http://localhost:{{.Port}}/health
+    runtime: conda:app-dev
+    cmd: [uvicorn, "api_main:app", --port, "{{.Port}}", --reload]
+    env:
+      LOG_LEVEL: info
+    color: blue
+
+  - name: browser
+    # The real directory, not the name of the service. A dir that does not
+    # exist is rejected at load time instead of failing later at spawn time.
+    dir: browser-service
+    port: 7103
+    health: http://localhost:{{.Port}}/health
+    runtime: conda:app-dev
+    cmd: [python, server.py, --port, "{{.Port}}"]
+    color: magenta
+
+  - name: worker
+    # No port and no health: a portless worker is "running" once it is alive.
+    # autostart: false would keep it out of a bare `mabo-ctl start` while leaving
+    # `mabo-ctl start worker` and `mabo-ctl logs worker` working exactly as now.
+    dir: backend
+    runtime: conda:app-dev
+    cmd: [python, cli.py, monitor, run]
+    depends_on: [backend]
+    env:
+      API_BASE: http://localhost:{{.Port "backend"}}
+    color: yellow
+
+# ---------------------------------------------------------------------------
+# checks — `mabo-ctl preflight`
+# ---------------------------------------------------------------------------
+#
+# Infrastructure the supervised stack needs before it can start. Each check
+# sets EXACTLY ONE of:
+#
+#   tcp:      host:port — reachable means the check passes
+#   command:  argv — exit status 0 means the check passes
+#
+# These probe services belonging to the supervised application. mabo-ctl itself
+# has no database and no queue.
+
+checks:
+  - name: postgres
+    tcp: localhost:5432
+
+  - name: redis
+    command: [redis-cli, -h, localhost, -p, "6379", ping]
+
+# ---------------------------------------------------------------------------
+# shells — `mabo-ctl shell <name>`
+# ---------------------------------------------------------------------------
+#
+# Named interactive commands. When `service` is set, the shell runs in that
+# service's directory with that service's resolved environment — the same
+# environment the service itself gets, which is what makes `mabo-ctl shell db`
+# correct rather than approximately correct. Omit `service` to run at the repo
+# root with the caller's environment.
+
+shells:
+  - name: repl
+    service: backend
+    command: [python]
+
+  - name: node
+    service: website
+    command: [node]

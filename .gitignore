@@ -1,0 +1,38 @@
+# mabo-ctl runtime state — logs, pid files, persisted ports. Safe to delete.
+.dev/
+
+# Go build output
+/mabo-ctl
+/devctl
+/dist/
+*.exe
+
+# Test / coverage artifacts
+coverage.out
+coverage.html
+
+# Scratch space
+/tmp/
+
+# Browser-automation captures: screenshots, page snapshots and console logs
+# written by the Playwright tooling while verifying `mabo-ctl serve`. Evidence for
+# one session, not source.
+/.playwright-mcp/
+
+# macOS
+.DS_Store
+
+# NOTE: .claude/ is deliberately NOT ignored. The agent tooling, discipline
+# files, hygiene baselines and session state are tracked on purpose.
+/graphify-out/
+
+# Agent tooling and internal working notes: kept locally, deliberately NOT
+# shipped in the public repository.
+/.claude/
+/CLAUDE.md
+/CLONE.md
+/docs/ROADMAP.md
+
+# Compiled binary under the new name too
+/mabo-ctl
+/devctl

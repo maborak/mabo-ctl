@@ -1,0 +1,22 @@
+version: 2
+updates:
+  # mabo-ctl ships as a single static binary and pins four direct dependencies.
+  # Weekly is often enough for a tree that small, and grouping keeps a bump
+  # from arriving as four separate PRs.
+  - package-ecosystem: gomod
+    directory: "/"
+    schedule:
+      interval: weekly
+    groups:
+      go-dependencies:
+        patterns: ["*"]
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: "chore(ci)"
