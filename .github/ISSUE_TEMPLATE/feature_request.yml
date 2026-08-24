@@ -1,0 +1,29 @@
+name: Feature request
+description: Suggest something mabo-ctl should do
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please check the **non-goals** in [AGENTS.md](https://github.com/maborak/mabo-ctl/blob/main/AGENTS.md)
+        first. mabo-ctl is deliberately not a production supervisor (no
+        restart-on-crash policy), not a container orchestrator, not a task
+        runner, and not cross-platform. Those are stated boundaries, not gaps —
+        a request to cross one needs to argue the boundary is wrong.
+
+        [`docs/ROADMAP.md`](https://github.com/maborak/mabo-ctl/blob/main/docs/ROADMAP.md) may already cover it.
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you unable to do today? Describe the situation, not the solution.
+    validations: {required: true}
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you would like mabo-ctl to do
+    validations: {required: true}
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you do instead today

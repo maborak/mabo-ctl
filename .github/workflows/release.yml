@@ -1,0 +1,65 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to build (must already exist)'
+        required: true
+
+permissions:
+  contents: write   # needed to create the release and upload binaries
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # The dispatch input is USED, not decoration: without it a manual run
+          # asked for a tag, ignored the answer, and built whatever the
+          # dispatched branch happened to be.
+          ref: ${{ inputs.tag || github.ref }}
+          fetch-depth: 0   # `make dist` stamps the version from git describe
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # The gate runs again here rather than trusting that CI passed on the
+      # commit: a tag can point at anything, including a commit CI never saw.
+      - name: verify
+        run: |
+          gofmt -l . | tee /tmp/fmt
+          test ! -s /tmp/fmt
+          go build ./...
+          go vet ./...
+          go test ./... -race -timeout 15m
+
+      # CGO_ENABLED=0 is what makes the promise on the tin true: a single
+      # static binary with no runtime dependencies, which runs on a distro
+      # whose libc is older than the builder's.
+      - name: cross-compile
+        run: make dist
+
+      - name: checksums
+        run: |
+          cd dist
+          sha256sum mabo-ctl-* > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: publish
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          # Likewise explicit: on a tag push GITHUB_REF is the tag, but on a
+          # manual dispatch it is a branch, and the action would have had no tag
+          # to attach the release to.
+          tag_name: ${{ inputs.tag || github.ref_name }}
+          files: |
+            dist/mabo-ctl-*
+            dist/SHA256SUMS
+          generate_release_notes: true
+          draft: false

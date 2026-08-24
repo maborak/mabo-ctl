@@ -1,0 +1,46 @@
+name: Bug report
+description: mabo-ctl did something other than what it says it does
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing: mabo-ctl runs the commands in your `mabo-ctl.yaml` by design.
+        "My service did not start" is usually a problem with that command, not
+        with mabo-ctl — check `.dev/logs/<service>.log` first.
+
+        For anything security-related, do **not** open an issue. See
+        [SECURITY.md](https://github.com/maborak/mabo-ctl/blob/main/SECURITY.md).
+  - type: input
+    id: version
+    attributes:
+      label: mabo-ctl version
+      description: output of `mabo-ctl --version`
+    validations: {required: true}
+  - type: dropdown
+    id: os
+    attributes:
+      label: OS
+      options: [macOS (Apple Silicon), macOS (Intel), Linux (x86_64), Linux (arm64), other]
+    validations: {required: true}
+  - type: textarea
+    id: config
+    attributes:
+      label: mabo-ctl.yaml
+      description: The smallest config that reproduces it. **Redact your own secrets.**
+      render: yaml
+    validations: {required: true}
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: |
+        Paste the command and its output. `mabo-ctl status --json` and
+        `mabo-ctl config` are both useful here — note that `config` redacts
+        credential-shaped values and `--raw` does not.
+    validations: {required: true}
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected instead
+    validations: {required: true}

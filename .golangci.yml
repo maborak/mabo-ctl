@@ -1,0 +1,50 @@
+# golangci-lint configuration for mabo-ctl.
+#
+# This file exists because `make lint` was documented long before it was ever
+# run: golangci-lint was not installed, so nothing enforced the rules AGENTS.md
+# lists. The first real run produced 23 findings, and all but a handful were one
+# shape — an unchecked error from writing to the terminal.
+#
+# The settings below are therefore not taste. Each one says which errors mabo-ctl
+# considers unactionable, so that the ones that remain are worth reading.
+version: "2"
+
+linters:
+  default: standard
+  enable:
+    # revive carries the exported-symbol doc-comment rule AGENTS.md requires.
+    - revive
+
+  settings:
+    errcheck:
+      # Writing to stdout/stderr. mabo-ctl's output IS these calls, so a failed
+      # write has nowhere left to be reported — the reporting channel is what
+      # just failed. Checking them would mean handling an error by trying the
+      # same broken writer again.
+      exclude-functions:
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+        - (*strings.Builder).WriteString
+        - (*strings.Builder).WriteByte
+        - (*strings.Builder).WriteRune
+
+    revive:
+      rules:
+        - name: exported
+          arguments:
+            - disableStutteringCheck
+
+  exclusions:
+    generated: lax
+    rules:
+      # Deferred Close on a handle a test opened for reading. The process is
+      # about to exit and the assertion has already run; a close error there
+      # reports nothing about the code under test.
+      - path: _test\.go
+        linters: [errcheck]
+        source: 'defer .*\.Close\(\)|^\s*(f|resp|post)\.(Body\.)?Close\(\)'
+
+formatters:
+  enable:
+    - gofmt

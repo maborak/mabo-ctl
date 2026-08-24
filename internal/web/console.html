@@ -1,0 +1,3507 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<meta name="color-scheme" content="light dark">
+<title>mabo-ctl console</title>
+<!-- An empty data: icon. The server serves one page and no /favicon.ico, so
+     without this every load logs a 404 in the browser console — noise that
+     buries the errors a developer opened the console to find. -->
+<link rel="icon" href="data:,">
+
+
+<!--
+  The session token. internal/web renders this page through html/template, so
+  {{.Token}} is filled in here; if the template ever fails to execute, the
+  server injects a second meta of the same name immediately after <head>, which
+  is why the script below scans every candidate and takes the first that is a
+  real 64-character hex token rather than trusting position.
+
+  It lives in a meta and NEVER in body text: the page shows an eight-character
+  prefix plus a copy button, so a screenshot or a shoulder-surf does not hand
+  over control of the stack.
+-->
+<meta name="mabo-ctl-token" content="{{.Token}}">
+
+<!--
+  Everything this page needs is in this file. No CDN, no web font, no remote
+  image, no analytics: mabo-ctl ships no telemetry and the console must not become
+  its first. The Content-Security-Policy the server sends (default-src 'none')
+  enforces that mechanically, so an accidental external reference would fail
+  loudly rather than quietly phone home.
+
+  The shape is master/detail, which is what the terminal UI already does and
+  what the whole tool is for: one compact row per service so a five-service
+  stack is legible without scrolling, and one detail pane — holding exactly one
+  live log stream — for whichever service you are looking at.
+-->
+<style>
+/* ---------------------------------------------------------------------------
+   Design tokens. Light is the base; the dark block below re-declares only the
+   colours, so there is exactly one place where a value can be forgotten.
+   --------------------------------------------------------------------------- */
+:root {
+  --bg:            #f1f4f7;
+  --surface:       #ffffff;
+  --surface-2:     #f0f2f5;
+  --surface-3:     #e5e9ee;
+  --log-bg:        #fbfcfd;
+  --border:        #dde2e8;
+  --border-strong: #c3cad3;
+  --text:          #12161b;
+  --text-dim:      #58626d;
+  --text-faint:    #838d99;
+  --accent:        #1f5fd0;
+  --accent-soft:   #e6eeff;
+  --focus:         #1f5fd0;
+  --sel-bg:        #e8effc;
+  --sel-edge:      #1f5fd0;
+  --shadow:        0 1px 2px rgba(16,22,30,.06), 0 4px 14px rgba(16,22,30,.05);
+
+  --ph-ready:       #12782f;
+  --ph-running:     #1f5fd0;
+  --ph-slow:        #9a5b00;
+  --ph-degraded:    #a04100;
+  --ph-stopped:     #6b7480;
+  --ph-failed:      #b3261e;
+  --ph-exited:      #8c3a9e;
+  --ph-unknown:     #6b7480;
+  --ph-ready-bg:    #e3f5e8;
+  --ph-running-bg:  #e6eeff;
+  --ph-slow-bg:     #fdf0dc;
+  --ph-degraded-bg: #fbe7da;
+  --ph-stopped-bg:  #eceff3;
+  --ph-failed-bg:   #fdeae8;
+  --ph-exited-bg:   #f6e9fb;
+  --ph-unknown-bg:  #eceff3;
+
+  --warn:          #9a5b00;
+  --warn-bg:       #fdf0dc;
+  --warn-border:   #e6c68a;
+  --danger:        #b3261e;
+  --danger-bg:     #fdeae8;
+  --danger-border: #eeaba5;
+  --ok:            #12782f;
+
+  /* Service accent palette, matching the colour names mabo-ctl.yaml accepts. */
+  --c-red:     #c4362c;  --c-green:   #1a7f3c;  --c-yellow:  #9a6b00;
+  --c-blue:    #2563c9;  --c-magenta: #a3369c;  --c-cyan:    #0f7c8a;
+  --c-gray:    #6b7480;  --c-white:   #4a5560;  --c-black:   #2b333c;
+
+  --fs-xs:   11px;
+  --fs-sm:   12px;
+  --fs-mono: 12.5px;
+  --fs-base: 13.5px;
+  --fs-md:   15px;
+  --fs-lg:   18px;
+  --fs-xl:   21px;
+
+  --sp-1: 4px;  --sp-2: 8px;  --sp-3: 12px;
+  --sp-4: 16px; --sp-5: 24px; --sp-6: 32px;
+
+  --r-sm: 4px; --r-md: 7px; --r-lg: 10px;
+
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue",
+          Arial, "Noto Sans", sans-serif;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas,
+          "Liberation Mono", "Courier New", monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg:            #0b0e12;
+    --surface:       #14181e;
+    --surface-2:     #1a1f27;
+    --surface-3:     #232a34;
+    --log-bg:        #0a0d11;
+    --border:        #262d37;
+    --border-strong: #3a444f;
+    --text:          #e4e9ef;
+    --text-dim:      #9ba5b1;
+    --text-faint:    #6d7683;
+    --accent:        #6ba4ff;
+    --accent-soft:   #16233a;
+    --focus:         #6ba4ff;
+    --sel-bg:        #182338;
+    --sel-edge:      #6ba4ff;
+    --shadow:        0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+
+    --ph-ready:       #58d07c;
+    --ph-running:     #6ba4ff;
+    --ph-slow:        #e5a53a;
+    --ph-degraded:    #f0a05a;
+    --ph-stopped:     #8e99a6;
+    --ph-failed:      #f2837a;
+    --ph-exited:      #cf9bea;
+    --ph-unknown:     #8e99a6;
+    --ph-ready-bg:    #0f2a19;
+    --ph-running-bg:  #14233c;
+    --ph-slow-bg:     #2e2109;
+    --ph-degraded-bg: #331d0c;
+    --ph-stopped-bg:  #1e242c;
+    --ph-failed-bg:   #331512;
+    --ph-exited-bg:   #241430;
+    --ph-unknown-bg:  #1e242c;
+
+    --warn:          #e5a53a;
+    --warn-bg:       #2a1e08;
+    --warn-border:   #5c4413;
+    --danger:        #f2837a;
+    --danger-bg:     #2d1310;
+    --danger-border: #632923;
+    --ok:            #58d07c;
+
+    --c-red:     #f2837a;  --c-green:   #58d07c;  --c-yellow:  #e5a53a;
+    --c-blue:    #6ba4ff;  --c-magenta: #dd8ad6;  --c-cyan:    #4fc7d8;
+    --c-gray:    #8e99a6;  --c-white:   #cbd3dc;  --c-black:   #7d8794;
+  }
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+/* Beats the display:grid / display:flex rules below, so hiding a row or a tile
+   works wherever it is used. */
+[hidden] { display: none !important; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: var(--fs-base);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+  border-radius: var(--r-sm);
+}
+
+.skip {
+  position: absolute; left: -9999px; top: 0; z-index: 100;
+  background: var(--surface); color: var(--text);
+  padding: var(--sp-2) var(--sp-3); border: 1px solid var(--border-strong);
+  border-radius: var(--r-md);
+}
+.skip:focus { left: var(--sp-3); top: var(--sp-3); }
+
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+
+/* --- header: identity row + summary row ---------------------------------- */
+
+.topbar {
+  flex: none;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  box-shadow: var(--shadow);
+  z-index: 20;
+}
+.bar {
+  display: flex; align-items: center; gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-4);
+  flex-wrap: wrap;
+}
+.bar + .bar { border-top: 1px solid var(--border); }
+
+.brand { display: flex; align-items: baseline; gap: var(--sp-2); flex: none; }
+.brand h1 {
+  margin: 0; font-size: var(--fs-md); font-weight: 650;
+  letter-spacing: -.015em; white-space: nowrap;
+}
+.brand .sub {
+  font-size: var(--fs-xs); color: var(--text-faint);
+  text-transform: uppercase; letter-spacing: .1em; font-weight: 700;
+}
+
+.where {
+  display: flex; gap: var(--sp-3); flex-wrap: nowrap;
+  font-size: var(--fs-sm); color: var(--text-dim);
+  min-width: 0; flex: 1 1 200px;
+}
+.where span {
+  font-family: var(--mono); min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* The bound address is short and is the one thing here that must never be
+   abbreviated: it is what the operator checks before trusting the page. */
+.where span.keep { flex: none; }
+.where b {
+  font-family: var(--font); font-weight: 700; color: var(--text-faint);
+  text-transform: uppercase; font-size: var(--fs-xs); letter-spacing: .07em;
+  margin-right: 3px;
+}
+
+.spacer { flex: 1 1 auto; min-width: 0; }
+
+.link-state {
+  display: inline-flex; align-items: center; gap: 6px; flex: none;
+  font-size: var(--fs-xs); font-weight: 700; white-space: nowrap;
+  letter-spacing: .04em; text-transform: uppercase;
+  padding: 3px 9px; border-radius: 999px;
+  border: 1px solid currentColor;
+}
+.link-state .dot {
+  width: 7px; height: 7px; border-radius: 50%; background: currentColor; flex: none;
+}
+.link-state.up   { color: var(--ok);     background: var(--ph-ready-bg); }
+.link-state.down { color: var(--danger); background: var(--danger-bg); }
+.link-state.wait { color: var(--warn);   background: var(--warn-bg); }
+
+/* The token is a credential. Eight characters is enough to tell two mabo-ctl
+   runs apart; the copy button hands over the whole thing on purpose. */
+.token {
+  display: inline-flex; align-items: center; gap: 6px; flex: none;
+  font-size: var(--fs-xs); color: var(--text-faint);
+  border: 1px solid var(--border); border-radius: 999px;
+  padding: 2px 3px 2px 9px; background: var(--surface-2);
+}
+.token .val { font-family: var(--mono); color: var(--text-dim); letter-spacing: .02em; }
+.token.missing { border-color: var(--danger-border); background: var(--danger-bg); }
+.token.missing .val { color: var(--danger); }
+
+/* --- summary tiles ------------------------------------------------------- */
+
+/* Shrinkable so the tiles wrap in a narrow window instead of widening the
+   page: a console that scrolls sideways to show its own summary is broken. */
+.tiles {
+  display: flex; align-items: stretch; gap: var(--sp-1);
+  flex-wrap: wrap; flex: 0 1 auto; min-width: 0;
+}
+
+.tile {
+  display: flex; align-items: baseline; gap: 6px;
+  padding: 3px 10px; border-radius: var(--r-md);
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  font: inherit; font-size: var(--fs-sm); color: var(--text-dim);
+  cursor: pointer; white-space: nowrap;
+}
+.tile .n {
+  font-family: var(--mono); font-size: var(--fs-md); font-weight: 700;
+  font-variant-numeric: tabular-nums; color: var(--text); line-height: 1.2;
+}
+.tile .g { font-family: var(--mono); font-size: var(--fs-xs); }
+.tile .w { letter-spacing: .03em; }
+.tile.zero { opacity: .5; }
+.tile[aria-pressed="true"] { border-color: currentColor; box-shadow: inset 0 0 0 1px currentColor; }
+.tile.t-ready    { color: var(--ph-ready);    background: var(--ph-ready-bg); }
+.tile.t-running  { color: var(--ph-running);  background: var(--ph-running-bg); }
+.tile.t-slow     { color: var(--ph-slow);     background: var(--ph-slow-bg); }
+.tile.t-degraded { color: var(--ph-degraded); background: var(--ph-degraded-bg); }
+.tile.t-stopped  { color: var(--ph-stopped);  background: var(--ph-stopped-bg); }
+.tile.t-failed   { color: var(--ph-failed);   background: var(--ph-failed-bg); }
+.tile.t-exited   { color: var(--ph-exited);   background: var(--ph-exited-bg); }
+.tile.t-unknown  { color: var(--ph-unknown);  background: var(--ph-unknown-bg); }
+.tile.t-ready .n, .tile.t-running .n, .tile.t-slow .n, .tile.t-degraded .n,
+.tile.t-stopped .n, .tile.t-failed .n, .tile.t-exited .n,
+.tile.t-unknown .n { color: currentColor; }
+
+.total {
+  display: inline-flex; align-items: baseline; gap: 5px; flex: none;
+  font-size: var(--fs-sm); color: var(--text-faint); padding-left: var(--sp-1);
+}
+.total b {
+  font-family: var(--mono); font-size: var(--fs-base); color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- buttons ------------------------------------------------------------- */
+
+button {
+  font: inherit; font-size: var(--fs-sm); font-weight: 600;
+  color: var(--text); background: var(--surface-2);
+  border: 1px solid var(--border-strong); border-radius: var(--r-md);
+  padding: 4px 10px; cursor: pointer;
+  transition: background .12s ease, border-color .12s ease, color .12s ease;
+  position: relative; overflow: hidden; white-space: nowrap;
+}
+button:hover:not(:disabled) { background: var(--surface-3); }
+button:active:not(:disabled) { transform: translateY(.5px); }
+button:disabled { opacity: .42; cursor: not-allowed; }
+
+button.primary { color: #fff; background: var(--accent); border-color: transparent; }
+@media (prefers-color-scheme: dark) { button.primary { color: #08111f; } }
+button.primary:hover:not(:disabled) { filter: brightness(1.08); }
+
+button.ghost {
+  background: transparent; border-color: var(--border); color: var(--text-dim);
+}
+button.ghost:hover:not(:disabled) { background: var(--surface-2); color: var(--text); }
+
+button.tiny { font-size: var(--fs-xs); padding: 2px 7px; }
+
+button.toggle[aria-pressed="true"] {
+  background: var(--accent-soft); border-color: var(--accent); color: var(--accent);
+}
+
+/* A button waiting on the server shows it, because a control that looks
+   clickable while an operation is in flight invites a double start. */
+button.busy::after {
+  content: ""; position: absolute; left: 0; bottom: 0; height: 2px; width: 40%;
+  background: var(--accent); animation: slide 1s linear infinite;
+}
+@keyframes slide {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(250%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  button.busy::after { animation: none; width: 100%; opacity: .5; }
+  button:active:not(:disabled) { transform: none; }
+}
+
+.bar-actions { display: flex; gap: var(--sp-2); flex: none; flex-wrap: wrap; }
+
+input[type="search"], input[type="text"] {
+  font: inherit; font-size: var(--fs-sm);
+  padding: 4px 9px; border-radius: var(--r-md);
+  border: 1px solid var(--border-strong);
+  background: var(--surface); color: var(--text);
+  min-width: 0; width: 100%;
+}
+input::placeholder { color: var(--text-faint); }
+
+/* --- banner + activity --------------------------------------------------- */
+
+.banner { flex: none; padding: var(--sp-2) var(--sp-4) 0; }
+.banner-in {
+  display: flex; align-items: flex-start; gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--danger-bg); border: 1px solid var(--danger-border);
+  border-left: 3px solid var(--danger);
+  border-radius: var(--r-md); color: var(--text);
+  font-size: var(--fs-sm);
+}
+.banner-in .glyph {
+  font-family: var(--mono); font-weight: 700; color: var(--danger);
+  font-size: var(--fs-md); line-height: 1.35; flex: none;
+}
+.banner-in strong { display: block; }
+.banner-in .why { color: var(--text-dim); }
+.banner[hidden] { display: none; }
+
+.activity-wrap { flex: none; position: relative; }
+.activity-wrap[hidden] { display: none; }
+.activity {
+  margin: 0; padding: var(--sp-2) var(--sp-6) var(--sp-2) var(--sp-4);
+  max-height: 92px; overflow: auto;
+  border-bottom: 1px solid var(--border); background: var(--surface);
+}
+.activity-clear {
+  position: absolute; top: 4px; right: var(--sp-3); z-index: 1;
+  padding: 0; width: 20px; height: 20px; line-height: 1;
+  font-family: var(--mono); font-size: var(--fs-sm);
+}
+.op-line {
+  font-family: var(--mono); font-size: var(--fs-mono);
+  color: var(--text-dim); overflow-wrap: anywhere; padding: 1px 0;
+}
+.op-line .who { color: var(--text); font-weight: 600; }
+.op-line.err { color: var(--danger); }
+.op-line.ok  { color: var(--ok); }
+
+/* --- layout -------------------------------------------------------------- */
+
+main {
+  flex: 1 1 auto; min-height: 0;
+  padding: var(--sp-3) var(--sp-4);
+  display: flex; flex-direction: column; gap: var(--sp-3);
+}
+
+.split {
+  flex: 1 1 auto; min-height: 0;
+  display: grid; gap: var(--sp-3);
+  grid-template-columns: 1fr;
+}
+
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow);
+  display: flex; flex-direction: column; min-height: 0; min-width: 0;
+  overflow: hidden;
+}
+
+.panel-head {
+  flex: none;
+  display: flex; align-items: center; gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+.panel-head h2 {
+  margin: 0; font-size: var(--fs-xs); font-weight: 700;
+  text-transform: uppercase; letter-spacing: .1em; color: var(--text-faint);
+  white-space: nowrap;
+}
+.filter-wrap { flex: 1 1 auto; min-width: 90px; max-width: 260px; }
+
+.hints {
+  flex: none; display: flex; gap: var(--sp-3); flex-wrap: wrap;
+  padding: var(--sp-2) var(--sp-3);
+  border-top: 1px solid var(--border);
+  font-size: var(--fs-xs); color: var(--text-faint);
+}
+.hints kbd {
+  font-family: var(--mono); font-size: 10.5px;
+  border: 1px solid var(--border-strong); border-bottom-width: 2px;
+  border-radius: var(--r-sm); padding: 0 4px; margin-right: 2px;
+  color: var(--text-dim); background: var(--surface-2);
+}
+
+/* --- no-script fallback --------------------------------------------------
+   The live console is driven entirely by fetch and EventSource, so with
+   scripting off it would render an empty page and look broken. This block is
+   rendered by the SERVER from the declared service names, so the page still
+   answers "which services are declared here?" with no script at all, and says
+   plainly which half of it is missing. */
+.noscript {
+  padding: var(--sp-3) var(--sp-4); margin-bottom: var(--sp-3);
+  background: var(--danger-bg); border: 1px solid var(--danger-border);
+  border-left: 3px solid var(--danger);
+  border-radius: var(--r-md); font-size: var(--fs-base);
+}
+.noscript strong { display: block; margin-bottom: var(--sp-2); }
+.noscript ul { margin: var(--sp-2) 0 0; padding-left: var(--sp-4); }
+.noscript li { font-family: var(--mono); font-size: var(--fs-sm); }
+
+/* --- service list -------------------------------------------------------- */
+
+.svc-list { flex: 1 1 auto; min-height: 0; overflow: auto; scrollbar-gutter: stable; }
+
+.row, .row-head {
+  display: grid;
+  grid-template-columns:
+    [phase] 74px [name] minmax(72px, 1fr) [port] 44px
+    [pid] 50px [up] 62px [hl] 52px [act] 82px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 var(--sp-2) 0 var(--sp-3);
+}
+
+.row-head {
+  position: sticky; top: 0; z-index: 2;
+  height: 24px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+  font-size: 10px; font-weight: 700; letter-spacing: .05em;
+  text-transform: uppercase; color: var(--text-faint);
+}
+.row-head .cell { overflow: hidden; text-overflow: ellipsis; font-family: var(--font); }
+
+.row {
+  min-height: 32px;
+  border-bottom: 1px solid var(--border);
+  border-left: 3px solid transparent;
+  padding-left: calc(var(--sp-3) - 3px);
+  cursor: default;
+}
+.row-head { padding-left: var(--sp-3); }
+.row:hover { background: var(--surface-2); }
+.row[aria-selected="true"] {
+  background: var(--sel-bg);
+  border-left-color: var(--sel-edge);
+}
+.row:focus { outline: none; }
+.row:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+
+/* The per-service accent, shared by the row and the detail pane so one
+   service reads as one colour in both halves of the page. */
+.row, .detail { --svc-accent: var(--c-gray); }
+.acc-red     { --svc-accent: var(--c-red); }
+.acc-green   { --svc-accent: var(--c-green); }
+.acc-yellow  { --svc-accent: var(--c-yellow); }
+.acc-blue    { --svc-accent: var(--c-blue); }
+.acc-magenta { --svc-accent: var(--c-magenta); }
+.acc-cyan    { --svc-accent: var(--c-cyan); }
+.acc-gray    { --svc-accent: var(--c-gray); }
+.acc-white   { --svc-accent: var(--c-white); }
+.acc-black   { --svc-accent: var(--c-black); }
+
+.cell {
+  min-width: 0; font-family: var(--mono); font-size: var(--fs-mono);
+  color: var(--text-dim); font-variant-numeric: tabular-nums;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.c-name {
+  color: var(--svc-accent); font-weight: 650; font-size: var(--fs-base);
+  letter-spacing: -.01em;
+}
+.c-port, .c-pid, .c-up { text-align: right; }
+.cell.dim { color: var(--text-faint); }
+
+/* Phase carries a glyph AND a word AND a colour. Never colour alone: the
+   glyph survives a colour-blind reader and the word survives everything. */
+.ph { display: inline-flex; align-items: center; gap: 5px; font-weight: 700; }
+.ph .g { font-family: var(--mono); font-size: 12px; line-height: 1; flex: none; }
+.ph .w { letter-spacing: .02em; font-size: var(--fs-sm); }
+.p-ready    { color: var(--ph-ready); }
+.p-running  { color: var(--ph-running); }
+.p-slow     { color: var(--ph-slow); }
+.p-degraded { color: var(--ph-degraded); }
+.p-stopped  { color: var(--ph-stopped); }
+.p-failed   { color: var(--ph-failed); }
+.p-exited   { color: var(--ph-exited); }
+.p-unknown  { color: var(--ph-unknown); }
+
+/* Readiness probe result, as a word or a code — never a bare colour. */
+.hl {
+  display: inline-block; min-width: 100%; text-align: center;
+  font-size: 10.5px; font-weight: 700; font-family: var(--mono);
+  padding: 1px 0; border-radius: var(--r-sm);
+  border: 1px solid currentColor;
+}
+.hl-ok   { color: var(--ok);         background: var(--ph-ready-bg); }
+.hl-bad  { color: var(--danger);     background: var(--danger-bg); }
+.hl-wait { color: var(--warn);       background: var(--warn-bg); }
+.hl-none { color: var(--text-faint); background: var(--surface-2); border-style: dashed; }
+
+.c-act {
+  display: flex; gap: 3px; justify-content: flex-end; overflow: visible;
+  opacity: 0; transition: opacity .1s ease;
+}
+.row:hover .c-act,
+.row:focus-within .c-act,
+.row[aria-selected="true"] .c-act { opacity: 1; }
+@media (hover: none) { .c-act { opacity: 1; } }
+
+.iconbtn {
+  font-family: var(--mono); font-size: 11px; font-weight: 700;
+  line-height: 1; padding: 0; width: 25px; height: 21px;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+
+.list-empty {
+  padding: var(--sp-5) var(--sp-4); text-align: center;
+  color: var(--text-faint); font-size: var(--fs-sm);
+}
+
+/* --- detail pane --------------------------------------------------------- */
+
+.detail-head {
+  flex: none;
+  display: flex; align-items: center; gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  border-bottom: 1px solid var(--border);
+  border-left: 3px solid var(--svc-accent, var(--c-gray));
+  flex-wrap: wrap;
+}
+.detail-head .svc-name {
+  margin: 0; font-size: var(--fs-md); font-weight: 650;
+  font-family: var(--mono); letter-spacing: -.01em;
+  color: var(--svc-accent, var(--text)); overflow-wrap: anywhere;
+}
+.detail-head .ph {
+  padding: 2px 9px; border-radius: 999px; border: 1px solid currentColor;
+}
+.detail-head .ph.p-ready    { background: var(--ph-ready-bg); }
+.detail-head .ph.p-running  { background: var(--ph-running-bg); }
+.detail-head .ph.p-slow     { background: var(--ph-slow-bg); }
+.detail-head .ph.p-degraded { background: var(--ph-degraded-bg); }
+.detail-head .ph.p-stopped  { background: var(--ph-stopped-bg); }
+.detail-head .ph.p-failed   { background: var(--ph-failed-bg); }
+.detail-head .ph.p-exited   { background: var(--ph-exited-bg); }
+.detail-head .ph.p-unknown  { background: var(--ph-unknown-bg); }
+
+.detail-scroll { flex: 0 1 auto; min-height: 0; overflow: auto; }
+
+.facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
+  gap: var(--sp-2) var(--sp-4);
+  padding: var(--sp-3);
+  border-bottom: 1px solid var(--border);
+  margin: 0;
+}
+.fact { min-width: 0; }
+/* A log path is 100 characters of absolute path. Given a column it wraps to
+   eight lines and pushes the log itself off the screen, so the long facts get
+   a full row and one line, with the whole value in the tooltip. */
+.fact.wide { grid-column: 1 / -1; min-width: 0; }
+.fact.wide dd {
+  display: flex; align-items: baseline; gap: 6px; min-width: 0;
+  white-space: nowrap; overflow-wrap: normal;
+}
+.fact.wide dd > .ell {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.fact dt {
+  font-size: 10px; font-weight: 700; letter-spacing: .09em;
+  text-transform: uppercase; color: var(--text-faint); margin: 0 0 1px;
+}
+.fact dd {
+  margin: 0; font-family: var(--mono); font-size: var(--fs-mono);
+  color: var(--text); overflow-wrap: anywhere;
+}
+.fact dd.dim { color: var(--text-faint); }
+.fact dd a { color: var(--accent); text-decoration: none; }
+.fact dd a:hover { text-decoration: underline; }
+
+.http-code {
+  display: inline-block; margin-left: 6px; padding: 0 5px;
+  border-radius: var(--r-sm); font-size: 10.5px; font-weight: 700;
+  border: 1px solid currentColor;
+}
+.http-2xx { color: var(--ok); background: var(--ph-ready-bg); }
+.http-bad { color: var(--danger); background: var(--danger-bg); }
+.http-non { color: var(--text-faint); background: var(--surface-2); }
+
+.cmd-wrap { padding: var(--sp-3); border-bottom: 1px solid var(--border); }
+.cmd-head { display: flex; align-items: center; gap: var(--sp-2); margin-bottom: var(--sp-2); }
+.cmd-head .lbl {
+  font-size: 10px; font-weight: 700; letter-spacing: .09em;
+  text-transform: uppercase; color: var(--text-faint);
+}
+.cmd-head .grow { flex: 1 1 auto; }
+.cmd {
+  display: block; margin: 0; padding: var(--sp-2) var(--sp-3);
+  background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  font-family: var(--mono); font-size: var(--fs-mono); line-height: 1.55;
+  white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text);
+  -webkit-user-select: all; user-select: all;
+}
+.cmd::before {
+  content: "$ "; color: var(--text-faint); -webkit-user-select: none; user-select: none;
+}
+
+details.argv { margin-top: var(--sp-2); }
+details.argv > summary {
+  cursor: pointer; font-size: var(--fs-sm); color: var(--text-dim);
+  list-style: none; display: inline-flex; align-items: center; gap: 6px;
+}
+details.argv > summary::-webkit-details-marker { display: none; }
+details.argv > summary::before { content: "\25B8"; font-family: var(--mono); }
+details.argv[open] > summary::before { content: "\25BE"; }
+ol.argv-list {
+  margin: var(--sp-2) 0 0; padding: 0 0 0 var(--sp-5);
+  font-family: var(--mono); font-size: var(--fs-mono); color: var(--text-dim);
+}
+ol.argv-list li { overflow-wrap: anywhere; padding: 1px 0; }
+ol.argv-list li code { color: var(--text); }
+
+.chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: var(--sp-2); }
+.chip {
+  font-family: var(--mono); font-size: var(--fs-xs);
+  padding: 2px 7px; border-radius: var(--r-sm);
+  background: var(--surface-2); border: 1px solid var(--border);
+  color: var(--text-dim); overflow-wrap: anywhere;
+}
+.chip b { color: var(--text); font-weight: 600; }
+.chip.redacted { border-style: dashed; border-color: var(--warn-border); color: var(--warn); }
+.chip.redacted b { color: var(--warn); }
+
+.alert {
+  margin-top: var(--sp-2); padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--r-md); font-size: var(--fs-sm);
+  border: 1px solid var(--danger-border); background: var(--danger-bg);
+  color: var(--text); overflow-wrap: anywhere;
+}
+.alert b { color: var(--danger); }
+
+/* A detail is one line for most phases and a whole log tail for a service that
+   died, so newlines are preserved and the block is capped and scrolls rather
+   than pushing the log pane off the bottom of the page. */
+.detail-line {
+  margin-top: var(--sp-2); padding: var(--sp-2) var(--sp-3);
+  border-left: 2px solid var(--border-strong); background: var(--surface-2);
+  border-radius: 0 var(--r-sm) var(--r-sm) 0;
+  font-family: var(--mono); font-size: var(--fs-mono); color: var(--text-dim);
+  overflow-wrap: anywhere; white-space: pre-wrap;
+  max-height: 14em; overflow-y: auto;
+}
+
+/* --- log pane ------------------------------------------------------------ */
+
+.log { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
+.log-bar {
+  flex: none;
+  display: flex; align-items: center; gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3); flex-wrap: wrap;
+  background: var(--surface-2); border-bottom: 1px solid var(--border);
+}
+.log-bar .lbl {
+  font-size: 10px; font-weight: 700; letter-spacing: .09em;
+  text-transform: uppercase; color: var(--text-faint);
+}
+.log-bar .log-filter { width: 150px; flex: 0 1 150px; }
+.stream-state {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 10.5px; font-weight: 700; letter-spacing: .04em;
+  padding: 2px 8px; border-radius: 999px; border: 1px solid currentColor;
+  white-space: nowrap;
+}
+.stream-state .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.stream-state.s-live { color: var(--ok);         background: var(--ph-ready-bg); }
+.stream-state.s-wait { color: var(--warn);       background: var(--warn-bg); }
+.stream-state.s-down { color: var(--danger);     background: var(--danger-bg); }
+.stream-state.s-off  { color: var(--text-faint); background: var(--surface-3); }
+
+.log-count { font-size: var(--fs-xs); color: var(--text-faint); font-family: var(--mono); }
+
+/* The scroller and the pinned control are siblings: a sticky button placed
+   inside the scroller sits at the TOP of the content and scrolls away, which
+   is the opposite of what "jump to latest" has to do. */
+.log-wrap { position: relative; flex: 1 1 auto; min-height: 0; }
+.log-body {
+  margin: 0; padding: var(--sp-2) 0;
+  background: var(--log-bg);
+  font-family: var(--mono); font-size: var(--fs-mono); line-height: 1.5;
+  height: 300px; overflow: auto; overflow-wrap: anywhere;
+}
+.log-line { padding: 0 var(--sp-3); white-space: pre-wrap; color: var(--text); }
+.log-line.meta { color: var(--text-faint); font-style: italic; }
+.log-line.err  { color: var(--danger); }
+.log-empty {
+  padding: var(--sp-4); color: var(--text-faint); text-align: center;
+  font-family: var(--font); font-size: var(--fs-sm); font-style: italic;
+}
+
+.jump {
+  position: absolute; right: var(--sp-3); bottom: var(--sp-3); z-index: 2;
+  box-shadow: var(--shadow);
+}
+.jump[hidden] { display: none; }
+
+.log-foot {
+  flex: none;
+  padding: 3px var(--sp-3);
+  border-top: 1px solid var(--border);
+  font-size: var(--fs-xs); color: var(--text-faint);
+  min-height: 20px;
+}
+
+/* --- empty / error states ------------------------------------------------ */
+
+.placeholder {
+  margin: auto; padding: var(--sp-6) var(--sp-4); text-align: center;
+  color: var(--text-dim);
+}
+.placeholder h3 { margin: 0 0 var(--sp-2); font-size: var(--fs-md); color: var(--text); }
+.placeholder p { margin: 0; font-size: var(--fs-sm); }
+
+/* --- footer -------------------------------------------------------------- */
+
+footer {
+  flex: none;
+  padding: var(--sp-3) var(--sp-4);
+  color: var(--text-faint); font-size: var(--fs-xs);
+  border-top: 1px solid var(--border);
+  display: flex; gap: var(--sp-4); flex-wrap: wrap;
+}
+footer p { margin: 0; max-width: 62ch; }
+footer code { font-family: var(--mono); color: var(--text-dim); }
+
+/* --- config view ----------------------------------------------------------
+   A SEPARATE view, not more rows in the service list. The master/detail layout
+   exists so a five-service stack fits on one screen, and "why is backend on
+   7999?" is a different question from "is backend up?" — answering both in one
+   list costs the answer to the second one. The Config button swaps the two
+   views; nothing about the default view moves.
+
+   .split and .panel both set a display, and an author `display` beats the user
+   agent's [hidden] rule, so hiding either one needs saying explicitly. This is
+   the same reason .banner[hidden] exists above. */
+.split[hidden], .panel[hidden] { display: none; }
+
+.config { flex: 1 1 auto; }
+.cfg-body { flex: 1 1 auto; min-height: 0; overflow: auto; }
+.cfg-body:focus { outline: none; }
+.cfg-note { font-family: var(--mono); font-size: var(--fs-xs); color: var(--text-faint); }
+
+.cfg-sec { padding: var(--sp-3); border-bottom: 1px solid var(--border); }
+
+/* Trusted origins. The list is short by nature — one tunnel, maybe two — so it
+   is a plain stack rather than a table. */
+.origins-list { list-style: none; margin: var(--sp-2) 0 0; padding: 0; }
+.origin-row {
+  display: flex; align-items: center; gap: var(--sp-2);
+  padding: 2px 0; font-family: var(--mono); font-size: 12px;
+}
+.origin-val { overflow-wrap: anywhere; }
+.origin-tag {
+  font-family: var(--font); font-size: 11px; color: var(--text-dim);
+  border: 1px solid var(--border); border-radius: 3px; padding: 0 4px;
+}
+.origins-add { display: flex; gap: var(--sp-2); margin-top: var(--sp-2); }
+.origins-add input {
+  flex: 1 1 auto; min-width: 0; font-family: var(--mono); font-size: 12px;
+  padding: 3px 6px; color: var(--text);
+  background: var(--bg); border: 1px solid var(--border); border-radius: 3px;
+}
+.origins-note { margin: var(--sp-2) 0 0; color: var(--text-dim); font-size: 11px; }
+.origins-msg { margin: var(--sp-2) 0 0; font-size: 12px; }
+.origins-msg.err { color: var(--danger); }
+.origins-msg.ok { color: var(--text-dim); }
+.cfg-sec:last-child { border-bottom: none; }
+.cfg-sec > h3 {
+  margin: 0 0 var(--sp-1); font-size: 10px; font-weight: 700;
+  letter-spacing: .09em; text-transform: uppercase; color: var(--text-faint);
+}
+.cfg-sec > p.why {
+  margin: 0 0 var(--sp-3); max-width: 82ch;
+  font-size: var(--fs-sm); color: var(--text-dim);
+}
+.cfg-sec > p.why code { font-family: var(--mono); color: var(--text); }
+.cfg-sec > .facts { padding: 0; border-bottom: none; }
+
+/* The ports table is the reason this panel exists: four precedence levels are
+   only legible side by side. It scrolls inside its own box rather than making
+   the page scroll sideways. */
+.tbl-wrap {
+  overflow-x: auto; border: 1px solid var(--border); border-radius: var(--r-md);
+}
+table.cfg-tbl { border-collapse: collapse; width: 100%; font-size: var(--fs-sm); }
+table.cfg-tbl th, table.cfg-tbl td {
+  text-align: left; white-space: nowrap;
+  padding: 6px var(--sp-3); border-bottom: 1px solid var(--border);
+}
+table.cfg-tbl thead th {
+  position: sticky; top: 0; background: var(--surface-2);
+  font-size: 10px; font-weight: 700; letter-spacing: .09em;
+  text-transform: uppercase; color: var(--text-faint);
+}
+table.cfg-tbl tbody tr:last-child td { border-bottom: none; }
+table.cfg-tbl tbody tr:hover { background: var(--surface-2); }
+/* The last column absorbs the slack, so the columns that carry the answer stay
+   next to each other instead of being spread across the width of the window. */
+table.cfg-tbl th:last-child, table.cfg-tbl td:last-child { width: 100%; }
+table.cfg-tbl td.num { text-align: right; font-family: var(--mono); }
+table.cfg-tbl td.mono { font-family: var(--mono); }
+table.cfg-tbl td.svc {
+  font-family: var(--mono); font-weight: 650;
+  color: var(--svc-accent, var(--text));
+}
+table.cfg-tbl td.dim { color: var(--text-faint); }
+
+/* Source badges. The word is always spelled out beside the colour, so the four
+   levels are distinguishable without seeing any of them; an unrecognised source
+   gets a dashed "unknown" rather than being drawn as a default it may not be. */
+.src {
+  display: inline-block; font-family: var(--mono); font-size: var(--fs-xs);
+  padding: 1px 7px; border-radius: 999px; border: 1px solid currentColor;
+}
+.src-flag    { color: var(--ph-running); background: var(--ph-running-bg); }
+.src-env     { color: var(--ph-exited);  background: var(--ph-exited-bg); }
+.src-runenv  { color: var(--ph-slow);    background: var(--ph-slow-bg); }
+.src-default { color: var(--text-dim);   background: var(--surface-2); }
+.src-unknown { color: var(--text-faint); background: var(--surface-2); border-style: dashed; }
+
+.override {
+  display: inline-block; margin-left: 6px; padding: 1px 7px;
+  border-radius: var(--r-sm); font-size: var(--fs-xs);
+  color: var(--warn); background: var(--warn-bg); border: 1px solid var(--warn-border);
+}
+
+.cfg-card {
+  margin-bottom: var(--sp-3); overflow: hidden;
+  border: 1px solid var(--border); border-radius: var(--r-md);
+  border-left: 3px solid var(--svc-accent, var(--c-gray));
+}
+.cfg-card:last-child { margin-bottom: 0; }
+.cfg-card > header {
+  display: flex; align-items: baseline; gap: var(--sp-2); flex-wrap: wrap;
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--surface-2); border-bottom: 1px solid var(--border);
+}
+.cfg-card > header h4 {
+  margin: 0; font-family: var(--mono); font-size: var(--fs-base);
+  font-weight: 650; color: var(--svc-accent, var(--text));
+  overflow-wrap: anywhere;
+}
+.cfg-card .facts { border-bottom: none; }
+.cfg-card .cmd-wrap { border-bottom: none; padding-top: 0; }
+
+/* --- wide windows: a fixed app shell, so the stack never scrolls away ---- */
+
+@media (min-width: 1080px) {
+  .split { grid-template-columns: minmax(0, 520px) minmax(0, 1fr); }
+}
+
+@media (min-width: 1080px) and (min-height: 620px) {
+  html, body { height: 100%; }
+  body { height: 100vh; overflow: hidden; }
+  .log-body { position: absolute; inset: 0; height: auto; }
+  /* The log is the thing being read, so the metadata above it may take at
+     most half the pane before it starts scrolling on its own. */
+  .log { min-height: 220px; }
+  .detail-scroll { max-height: 52%; }
+}
+
+@supports (height: 100dvh) {
+  @media (min-width: 1080px) and (min-height: 620px) {
+    body { height: 100dvh; }
+  }
+}
+
+/* --- narrow windows: master over detail, rows wrap to two lines ---------- */
+
+@media (max-width: 700px) {
+  .bar { padding: var(--sp-2) var(--sp-3); gap: var(--sp-2); }
+  main { padding: var(--sp-2); }
+  .banner { padding: var(--sp-2) var(--sp-3) 0; }
+  .activity { padding-left: var(--sp-3); padding-right: var(--sp-5); }
+  .where { flex-basis: 100%; }
+
+  .row-head { display: none; }
+  .row {
+    display: flex; flex-wrap: wrap; align-items: center;
+    gap: var(--sp-1) var(--sp-3);
+    padding: var(--sp-2) var(--sp-2) var(--sp-2) calc(var(--sp-2) - 3px);
+  }
+  .row .c-phase { flex: 0 0 auto; }
+  .row .c-name  { flex: 1 1 auto; }
+  .row .c-act   { flex: 0 0 auto; }
+  .row .c-port, .row .c-pid, .row .c-up, .row .c-hl {
+    text-align: left; flex: 0 0 auto; font-size: var(--fs-xs);
+  }
+  .row .c-hl .hl { min-width: 0; padding: 0 5px; }
+  .row .cell[data-label]::before {
+    content: attr(data-label) " ";
+    color: var(--text-faint); font-size: 10px; letter-spacing: .06em;
+    text-transform: uppercase;
+  }
+  .facts { grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); }
+  .log-bar .log-filter { flex: 1 1 100%; width: auto; }
+}
+</style>
+</head>
+<body>
+
+<a class="skip" href="#svc-list">Skip to the service list</a>
+
+<header class="topbar">
+  <div class="bar">
+    <div class="brand">
+      <h1>mabo-ctl</h1>
+      <span class="sub">console</span>
+    </div>
+    <div class="where">
+      <span class="keep" title="the address mabo-ctl serve is bound to"><b>bound</b>{{.Addr}}</span>
+      {{with .ConfigPath}}<span title="{{.}}"><b>config</b>{{.}}</span>{{end}}
+    </div>
+    <span id="link-state" class="link-state wait" role="status">
+      <span class="dot" aria-hidden="true"></span><span id="link-text">connecting</span>
+    </span>
+    <span class="token" id="token-chip" title="the per-run session token; every start, stop and restart carries it">
+      <b>token</b><span class="val" id="token-val">…</span>
+      <button type="button" class="ghost tiny" id="btn-copy-token">Copy</button>
+    </span>
+  </div>
+
+  <div class="bar">
+    <div class="tiles" id="tiles" role="group" aria-label="services by phase"></div>
+    <span class="total" id="total"><b id="total-n">0</b> services</span>
+    <div class="spacer"></div>
+    {{with .Root}}<div class="where"><span title="{{.}}"><b>root</b>{{.}}</span></div>{{end}}
+    <div class="bar-actions">
+      <button type="button" id="btn-config" class="ghost toggle" aria-pressed="false"
+              aria-controls="config-view"
+              title="Show the resolved configuration: which mabo-ctl.yaml was loaded, and where each port came from">Config</button>
+      <button type="button" id="btn-refresh" class="ghost" title="Fetch status now">Refresh</button>
+      <button type="button" id="btn-start-all" class="primary">Start all</button>
+      <button type="button" id="btn-stop-all">Stop all</button>
+    </div>
+  </div>
+</header>
+
+<div class="banner" id="banner" hidden>
+  <div class="banner-in" role="alert">
+    <span class="glyph" aria-hidden="true">!</span>
+    <div>
+      <strong id="banner-title">disconnected</strong>
+      <span class="why" id="banner-why"></span>
+    </div>
+  </div>
+</div>
+
+<div class="activity-wrap" id="activity-wrap" hidden>
+  <button type="button" class="ghost activity-clear" id="btn-clear-activity"
+          title="Dismiss these lines" aria-label="dismiss the operation log">&#215;</button>
+  <div class="activity" id="activity" aria-live="polite" aria-label="recent operations"></div>
+</div>
+
+<main>
+  <noscript>
+    <div class="noscript">
+      <strong>This console needs JavaScript for status, logs and controls.</strong>
+      Phases, live log streams and the start/stop buttons are all driven by
+      fetch and EventSource, so with scripting disabled none of them work. The
+      services declared in this <code>mabo-ctl.yaml</code> are listed below; use
+      <code>mabo-ctl status</code> and <code>mabo-ctl logs</code> in a terminal to
+      drive them.
+      <ul>
+        {{range .Services}}<li>{{.}}</li>{{end}}
+      </ul>
+    </div>
+  </noscript>
+
+  <div class="split" id="split">
+    <section class="panel master" aria-labelledby="services-heading">
+      <div class="panel-head">
+        <h2 id="services-heading">Services</h2>
+        <div class="filter-wrap">
+          <input type="search" id="filter" placeholder="filter by name  /"
+                 aria-label="filter services by name" autocomplete="off" spellcheck="false">
+        </div>
+      </div>
+
+      <div class="row-head" aria-hidden="true">
+        <span class="cell">phase</span>
+        <span class="cell">service</span>
+        <span class="cell c-port">port</span>
+        <span class="cell c-pid">pid</span>
+        <span class="cell c-up">uptime</span>
+        <span class="cell">probe</span>
+        <span class="cell"></span>
+      </div>
+
+      <div class="svc-list" id="svc-list" role="grid" aria-multiselectable="false"
+           aria-labelledby="services-heading" tabindex="-1"></div>
+
+      <div class="hints">
+        <span><kbd>j</kbd><kbd>k</kbd> select</span>
+        <span><kbd>s</kbd> start</span>
+        <span><kbd>x</kbd> stop</span>
+        <span><kbd>r</kbd> restart</span>
+        <span><kbd>/</kbd> filter</span>
+        <span><kbd>c</kbd> config</span>
+        <span id="sort-note">failed first</span>
+      </div>
+    </section>
+
+    <section class="panel detail" id="detail" aria-live="off" aria-label="selected service"></section>
+  </div>
+
+  <!-- The config view REPLACES the split rather than joining it. Keeping both
+       on screen would push the service list off it, and the whole point of the
+       master/detail layout is that every service fits on one screen. -->
+  <section class="panel config" id="config-view" aria-labelledby="config-heading" hidden>
+    <div class="panel-head">
+      <h2 id="config-heading">Configuration</h2>
+      <span class="cfg-note" id="cfg-note"></span>
+      <div class="spacer"></div>
+      <button type="button" class="ghost tiny" id="btn-config-reload"
+              title="Re-read /api/config">Reload</button>
+      <button type="button" class="ghost tiny" id="btn-config-close"
+              title="Back to the service list (Escape)">Close</button>
+    </div>
+    <div class="cfg-body" id="cfg-body" tabindex="-1"></div>
+  </section>
+</main>
+
+<footer>
+  <p>
+    This console can start and stop the commands declared in your
+    <code>mabo-ctl.yaml</code>. It is bound to a loopback address and every
+    mutation carries a per-session token that only this page has been shown.
+    Treat the URL mabo-ctl printed as a credential.
+  </p>
+  <p>
+    Environment values are redacted server-side by key and by shape; only the
+    variables declared in <code>mabo-ctl.yaml</code> are listed here, never the
+    environment mabo-ctl inherited.
+  </p>
+</footer>
+
+<script>
+(function () {
+  "use strict";
+
+  /* =======================================================================
+     Session token
+     ---------------------------------------------------------------------
+     The server guarantees the token is somewhere in this document but not
+     exactly where: html/template fills the meta above, and if that ever fails
+     the server injects its own meta plus a window global right after <head>.
+     So collect every candidate and take the first that actually looks like the
+     token, rather than trusting any single delivery route. A console whose
+     buttons all 403 because the two halves disagreed is the failure worth
+     guarding against.
+     ======================================================================= */
+
+  function isHexToken(s) {
+    if (typeof s !== "string" || s.length !== 64) { return false; }
+    for (var i = 0; i < s.length; i++) {
+      var c = s.charCodeAt(i);
+      if (!((c >= 48 && c <= 57) || (c >= 97 && c <= 102))) { return false; }
+    }
+    return true;
+  }
+
+  function readToken() {
+    var out = [];
+    var metas = document.querySelectorAll('meta[name="mabo-ctl-token"]');
+    for (var i = 0; i < metas.length; i++) { out.push(metas[i].getAttribute("content")); }
+    if (typeof window.maboCtlToken === "string") { out.push(window.maboCtlToken); }
+    try {
+      var q = new URLSearchParams(window.location.search).get("token");
+      if (q) { out.push(q); }
+    } catch (e) { /* URLSearchParams is old enough to assume, but never fatal */ }
+    for (var j = 0; j < out.length; j++) {
+      if (isHexToken(out[j])) { return out[j]; }
+    }
+    return "";
+  }
+
+  var TOKEN = readToken();
+
+  // The printed URL carries the token, which then sits in the address bar,
+  // in screenshots and in browser history. It is already held in memory and
+  // in the document, so drop it from the visible URL.
+  if (window.location.search) {
+    try { window.history.replaceState(null, "", window.location.pathname); } catch (e) {}
+  }
+
+  /* =======================================================================
+     Tunables
+     ======================================================================= */
+
+  var MAX_LINES        = 2000;   // ring buffer for the one open pane, DOM included
+  var POLL_VISIBLE_MS  = 2000;
+  var POLL_HIDDEN_MS   = 10000;  // a background tab must not hammer health probes
+  var STATUS_TIMEOUT   = 8000;
+  var MUTATE_TIMEOUT   = 300000;
+  var TAIL_ON_OPEN     = 300;
+  var FOLLOW_SLACK_PX  = 28;
+  var RECONNECT_MIN    = 2000;
+  var RECONNECT_MAX    = 30000;
+  var MAX_ACTIVITY     = 14;
+
+  var ACCENTS = {
+    red: 1, green: 1, yellow: 1, blue: 1, magenta: 1,
+    cyan: 1, gray: 1, grey: 1, white: 1, black: 1
+  };
+
+  // Mirrors internal/ui.PhaseLabel so the browser and the terminal name the
+  // same state the same way — same glyph, same word, for every phase in
+  // supervisor.Phases(). A Go test walks that list against this table, so a
+  // phase added on the server without a row here fails the build rather than
+  // reaching a reader as "?".
+  //
+  // `rank` is the sort order: whatever needs a human sorts to the top, so the
+  // one failed service in a five-service stack is never buried fourth. The
+  // three states that mean "go and look" — failed, exited, degraded — all sort
+  // above every healthy one, and above `slow`, which resolves on its own.
+  // `alive` is whether a PROCESS is there, which is the only question the
+  // action buttons need answered. It mirrors the supervisor exactly: slow and
+  // degraded are alive but not answering their probe, while failed and exited
+  // describe a process that is gone. Deriving it here rather than at each
+  // button is what stops the four render sites from drifting.
+  var PHASES = {
+    failed:   { glyph: "✕", word: "failed",   cls: "p-failed",   rank: 0, alive: false },
+    exited:   { glyph: "⊘", word: "exited",   cls: "p-exited",   rank: 1, alive: false },
+    degraded: { glyph: "⚠", word: "degraded", cls: "p-degraded", rank: 2, alive: true  },
+    slow:     { glyph: "◐", word: "slow",     cls: "p-slow",     rank: 3, alive: true  },
+    stopped:  { glyph: "○", word: "stopped",  cls: "p-stopped",  rank: 5, alive: false },
+    running:  { glyph: "◆", word: "running",  cls: "p-running",  rank: 6, alive: true  },
+    ready:    { glyph: "●", word: "ready",    cls: "p-ready",    rank: 7, alive: true  }
+  };
+  // An unknown phase is treated as NOT alive, so both buttons stay live and the
+  // operator can act. Guessing "alive" would grey out the stop button on the one
+  // state mabo-ctl could not describe.
+  var UNKNOWN = { glyph: "?", word: "unknown", cls: "p-unknown", rank: 4, alive: false };
+
+  // The order the summary tiles are shown in, most-alarming first.
+  var TILE_ORDER = ["failed", "exited", "degraded", "slow", "stopped", "running", "ready"];
+
+  var owns = Object.prototype.hasOwnProperty;
+
+  // Phase and colour arrive from the server as arbitrary strings, so lookups
+  // into these tables go through hasOwnProperty: "constructor" must resolve to
+  // the unknown phase, not to Object.prototype.
+  function phaseLabel(p) {
+    if (typeof p === "string" && owns.call(PHASES, p)) { return PHASES[p]; }
+    if (!p) { return UNKNOWN; }
+    return { glyph: "?", word: String(p), cls: "p-unknown", rank: UNKNOWN.rank };
+  }
+
+  /* =======================================================================
+     Small DOM helpers. Everything on this page is built with createElement and
+     textContent and never with innerHTML: log lines are arbitrary process
+     output and service metadata is arbitrary YAML, so there is exactly one
+     rule here and it is that untrusted text never becomes markup.
+     ======================================================================= */
+
+  function el(tag, cls, text) {
+    var n = document.createElement(tag);
+    if (cls) { n.className = cls; }
+    if (text !== undefined && text !== null) { n.textContent = String(text); }
+    return n;
+  }
+
+  function clear(node) { while (node.firstChild) { node.removeChild(node.firstChild); } }
+
+  function txt(s) { return document.createTextNode(s === undefined || s === null ? "" : String(s)); }
+
+  function fact(dl, label, valueNode, dim, wide) {
+    var wrap = el("div", "fact" + (wide ? " wide" : ""));
+    wrap.appendChild(el("dt", null, label));
+    var dd = el("dd", dim ? "dim" : null);
+    dd.appendChild(valueNode);
+    wrap.appendChild(dd);
+    dl.appendChild(wrap);
+    return dd;
+  }
+
+  // One line, ellipsised, with the whole value in the tooltip: an absolute log
+  // path is a hundred characters and must not be allowed to wrap the detail
+  // pane out of the window.
+  function ellipsised(text) {
+    var s = el("span", "ell", text);
+    s.title = text;
+    return s;
+  }
+
+  function setText(node, text, dim) {
+    clear(node);
+    node.appendChild(txt(text));
+    node.classList.toggle("dim", !!dim);
+  }
+
+  /* =======================================================================
+     Formatting
+     ======================================================================= */
+
+  function fmtDuration(ms) {
+    if (!isFinite(ms) || ms < 0) { return "–"; }
+    if (ms < 1000) { return Math.round(ms) + "ms"; }
+    var s = Math.floor(ms / 1000);
+    if (s < 60) { return (ms / 1000).toFixed(ms < 10000 ? 1 : 0) + "s"; }
+    var m = Math.floor(s / 60), rs = s % 60;
+    if (m < 60) { return m + "m" + pad2(rs) + "s"; }
+    var h = Math.floor(m / 60), rm = m % 60;
+    if (h < 24) { return h + "h" + pad2(rm) + "m"; }
+    return Math.floor(h / 24) + "d" + pad2(h % 24) + "h";
+  }
+
+  function pad2(n) { return n < 10 ? "0" + n : String(n); }
+
+  function clock(d) {
+    return pad2(d.getHours()) + ":" + pad2(d.getMinutes()) + ":" + pad2(d.getSeconds());
+  }
+
+  /* =======================================================================
+     API
+     ---------------------------------------------------------------------
+     Reads are plain GETs. Mutations are POSTs carrying X-Mabo-Ctl-Token, which
+     is the CSRF defence in full: a cross-origin page can make a browser POST,
+     but it cannot attach a custom header without a preflight this server never
+     answers, and it cannot read the token because it cannot read this page.
+     ======================================================================= */
+
+  function request(method, path, timeoutMs, body) {
+    var ctl = new AbortController();
+    var timer = setTimeout(function () { ctl.abort(); }, timeoutMs);
+    var headers = { "Accept": "application/json" };
+    if (method === "POST") {
+      if (!TOKEN) {
+        clearTimeout(timer);
+        return Promise.reject(new Error(
+          "this page carries no session token; reopen the URL mabo-ctl printed"));
+      }
+      headers["X-Mabo-Ctl-Token"] = TOKEN;
+    }
+    var init = {
+      method: method,
+      credentials: "same-origin",
+      cache: "no-store",
+      redirect: "error",
+      headers: headers,
+      signal: ctl.signal
+    };
+    if (body !== undefined && body !== null) {
+      headers["Content-Type"] = "application/json";
+      init.body = JSON.stringify(body);
+    }
+    return fetch(path, init).then(function (res) {
+      clearTimeout(timer);
+      return res.text().then(function (body) {
+        if (!res.ok) { throw new Error(explainHTTP(res.status, body)); }
+        try { return JSON.parse(body); }
+        catch (e) { throw new Error("malformed response from " + path); }
+      });
+    }, function (err) {
+      clearTimeout(timer);
+      if (err && err.name === "AbortError") {
+        throw new Error("request to " + path + " timed out");
+      }
+      throw new Error(err && err.message ? err.message : "network error");
+    });
+  }
+
+  // Errors arrive either as JSON from the API or as text/plain from
+  // http.Error; both are worth showing, neither is worth trusting as markup.
+  function explainHTTP(status, body) {
+    var msg = "";
+    try {
+      var j = JSON.parse(body);
+      if (j && typeof j.error === "string") {
+        msg = j.error;
+        if (j.valid && j.valid.length) { msg += " (declared: " + j.valid.join(", ") + ")"; }
+      }
+    } catch (e) { msg = String(body || "").trim(); }
+    if (msg.length > 400) { msg = msg.slice(0, 400) + "…"; }
+    if (!msg) { msg = "HTTP " + status; }
+    if (status === 403) { return "refused (403): " + msg; }
+    if (status === 429) { return "busy (429): " + msg; }
+    return "HTTP " + status + ": " + msg;
+  }
+
+  /* =======================================================================
+     Connection banner
+     ---------------------------------------------------------------------
+     A pane that has silently stopped updating is worse than one that says it
+     is broken, because the frozen one is believed. Every transport reports
+     into here and the banner shows the worst live problem.
+     ======================================================================= */
+
+  var health = { events: "connecting", poll: "ok", pollWhy: "", eventsWhy: "" };
+
+  var banner      = document.getElementById("banner");
+  var bannerTitle = document.getElementById("banner-title");
+  var bannerWhy   = document.getElementById("banner-why");
+  var linkState   = document.getElementById("link-state");
+  var linkText    = document.getElementById("link-text");
+
+  function paintHealth() {
+    var down = null;
+    if (health.events === "down" || health.events === "retrying") {
+      down = {
+        title: health.events === "retrying"
+          ? "disconnected — retrying"
+          : "disconnected — event stream closed",
+        why: health.eventsWhy ||
+          "the lifecycle event stream dropped; phases may be stale until it returns"
+      };
+    } else if (health.poll === "down") {
+      down = {
+        title: "status refresh failing — retrying",
+        why: health.pollWhy || "the console cannot reach mabo-ctl"
+      };
+    }
+
+    if (down) {
+      bannerTitle.textContent = down.title;
+      bannerWhy.textContent = down.why;
+      banner.hidden = false;
+    } else {
+      banner.hidden = true;
+    }
+
+    var cls = "link-state ", label = "";
+    if (health.events === "live" && health.poll === "ok") { cls += "up"; label = "live"; }
+    else if (health.events === "down") { cls += "down"; label = "disconnected"; }
+    else if (health.events === "retrying" || health.poll === "down") { cls += "wait"; label = "retrying"; }
+    else { cls += "wait"; label = "connecting"; }
+    linkState.className = cls;
+    linkText.textContent = label;
+  }
+
+  /* =======================================================================
+     State
+     ======================================================================= */
+
+  var services   = [];                  // /api/services, declaration order
+  var rows       = Object.create(null); // name -> Row
+  var statusOf   = Object.create(null); // name -> last status object
+  var uptime     = Object.create(null); // name -> { pid, since }
+  var selected   = "";                  // the one service the detail pane shows
+  var nameFilter = "";
+  var phaseFilter = "";
+  // Until the first status arrives every phase is unknown, so the opening
+  // selection is only a guess. It is corrected once — and only once — when the
+  // first real status lands; after that a refresh never moves the selection out
+  // from under the reader.
+  var autoSelect = true;
+  var busyGlobal = false;
+  var lastOrder  = "";
+
+  /* =======================================================================
+     Log pane
+     ---------------------------------------------------------------------
+     There is exactly ONE of these on the page and it belongs to the detail
+     pane, so exactly one EventSource is open at a time. bind() closes the
+     previous stream before it opens the next one: a leaked stream per click
+     would starve the status poll inside the browser's six-connection budget
+     and the console would look frozen for a reason no error could explain.
+
+     It holds its own ring buffer so pause, filter and clear all work against
+     the same data the stream produced, and batches DOM writes on an animation
+     frame so a service that dumps a thousand lines on start does not lock the
+     page up one appendChild at a time.
+     ======================================================================= */
+
+  function LogPane() {
+    var self = this;
+    this.name = "";
+    this.buf = [];            // { text, kind }
+    this.pending = [];
+    this.frame = 0;
+    this.paused = false;
+    this.pausedCount = 0;
+    this.follow = true;
+    this.filter = "";
+    this.es = null;
+    this.retryAt = RECONNECT_MIN;
+    this.retryTimer = 0;
+    this.wanted = false;      // a live stream is wanted for the current name
+    this.state = "off";
+
+    var root = el("section", "log");
+    root.setAttribute("aria-label", "log output");
+
+    var bar = el("div", "log-bar");
+    this.title = el("span", "lbl", "output");
+    bar.appendChild(this.title);
+
+    this.stateChip = el("span", "stream-state s-off");
+    var dot = el("span", "dot");
+    dot.setAttribute("aria-hidden", "true");
+    this.stateChip.appendChild(dot);
+    this.stateWord = el("span", null, "idle");
+    this.stateChip.appendChild(this.stateWord);
+    bar.appendChild(this.stateChip);
+
+    this.btnStream = el("button", "toggle", "Stream");
+    this.btnStream.type = "button";
+    this.btnStream.setAttribute("aria-pressed", "false");
+    this.btnStream.title = "Open or close the live log stream for the selected service";
+    this.btnStream.addEventListener("click", function () {
+      if (self.wanted) { self.close(""); } else if (self.name) { self.open(); }
+    });
+    bar.appendChild(this.btnStream);
+
+    this.btnPause = el("button", "toggle", "Pause");
+    this.btnPause.type = "button";
+    this.btnPause.setAttribute("aria-pressed", "false");
+    this.btnPause.title = "Stop drawing new lines; they keep arriving and appear on resume";
+    this.btnPause.addEventListener("click", function () { self.togglePause(); });
+    bar.appendChild(this.btnPause);
+
+    this.btnFollow = el("button", "toggle", "Follow tail");
+    this.btnFollow.type = "button";
+    this.btnFollow.setAttribute("aria-pressed", "true");
+    this.btnFollow.title = "Keep the newest line in view; scrolling up turns this off";
+    this.btnFollow.addEventListener("click", function () {
+      self.setFollow(!self.follow);
+      if (self.follow) { self.scrollToEnd(); }
+    });
+    bar.appendChild(this.btnFollow);
+
+    var btnClear = el("button", "ghost", "Clear");
+    btnClear.type = "button";
+    btnClear.title = "Discard the lines held in this pane";
+    btnClear.addEventListener("click", function () { self.clearBuffer(); });
+    bar.appendChild(btnClear);
+
+    this.filterBox = document.createElement("input");
+    this.filterBox.type = "search";
+    this.filterBox.className = "log-filter";
+    this.filterBox.placeholder = "filter lines…";
+    this.filterBox.setAttribute("aria-label", "filter log lines");
+    this.filterBox.autocomplete = "off";
+    var debounce = 0;
+    this.filterBox.addEventListener("input", function () {
+      clearTimeout(debounce);
+      debounce = setTimeout(function () {
+        self.filter = self.filterBox.value.toLowerCase();
+        self.rebuild();
+      }, 120);
+    });
+    bar.appendChild(this.filterBox);
+
+    this.count = el("span", "log-count", "0 lines");
+    bar.appendChild(this.count);
+
+    root.appendChild(bar);
+
+    this.body = el("div", "log-body");
+    this.body.setAttribute("role", "log");
+    // Deliberately not a live region: a screen reader announcing every line of
+    // a build log would make the rest of the page unusable.
+    this.body.setAttribute("aria-live", "off");
+    this.body.tabIndex = 0;
+
+    this.empty = el("div", "log-empty", "No output yet.");
+    this.body.appendChild(this.empty);
+
+    this.jump = el("button", "jump primary", "Jump to latest");
+    this.jump.type = "button";
+    this.jump.hidden = true;
+    this.jump.addEventListener("click", function () {
+      self.setFollow(true);
+      self.scrollToEnd();
+    });
+
+    // Follow-tail disengages the moment the reader scrolls UP, and re-engages
+    // when they come back to the bottom. Anything else fights the user for
+    // control of the scrollbar.
+    //
+    // Only an upward move counts, because the browser also fires scroll when
+    // the pane is merely resized — which happens as soon as the detail pane
+    // lays out — and treating that as "the user scrolled away" left the pane
+    // pinned half-way up a live log with the reader wondering why it had
+    // stopped moving.
+    this.lastTop = 0;
+    this.body.addEventListener("scroll", function () {
+      var top = self.body.scrollTop;
+      var atEnd = self.body.scrollHeight - top - self.body.clientHeight <= FOLLOW_SLACK_PX;
+      if (atEnd) {
+        if (!self.follow) { self.setFollow(true); }
+      } else if (self.follow && top < self.lastTop - 1) {
+        self.setFollow(false);
+      }
+      self.lastTop = top;
+    }, { passive: true });
+
+    // A pane that is following must stay pinned when it changes size, which a
+    // scroll event alone does not guarantee.
+    if (window.ResizeObserver) {
+      new ResizeObserver(function () {
+        if (self.follow) { self.scrollToEnd(); }
+      }).observe(this.body);
+    }
+
+    var wrap = el("div", "log-wrap");
+    wrap.appendChild(this.body);
+    wrap.appendChild(this.jump);
+    root.appendChild(wrap);
+
+    var foot = el("div", "log-foot");
+    this.footNote = el("span", null, "");
+    foot.appendChild(this.footNote);
+    root.appendChild(foot);
+
+    this.root = root;
+  }
+
+  // bind points the one pane at a different service. Closing the old transport
+  // FIRST is the whole point of this method.
+  LogPane.prototype.bind = function (name) {
+    this.stop();
+    this.name = name;
+    this.buf = [];
+    this.pending = [];
+    this.pausedCount = 0;
+    this.retryAt = RECONNECT_MIN;
+    this.title.textContent = "output · " + name;
+    this.root.setAttribute("aria-label", "log output for " + name);
+    this.filterBox.setAttribute("aria-label", "filter " + name + " log lines");
+    this.setFollow(true);
+    this.rebuild();
+    this.open();
+  };
+
+  LogPane.prototype.setFollow = function (on) {
+    this.follow = on;
+    this.btnFollow.setAttribute("aria-pressed", on ? "true" : "false");
+    this.jump.hidden = on;
+  };
+
+  LogPane.prototype.togglePause = function () {
+    this.paused = !this.paused;
+    this.btnPause.setAttribute("aria-pressed", this.paused ? "true" : "false");
+    this.btnPause.textContent = this.paused ? "Resume" : "Pause";
+    if (!this.paused) {
+      this.pausedCount = 0;
+      this.rebuild();
+    }
+    this.paintCount();
+  };
+
+  LogPane.prototype.push = function (text, kind) {
+    this.buf.push({ text: text, kind: kind || "" });
+    if (this.buf.length > MAX_LINES) { this.buf.splice(0, this.buf.length - MAX_LINES); }
+    if (this.paused) {
+      this.pausedCount++;
+      this.paintCount();
+      return;
+    }
+    this.pending.push(this.buf[this.buf.length - 1]);
+    this.schedule();
+  };
+
+  LogPane.prototype.schedule = function () {
+    if (this.frame) { return; }
+    var self = this;
+    this.frame = requestAnimationFrame(function () {
+      self.frame = 0;
+      self.flush();
+    });
+  };
+
+  LogPane.prototype.matches = function (rec) {
+    return !this.filter || rec.text.toLowerCase().indexOf(this.filter) >= 0;
+  };
+
+  LogPane.prototype.flush = function () {
+    var batch = this.pending;
+    this.pending = [];
+    if (!batch.length) { return; }
+
+    var frag = document.createDocumentFragment(), drew = 0;
+    for (var i = 0; i < batch.length; i++) {
+      if (!this.matches(batch[i])) { continue; }
+      frag.appendChild(el("div", "log-line" + (batch[i].kind ? " " + batch[i].kind : ""), batch[i].text));
+      drew++;
+    }
+    if (drew) {
+      this.empty.hidden = true;
+      this.body.appendChild(frag);
+      this.trimDOM();
+    }
+    this.paintCount();
+    if (this.follow) { this.scrollToEnd(); }
+  };
+
+  LogPane.prototype.trimDOM = function () {
+    var lines = this.body.getElementsByClassName("log-line");
+    while (lines.length > MAX_LINES) { this.body.removeChild(lines[0]); }
+  };
+
+  LogPane.prototype.rebuild = function () {
+    var lines = this.body.getElementsByClassName("log-line");
+    while (lines.length) { this.body.removeChild(lines[0]); }
+
+    var frag = document.createDocumentFragment(), drew = 0;
+    for (var i = 0; i < this.buf.length; i++) {
+      if (!this.matches(this.buf[i])) { continue; }
+      frag.appendChild(el("div", "log-line" + (this.buf[i].kind ? " " + this.buf[i].kind : ""), this.buf[i].text));
+      drew++;
+    }
+    this.body.appendChild(frag);
+    this.empty.hidden = drew > 0;
+    if (!drew) {
+      this.empty.textContent = this.buf.length
+        ? "No line matches this filter (" + this.buf.length + " held)."
+        : "No output yet.";
+    }
+    this.paintCount();
+    if (this.follow) { this.scrollToEnd(); }
+  };
+
+  LogPane.prototype.clearBuffer = function () {
+    this.buf = [];
+    this.pending = [];
+    this.pausedCount = 0;
+    this.rebuild();
+  };
+
+  LogPane.prototype.scrollToEnd = function () { this.body.scrollTop = this.body.scrollHeight; };
+
+  LogPane.prototype.paintCount = function () {
+    var shown = this.body.getElementsByClassName("log-line").length;
+    var s = this.buf.length + (this.buf.length === 1 ? " line" : " lines");
+    if (this.filter) { s = shown + " of " + s; }
+    if (this.paused && this.pausedCount) { s += " · " + this.pausedCount + " held"; }
+    if (this.buf.length >= MAX_LINES) { s += " · oldest dropped"; }
+    this.count.textContent = s;
+  };
+
+  LogPane.prototype.setState = function (state, note) {
+    this.state = state;
+    var map = {
+      live:       ["s-live", "live"],
+      connecting: ["s-wait", "connecting"],
+      retrying:   ["s-wait", "reconnecting"],
+      down:       ["s-down", "disconnected"],
+      ended:      ["s-off", "ended"],
+      off:        ["s-off", "idle"]
+    };
+    var m = owns.call(map, state) ? map[state] : map.off;
+    this.stateChip.className = "stream-state " + m[0];
+    this.stateWord.textContent = m[1];
+    this.footNote.textContent = note || "";
+    this.btnStream.setAttribute("aria-pressed", this.wanted ? "true" : "false");
+    this.btnStream.textContent = this.wanted ? "Stop stream" : "Stream";
+  };
+
+  /* -----------------------------------------------------------------------
+     The stream itself. EventSource reconnects on its own after a dropped
+     connection, so an "end" event is explicitly closed here first: otherwise a
+     service with no log file yet would spin at the browser's retry interval
+     forever. Everything else goes through a backoff we control.
+     ----------------------------------------------------------------------- */
+
+  LogPane.prototype.open = function () {
+    var self = this;
+    this.stop();
+    if (!this.name) { return; }
+    this.wanted = true;
+    this.setState("connecting", "");
+
+    var want = this.name;
+    var url = "/api/stream/" + encodeURIComponent(want) + "?tail=" + TAIL_ON_OPEN;
+    var es;
+    try { es = new EventSource(url); }
+    catch (e) {
+      this.setState("down", "cannot open a stream in this browser");
+      return;
+    }
+    this.es = es;
+
+    es.onopen = function () {
+      self.retryAt = RECONNECT_MIN;
+      self.setState("live", "");
+    };
+
+    es.onmessage = function (ev) {
+      // A frame that arrives for a service the pane has since moved off is
+      // dropped rather than mixed into another service's output.
+      if (self.name !== want) { return; }
+      var d;
+      try { d = JSON.parse(ev.data); } catch (e) { return; }
+      if (d.end) {
+        self.stop();
+        self.push("— stream ended" + (d.error ? ": " + d.error : ""), d.error ? "err" : "meta");
+        self.wanted = true;              // still wanted; just not currently open
+        self.scheduleRetry(d.error ? "the log tail reported an error" : "the log tail finished");
+        return;
+      }
+      if (typeof d.line === "string") {
+        self.retryAt = RECONNECT_MIN;
+        if (self.state !== "live") { self.setState("live", ""); }
+        self.push(d.line, "");
+      }
+    };
+
+    es.onerror = function () {
+      if (!self.es || self.name !== want) { return; }
+      if (self.es.readyState === 2) {
+        // CLOSED: the browser gave up, which is what a 403 or a 404 looks like
+        // from here. Retry on our own schedule so the state is never a lie.
+        self.stop();
+        self.wanted = true;
+        self.scheduleRetry("the stream was refused or closed by the server");
+      } else {
+        self.setState("retrying", "the connection dropped; the browser is reconnecting");
+      }
+    };
+  };
+
+  LogPane.prototype.scheduleRetry = function (why) {
+    var self = this;
+    var want = this.name;
+    clearTimeout(this.retryTimer);
+    var wait = this.retryAt;
+    this.retryAt = Math.min(this.retryAt * 2, RECONNECT_MAX);
+    this.setState("retrying", why + " — retrying in " + Math.round(wait / 1000) + "s");
+    this.retryTimer = setTimeout(function () {
+      if (self.wanted && self.name === want) { self.open(); }
+    }, wait);
+  };
+
+  // stop closes the transport but leaves `wanted` alone, so a retry path can
+  // reuse it. close() is the user-facing "stop streaming".
+  LogPane.prototype.stop = function () {
+    clearTimeout(this.retryTimer);
+    this.retryTimer = 0;
+    if (this.es) {
+      this.es.onopen = this.es.onmessage = this.es.onerror = null;
+      this.es.close();
+      this.es = null;
+    }
+  };
+
+  LogPane.prototype.close = function (note) {
+    this.stop();
+    this.wanted = false;
+    this.retryAt = RECONNECT_MIN;
+    this.setState("off", note || "");
+  };
+
+  var pane = new LogPane();
+
+  /* =======================================================================
+     Service row
+     ---------------------------------------------------------------------
+     One line per service, everything on it at a glance: phase as glyph and
+     word, name, port, pid, uptime, and the last readiness probe. The actions
+     appear on hover, on focus and on the selected row.
+     ======================================================================= */
+
+  function Row(svc, idx) {
+    var self = this;
+    this.svc = svc;
+    this.idx = idx;
+    this.busy = false;
+    this.phase = "";
+
+    var root = el("div", "row");
+    root.setAttribute("role", "row");
+    root.setAttribute("aria-selected", "false");
+    root.tabIndex = -1;
+    root.dataset.name = svc.name;
+
+    var accent = accentClass(svc.color, svc.name);
+    if (accent.cls) { root.classList.add(accent.cls); }
+    if (accent.hex) { root.style.setProperty("--svc-accent", accent.hex); }
+    this.accent = accent;
+
+    this.phaseCell = cell(root, "c-phase");
+    this.phaseEl = el("span", "ph p-unknown");
+    this.phaseGlyph = el("span", "g", "?");
+    this.phaseGlyph.setAttribute("aria-hidden", "true");
+    this.phaseWord = el("span", "w", "unknown");
+    this.phaseEl.appendChild(this.phaseGlyph);
+    this.phaseEl.appendChild(this.phaseWord);
+    this.phaseCell.appendChild(this.phaseEl);
+
+    this.nameCell = cell(root, "c-name");
+    this.nameCell.textContent = svc.name;
+    this.nameCell.title = svc.name;
+
+    this.portCell = cell(root, "c-port", "port");
+    this.pidCell  = cell(root, "c-pid", "pid");
+    this.upCell   = cell(root, "c-up", "up");
+
+    this.hlCell = cell(root, "c-hl");
+    this.hlEl = el("span", "hl hl-none", "–");
+    this.hlCell.appendChild(this.hlEl);
+
+    var acts = cell(root, "c-act");
+    this.btnStart   = iconButton("▶", "start", svc.name, function () { mutate(svc.name, "start"); });
+    this.btnStop    = iconButton("■", "stop", svc.name, function () { mutate(svc.name, "stop"); });
+    this.btnRestart = iconButton("⟳", "restart", svc.name, function () { mutate(svc.name, "restart"); });
+    this.btnOpen    = iconButton("↗", "open", svc.name, function () { openService(svc.name); });
+    acts.appendChild(this.btnStart);
+    acts.appendChild(this.btnStop);
+    acts.appendChild(this.btnRestart);
+    acts.appendChild(this.btnOpen);
+
+    root.addEventListener("click", function (ev) {
+      if (ev.target && ev.target.closest && ev.target.closest("button")) { return; }
+      select(svc.name, true);
+    });
+    root.addEventListener("keydown", function (ev) {
+      if (ev.key === "Enter" || ev.key === " " || ev.key === "Spacebar") {
+        ev.preventDefault();
+        select(svc.name, true);
+      }
+    });
+
+    this.root = root;
+    this.paintButtons();
+  }
+
+  function cell(row, cls, label) {
+    var c = el("span", "cell " + cls);
+    c.setAttribute("role", "gridcell");
+    if (label) { c.dataset.label = label; }
+    row.appendChild(c);
+    return c;
+  }
+
+  function iconButton(glyph, op, name, onClick) {
+    var b = el("button", "iconbtn", glyph);
+    b.type = "button";
+    b.title = op + " " + name;
+    b.setAttribute("aria-label", op + " " + name);
+    b.addEventListener("click", onClick);
+    return b;
+  }
+
+  Row.prototype.setBusy = function (on) {
+    this.busy = on;
+    this.paintButtons();
+  };
+
+  // Why a button is disabled, in the tooltip. An action that is greyed out with
+  // no explanation reads as a broken console; the phase is right there, so say
+  // it.
+  function setAction(btn, disabled, verb, name, why) {
+    btn.disabled = disabled;
+    btn.title = disabled ? (why || verb + " " + name) : verb + " " + name;
+  }
+
+  Row.prototype.paintButtons = function () {
+    var lock = this.busy || busyGlobal;
+    var dead = !!this.svc.cmd_error;
+    var live = phaseLabel(this.phase).alive;
+    var word = phaseLabel(this.phase).word;
+    var n = this.svc.name;
+
+    // Start is for a service that is not there; stop is for one that is. Both
+    // used to be live in every phase, so the console offered to start something
+    // it was already showing as ready and to stop something it called stopped.
+    setAction(this.btnStart, lock || dead || live, "start", n,
+      dead ? "the command could not be resolved" : (live ? n + " is already " + word : ""));
+    setAction(this.btnStop, lock || !live, "stop", n,
+      live ? "" : n + " is " + word + " — nothing to stop");
+    // Restart stays available in both directions: on a live service it is the
+    // common action, and on a stopped one it is simply a start.
+    setAction(this.btnRestart, lock || dead, "restart", n,
+      dead ? "the command could not be resolved" : "");
+
+    this.btnStart.classList.toggle("busy", this.busy);
+    this.btnStop.classList.toggle("busy", this.busy);
+    this.btnRestart.classList.toggle("busy", this.busy);
+    this.paintOpen();
+  };
+
+  // The open button points at the service's own port. It is only meaningful
+  // when something is listening, so it follows aliveness like stop does.
+  Row.prototype.paintOpen = function () {
+    if (!this.btnOpen) { return; }
+    var port = this.svc.port || (statusOf[this.svc.name] && statusOf[this.svc.name].port);
+    var live = phaseLabel(this.phase).alive;
+    var on = !!port && live;
+    this.btnOpen.disabled = !on;
+    this.btnOpen.title = !port
+      ? this.svc.name + " declares no port"
+      : (on ? "open http://localhost:" + port + "/ in a new tab"
+            : this.svc.name + " is not running");
+  };
+
+  Row.prototype.applyStatus = function (st) {
+    var ph = phaseLabel(st.phase);
+    this.phase = st.phase || "";
+    this.phaseEl.className = "ph " + ph.cls;
+    this.phaseGlyph.textContent = ph.glyph;
+    this.phaseWord.textContent = ph.word;
+    this.phaseCell.setAttribute("aria-label", "phase " + ph.word);
+
+    setText(this.portCell, st.port ? String(st.port) : "–", !st.port);
+    setText(this.pidCell, st.pid ? String(st.pid) : "–", !st.pid);
+
+    var hl = probeLabel(st);
+    this.hlEl.className = "hl " + hl.cls;
+    this.hlEl.textContent = hl.text;
+    this.hlCell.title = hl.why;
+
+    this.paintUptime();
+    // The buttons key off the phase, so they are repainted where the phase
+    // changes. Without this they kept whatever they were built with and told
+    // the user a service was "unknown" in the same row that showed it stopped.
+    this.paintButtons();
+  };
+
+  Row.prototype.paintUptime = function () {
+    var u = uptime[this.svc.name];
+    if (!u) {
+      setText(this.upCell, "–", true);
+      this.upCell.title = "";
+      return;
+    }
+    if (u.exact) {
+      setText(this.upCell, fmtDuration(Date.now() - u.since), false);
+      this.upCell.title = "pid " + u.pid + " was spawned at " + new Date(u.since).toLocaleString();
+      return;
+    }
+    setText(this.upCell, "≥" + fmtDuration(Date.now() - u.since), false);
+    this.upCell.title = "at least this long: measured since this console first saw pid " + u.pid;
+  };
+
+  Row.prototype.rank = function () {
+    return phaseLabel(this.phase).rank;
+  };
+
+  // The readiness probe as a word or a code — never a bare colour, and never a
+  // sparkline: what the operator needs is "did the last probe answer".
+  function probeLabel(st) {
+    if (!st || !st.health) {
+      return { cls: "hl-none", text: "none", why: "no readiness probe is declared for this service" };
+    }
+    if (!st.http_status) {
+      // A service with no process behind it has no probe result and is not
+      // waiting for one, so it must not wear the same amber "wait" a starting
+      // service wears. Three phases mean exactly that: never started, died
+      // during startup, and came up and then died.
+      if (st.phase === "stopped" || st.phase === "failed" ||
+          st.phase === "exited" || !st.phase) {
+        return { cls: "hl-none", text: "–", why: "not running, so the readiness probe has no result" };
+      }
+      // Alive and not answering has two readings and the chip carries both, so
+      // it never says "wait" beside a phase that has stopped waiting.
+      if (st.phase === "degraded") {
+        return {
+          cls: "hl-bad", text: "late",
+          why: "the probe has still not answered, and the startup window has passed"
+        };
+      }
+      return { cls: "hl-wait", text: "wait", why: "a probe is declared but has not answered yet" };
+    }
+    var code = String(st.http_status);
+    if (st.http_status >= 200 && st.http_status < 400) {
+      return { cls: "hl-ok", text: code, why: "the last readiness probe answered " + code };
+    }
+    return { cls: "hl-bad", text: code, why: "the last readiness probe answered " + code };
+  }
+
+  /* -----------------------------------------------------------------------
+     Service accent. The declared colour is never interpolated into CSS as it
+     arrives: a name maps to a class, and only a strictly validated #rrggbb is
+     ever written to a style property.
+     ----------------------------------------------------------------------- */
+
+  function accentClass(color, name) {
+    var c = String(color || "").trim().toLowerCase();
+    // Same prefixes internal/ui accepts. Written out rather than as a regexp
+    // literal so nothing in this script can be mistaken for one.
+    var pre = ["bright-", "bright_", "bright "];
+    for (var p = 0; p < pre.length; p++) {
+      if (c.indexOf(pre[p]) === 0) { c = c.slice(pre[p].length); break; }
+    }
+    if (owns.call(ACCENTS, c)) { return { cls: "acc-" + (c === "grey" ? "gray" : c), hex: "" }; }
+    if (isHexColor(c)) { return { cls: "", hex: c }; }
+    // Same idea as ui's fallback palette: a stable colour derived from the
+    // name, so a service keeps its identity across reloads.
+    var pal = ["cyan", "green", "yellow", "blue", "magenta", "red"];
+    var h = 0;
+    for (var i = 0; i < name.length; i++) { h = (h * 31 + name.charCodeAt(i)) >>> 0; }
+    return { cls: "acc-" + pal[h % pal.length], hex: "" };
+  }
+
+  function isHexColor(s) {
+    if (s.charAt(0) !== "#") { return false; }
+    if (s.length !== 4 && s.length !== 7) { return false; }
+    for (var i = 1; i < s.length; i++) {
+      var c = s.charCodeAt(i);
+      if (!((c >= 48 && c <= 57) || (c >= 97 && c <= 102))) { return false; }
+    }
+    return true;
+  }
+
+  /* =======================================================================
+     Detail pane
+     ---------------------------------------------------------------------
+     Everything the old page repeated on every card, now shown once: command,
+     working directory, runtime, health URL, log path, declared environment,
+     dependencies — and the one live log stream.
+     ======================================================================= */
+
+  var detailEl = document.getElementById("detail");
+
+  var detail = {
+    name: "",
+    head: null,
+    scroll: null,
+
+    mount: function (svc) {
+      this.name = svc.name;
+      clear(detailEl);
+
+      // The accent classes are shared with the rows, so a service reads as the
+      // same colour on both sides of the split.
+      var accent = accentClass(svc.color, svc.name);
+      detailEl.className = "panel detail" + (accent.cls ? " " + accent.cls : "");
+      detailEl.style.removeProperty("--svc-accent");
+      if (accent.hex) { detailEl.style.setProperty("--svc-accent", accent.hex); }
+      detailEl.setAttribute("aria-label", "detail for " + svc.name);
+
+      /* --- head --- */
+      var head = el("header", "detail-head");
+      head.appendChild(el("h3", "svc-name", svc.name));
+
+      this.phaseEl = el("span", "ph p-unknown");
+      this.phaseGlyph = el("span", "g", "?");
+      this.phaseGlyph.setAttribute("aria-hidden", "true");
+      this.phaseWord = el("span", "w", "unknown");
+      this.phaseEl.appendChild(this.phaseGlyph);
+      this.phaseEl.appendChild(this.phaseWord);
+      head.appendChild(this.phaseEl);
+
+      head.appendChild(el("span", "spacer"));
+
+      this.btnStart   = textButton("Start",   "primary", function () { mutate(svc.name, "start"); });
+      this.btnStop    = textButton("Stop",    "",        function () { mutate(svc.name, "stop"); });
+      this.btnRestart = textButton("Restart", "",        function () { mutate(svc.name, "restart"); });
+      this.btnOpen    = textButton("Open ↗",  "",        function () { openService(svc.name); });
+      head.appendChild(this.btnStart);
+      head.appendChild(this.btnStop);
+      head.appendChild(this.btnRestart);
+      head.appendChild(this.btnOpen);
+      detailEl.appendChild(head);
+
+      /* --- scrolling body --- */
+      var body = el("div", "detail-scroll");
+
+      var dl = el("dl", "facts");
+      this.pidEl     = fact(dl, "pid", txt("–"), true);
+      this.portEl    = fact(dl, "port", txt(svc.port ? String(svc.port) : "–"), !svc.port);
+      this.uptimeEl  = fact(dl, "uptime", txt("–"), true);
+      this.readyEl   = fact(dl, "ready in", txt("–"), true);
+      this.runtimeEl = fact(dl, "runtime", txt(svc.runtime || "system"), !svc.runtime);
+      this.healthEl  = fact(dl, "health", txt("–"), true, true);
+      this.logPathEl = fact(dl, "log file", txt("–"), true, true);
+      body.appendChild(dl);
+
+      var cw = el("div", "cmd-wrap");
+      var ch = el("div", "cmd-head");
+      ch.appendChild(el("span", "lbl", "command"));
+      ch.appendChild(el("div", "grow"));
+      var copy = el("button", "ghost tiny", "Copy");
+      copy.type = "button";
+      copy.title = "Copy the command to the clipboard";
+      copy.addEventListener("click", function () { copyText(svc.cmd_line || "", copy, "Copy"); });
+      ch.appendChild(copy);
+      cw.appendChild(ch);
+
+      var cmd = el("code", "cmd", svc.cmd_line || "(no command)");
+      cmd.setAttribute("aria-label", "command for " + svc.name);
+      cw.appendChild(cmd);
+
+      if (svc.cmd && svc.cmd.length > 1) {
+        var det = el("details", "argv");
+        det.appendChild(el("summary", null, "argv (" + svc.cmd.length + " arguments)"));
+        var ol = el("ol", "argv-list");
+        for (var i = 0; i < svc.cmd.length; i++) {
+          var li = el("li");
+          li.appendChild(el("code", null, svc.cmd[i]));
+          ol.appendChild(li);
+        }
+        det.appendChild(ol);
+        cw.appendChild(det);
+      }
+
+      if (svc.cmd_error) {
+        var bad = el("div", "alert");
+        bad.appendChild(el("b", null, "not startable: "));
+        bad.appendChild(txt(svc.cmd_error));
+        cw.appendChild(bad);
+      }
+
+      var chips = el("div", "chips");
+      var dirChip = el("span", "chip");
+      dirChip.appendChild(el("b", null, "dir "));
+      dirChip.appendChild(txt(svc.dir || "–"));
+      chips.appendChild(dirChip);
+
+      if (svc.depends_on && svc.depends_on.length) {
+        var dep = el("span", "chip");
+        dep.appendChild(el("b", null, "after "));
+        dep.appendChild(txt(svc.depends_on.join(", ")));
+        chips.appendChild(dep);
+      }
+
+      var env = svc.env || [];
+      for (var e = 0; e < env.length; e++) {
+        var chip = el("span", "chip" + (env[e].redacted ? " redacted" : ""));
+        chip.appendChild(el("b", null, env[e].key));
+        chip.appendChild(txt("=" + env[e].value));
+        if (env[e].redacted) {
+          chip.title = "value withheld: this key or value is shaped like a credential";
+        }
+        chips.appendChild(chip);
+      }
+      if (!env.length) { chips.appendChild(el("span", "chip", "no declared env")); }
+      cw.appendChild(chips);
+
+      this.detailLine = el("div", "detail-line");
+      this.detailLine.hidden = true;
+      cw.appendChild(this.detailLine);
+
+      body.appendChild(cw);
+      detailEl.appendChild(body);
+      this.scroll = body;
+
+      detailEl.appendChild(pane.root);
+      this.paintButtons();
+    },
+
+    applyStatus: function (st) {
+      if (!this.name || !st) { return; }
+      var ph = phaseLabel(st.phase);
+      this.phaseEl.className = "ph " + ph.cls;
+      this.phaseGlyph.textContent = ph.glyph;
+      this.phaseWord.textContent = ph.word;
+      this.phaseEl.setAttribute("aria-label", "phase: " + ph.word);
+
+      setText(this.pidEl, st.pid ? String(st.pid) : "–", !st.pid);
+      setText(this.portEl, st.port ? String(st.port) : "–", !st.port);
+
+      clear(this.healthEl);
+      if (st.health) {
+        this.healthEl.classList.remove("dim");
+        var a = el("a", "ell", st.health);
+        a.href = st.health;
+        a.target = "_blank";
+        a.rel = "noreferrer noopener";
+        a.title = st.health;
+        this.healthEl.appendChild(a);
+        var code = el("span", "http-code " + httpClass(st.http_status),
+          st.http_status ? String(st.http_status) : "no result");
+        code.title = st.http_status
+          ? "status of the last readiness probe"
+          : "this probe has not answered yet";
+        this.healthEl.appendChild(code);
+      } else {
+        this.healthEl.classList.add("dim");
+        this.healthEl.appendChild(ellipsised("no probe declared"));
+      }
+
+      setText(this.readyEl, st.elapsed_ms ? fmtDuration(st.elapsed_ms) : "–", !st.elapsed_ms);
+      this.readyEl.title = "how long the last readiness wait took";
+
+      clear(this.logPathEl);
+      this.logPathEl.classList.toggle("dim", !st.log_path);
+      this.logPathEl.appendChild(ellipsised(st.log_path || "–"));
+
+      if (st.detail) {
+        this.detailLine.hidden = false;
+        this.detailLine.textContent = st.detail;
+      } else {
+        this.detailLine.hidden = true;
+        this.detailLine.textContent = "";
+      }
+
+      this.paintUptime();
+    },
+
+    // Uptime comes from the spawn time mabo-ctl wrote into the pid record, so it
+    // is exact and survives a reload of this page. A pid file written by a
+    // mabo-ctl too old to record one has no spawn time, and then — and only then
+    // — uptime falls back to the first status in which this console saw the
+    // current pid, which is a LOWER BOUND and is labelled as one. An unlabelled
+    // approximation is the kind of number people trust and then debug against.
+    paintUptime: function () {
+      if (!this.name || !this.uptimeEl) { return; }
+      var u = uptime[this.name];
+      if (!u) {
+        setText(this.uptimeEl, "–", true);
+        this.uptimeEl.title = "";
+        return;
+      }
+      if (u.exact) {
+        setText(this.uptimeEl, fmtDuration(Date.now() - u.since), false);
+        this.uptimeEl.title = "pid " + u.pid + " was spawned at " +
+          new Date(u.since).toLocaleString();
+        return;
+      }
+      setText(this.uptimeEl, "≥ " + fmtDuration(Date.now() - u.since), false);
+      this.uptimeEl.title = "measured since this console first saw pid " + u.pid +
+        "; the process may have started earlier";
+    },
+
+    paintButtons: function () {
+      if (!this.name || !this.btnStart) { return; }
+      var row = owns.call(rows, this.name) ? rows[this.name] : null;
+      var lock = busyGlobal || (row && row.busy);
+      var dead = row && !!row.svc.cmd_error;
+      var ph = phaseLabel(row ? row.phase : "");
+      var n = this.name;
+
+      // Same rules as the row, from the same phase table: the two views show
+      // the same service and must never disagree about what can be done to it.
+      setAction(this.btnStart, !!lock || !!dead || ph.alive, "start", n,
+        dead ? "the command could not be resolved" : (ph.alive ? n + " is already " + ph.word : ""));
+      setAction(this.btnStop, !!lock || !ph.alive, "stop", n,
+        ph.alive ? "" : n + " is " + ph.word + " — nothing to stop");
+      setAction(this.btnRestart, !!lock || !!dead, "restart", n,
+        dead ? "the command could not be resolved" : "");
+
+      this.btnStart.classList.toggle("busy", !!(row && row.busy));
+      this.btnStop.classList.toggle("busy", !!(row && row.busy));
+      this.btnRestart.classList.toggle("busy", !!(row && row.busy));
+
+      if (this.btnOpen) {
+        var port = row && (row.svc.port || (statusOf[n] && statusOf[n].port));
+        var on = !!port && ph.alive;
+        this.btnOpen.disabled = !on;
+        this.btnOpen.title = !port ? n + " declares no port"
+          : (on ? "open http://localhost:" + port + "/ in a new tab" : n + " is not running");
+      }
+    }
+  };
+
+  function textButton(label, cls, onClick) {
+    var b = el("button", cls, label);
+    b.type = "button";
+    b.addEventListener("click", onClick);
+    return b;
+  }
+
+  function httpClass(code) {
+    if (!code) { return "http-non"; }
+    if (code >= 200 && code < 400) { return "http-2xx"; }
+    return "http-bad";
+  }
+
+  /* =======================================================================
+     Selection
+     ---------------------------------------------------------------------
+     Selecting a service rebuilds the detail pane and REBINDS the single log
+     pane, which closes the previous EventSource before opening the next.
+     ======================================================================= */
+
+  function select(name, focusRow) {
+    if (!owns.call(rows, name)) { return; }
+    // A deliberate pick (click, j/k) settles the selection for good.
+    if (focusRow) { autoSelect = false; }
+    if (selected === name) {
+      if (focusRow) { rows[name].root.focus(); }
+      return;
+    }
+
+    if (selected && owns.call(rows, selected)) {
+      rows[selected].root.setAttribute("aria-selected", "false");
+      rows[selected].root.tabIndex = -1;
+    }
+    selected = name;
+    var row = rows[name];
+    row.root.setAttribute("aria-selected", "true");
+    row.root.tabIndex = 0;
+    if (focusRow) { row.root.focus(); }
+
+    detail.mount(row.svc);
+    if (owns.call(statusOf, name)) { detail.applyStatus(statusOf[name]); }
+    pane.bind(name);
+  }
+
+  /* =======================================================================
+     List: filter, sort, paint
+     ---------------------------------------------------------------------
+     Sort is failed, slow, unknown, stopped, running, ready, and ties break on
+     declaration order — so the order is a pure function of the phases and rows
+     move only when a phase actually changed, not on every two-second refresh.
+     ======================================================================= */
+
+  var listEl   = document.getElementById("svc-list");
+  var filterEl = document.getElementById("filter");
+  var emptyEl  = null;
+
+  function rowVisible(row) {
+    if (nameFilter && row.svc.name.toLowerCase().indexOf(nameFilter) < 0) { return false; }
+    if (phaseFilter && row.phase !== phaseFilter) { return false; }
+    return true;
+  }
+
+  function visibleNames() {
+    var out = [];
+    for (var i = 0; i < services.length; i++) {
+      var r = rows[services[i].name];
+      if (r && rowVisible(r)) { out.push(r.svc.name); }
+    }
+    // The visible list must follow the painted order, not declaration order.
+    out.sort(function (a, b) { return orderIndex(a) - orderIndex(b); });
+    return out;
+  }
+
+  var order = [];   // service names, in painted order
+  function orderIndex(name) {
+    var i = order.indexOf(name);
+    return i < 0 ? 1e9 : i;
+  }
+
+  function paintList() {
+    var list = [];
+    for (var i = 0; i < services.length; i++) {
+      var r = rows[services[i].name];
+      if (r) { list.push(r); }
+    }
+    list.sort(function (a, b) {
+      var d = a.rank() - b.rank();
+      return d !== 0 ? d : a.idx - b.idx;
+    });
+
+    order = [];
+    for (var j = 0; j < list.length; j++) { order.push(list[j].svc.name); }
+    var key = order.join("|");
+
+    if (key !== lastOrder) {
+      // Re-appending moves the nodes; a focused row would be blurred by the
+      // move, so its focus is put back afterwards.
+      var refocus = document.activeElement && document.activeElement.classList &&
+        document.activeElement.classList.contains("row") ? document.activeElement : null;
+      var frag = document.createDocumentFragment();
+      for (var k = 0; k < list.length; k++) { frag.appendChild(list[k].root); }
+      listEl.appendChild(frag);
+      lastOrder = key;
+      if (refocus && refocus.isConnected) { refocus.focus(); }
+    }
+
+    var shown = 0;
+    for (var m = 0; m < list.length; m++) {
+      var vis = rowVisible(list[m]);
+      list[m].root.hidden = !vis;
+      if (vis) { shown++; }
+    }
+
+    if (!shown && services.length) {
+      if (!emptyEl) { emptyEl = el("div", "list-empty", ""); }
+      emptyEl.textContent = "No service matches " +
+        (nameFilter ? "“" + nameFilter + "”" : "this filter") +
+        (phaseFilter ? " in phase " + phaseFilter : "") + ".";
+      if (emptyEl.parentNode !== listEl) { listEl.appendChild(emptyEl); }
+    } else if (emptyEl && emptyEl.parentNode === listEl) {
+      listEl.removeChild(emptyEl);
+    }
+  }
+
+  filterEl.addEventListener("input", function () {
+    nameFilter = filterEl.value.trim().toLowerCase();
+    paintList();
+  });
+  filterEl.addEventListener("keydown", function (ev) {
+    if (ev.key === "Escape") {
+      if (filterEl.value) {
+        filterEl.value = "";
+        nameFilter = "";
+        paintList();
+      } else {
+        filterEl.blur();
+      }
+    } else if (ev.key === "Enter" || ev.key === "ArrowDown") {
+      var vis = visibleNames();
+      if (vis.length) { ev.preventDefault(); select(vis[0], true); }
+    }
+  });
+
+  /* =======================================================================
+     Summary tiles
+     ======================================================================= */
+
+  var tilesEl = document.getElementById("tiles");
+  var totalEl = document.getElementById("total-n");
+  var tiles   = Object.create(null);
+
+  function buildTiles() {
+    clear(tilesEl);
+    tiles = Object.create(null);
+    var names = TILE_ORDER.slice();
+    names.push("unknown");
+    for (var i = 0; i < names.length; i++) {
+      (function (phase) {
+        var meta = phase === "unknown" ? UNKNOWN : PHASES[phase];
+        var b = el("button", "tile t-" + phase);
+        b.type = "button";
+        b.setAttribute("aria-pressed", "false");
+        b.title = "Show only " + phase + " services";
+        var n = el("span", "n", "0");
+        var g = el("span", "g", meta.glyph);
+        g.setAttribute("aria-hidden", "true");
+        b.appendChild(n);
+        b.appendChild(g);
+        b.appendChild(el("span", "w", phase));
+        b.addEventListener("click", function () {
+          phaseFilter = phaseFilter === phase ? "" : phase;
+          paintTiles();
+          paintList();
+        });
+        tilesEl.appendChild(b);
+        tiles[phase] = { btn: b, n: n };
+      }(names[i]));
+    }
+  }
+
+  function paintTiles() {
+    paintGlobalButtons();
+    var counts = Object.create(null);
+    for (var i = 0; i < services.length; i++) {
+      var name = services[i].name;
+      var st = owns.call(statusOf, name) ? statusOf[name] : null;
+      var p = st && st.phase && owns.call(PHASES, st.phase) ? st.phase : "unknown";
+      counts[p] = (counts[p] || 0) + 1;
+    }
+    for (var phase in tiles) {
+      if (!owns.call(tiles, phase)) { continue; }
+      var c = counts[phase] || 0;
+      var t = tiles[phase];
+      t.n.textContent = String(c);
+      t.btn.classList.toggle("zero", c === 0);
+      t.btn.setAttribute("aria-pressed", phaseFilter === phase ? "true" : "false");
+      t.btn.hidden = (phase === "unknown" && c === 0);
+      t.btn.setAttribute("aria-label", c + " " + phase);
+    }
+    totalEl.textContent = String(services.length);
+  }
+
+  /* =======================================================================
+     Clipboard. navigator.clipboard needs a secure context, which loopback is
+     but a --i-know-this-is-dangerous LAN bind is not, so there is a fallback
+     and, failing that, an honest message: the command is selectable anyway.
+     ======================================================================= */
+
+  function copyText(text, btn, label) {
+    var restore = function (msg) {
+      if (btn.textContent === label) {
+        btn.textContent = msg;
+        setTimeout(function () { btn.textContent = label; }, 1400);
+      }
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(
+        function () { restore("Copied"); },
+        function () { legacyCopy(text, restore); });
+      return;
+    }
+    legacyCopy(text, restore);
+  }
+
+  function legacyCopy(text, restore) {
+    var ta = document.createElement("textarea");
+    ta.value = text;
+    ta.setAttribute("readonly", "");
+    ta.style.position = "fixed";
+    ta.style.top = "-1000px";
+    document.body.appendChild(ta);
+    ta.select();
+    var ok = false;
+    try { ok = document.execCommand("copy"); } catch (e) { ok = false; }
+    document.body.removeChild(ta);
+    restore(ok ? "Copied" : "Select it");
+  }
+
+  /* =======================================================================
+     Operations
+     ---------------------------------------------------------------------
+     Every result lands in one activity strip rather than in a per-service box,
+     so an operation started from a row the user then navigated away from is
+     still reported somewhere they are looking.
+     ======================================================================= */
+
+  var activityEl   = document.getElementById("activity");
+  var activityWrap = document.getElementById("activity-wrap");
+
+  function activity(lines) {
+    for (var i = 0; i < lines.length; i++) {
+      activityEl.appendChild(opRow(lines[i]));
+    }
+    var kept = activityEl.getElementsByClassName("op-line");
+    while (kept.length > MAX_ACTIVITY) { activityEl.removeChild(kept[0]); }
+    activityWrap.hidden = false;
+    activityEl.scrollTop = activityEl.scrollHeight;
+  }
+
+  document.getElementById("btn-clear-activity").addEventListener("click", function () {
+    clear(activityEl);
+    activityWrap.hidden = true;
+  });
+
+  function opRow(line) {
+    var row = el("div", "op-line" + (line.kind ? " " + line.kind : ""));
+    row.appendChild(el("span", "who", (line.who || clock(new Date())) + " "));
+    row.appendChild(txt(line.text));
+    return row;
+  }
+
+  // A start that failed is not an HTTP failure: the request worked and the
+  // service refused. Both outcomes are rendered from the same event list the
+  // supervisor produced, so the console says what the terminal would.
+  function linesFromMutation(res) {
+    var out = [], evs = res.events || [];
+    var head = res.operation + (res.ok ? " finished" : " reported a problem");
+    if (res.services && res.services.length) { head += ": " + res.services.join(", "); }
+    out.push({ kind: res.ok ? "ok" : "err", text: head });
+    for (var i = Math.max(0, evs.length - 8); i < evs.length; i++) {
+      var e = evs[i];
+      var t = (e.service ? e.service + " " : "") +
+              (e.phase ? "[" + e.phase + "] " : "") + (e.msg || "");
+      if (e.error) { t += (t ? " — " : "") + e.error; }
+      if (!t) { continue; }
+      out.push({ kind: e.error ? "err" : "", text: t });
+    }
+    if (res.error) { out.push({ kind: "err", text: res.error }); }
+    return out;
+  }
+
+  function mutate(name, op) {
+    if (busyGlobal || !owns.call(rows, name)) { return; }
+    var row = rows[name];
+    if (row.busy) { return; }
+    if (op !== "stop" && row.svc.cmd_error) {
+      activity([{ kind: "err", text: name + " is not startable: " + row.svc.cmd_error }]);
+      return;
+    }
+    row.setBusy(true);
+    if (detail.name === name) { detail.paintButtons(); }
+    activity([{ text: op + " " + name + " requested…" }]);
+
+    request("POST", "/api/" + encodeURIComponent(name) + "/" + op, MUTATE_TIMEOUT)
+      .then(function (res) { activity(linesFromMutation(res)); })
+      .catch(function (err) { activity([{ kind: "err", text: op + " " + name + " failed: " + err.message }]); })
+      .then(function () {
+        row.setBusy(false);
+        if (detail.name === name) { detail.paintButtons(); }
+        pollNow();
+      });
+  }
+
+  // Open the service in a new tab.
+  //
+  // The URL is always http://localhost:<port>, never the address this page was
+  // served from: the port belongs to the service on the machine mabo-ctl is
+  // running on, and through a tunnel or a port forward this page's own hostname
+  // does not publish it. That makes the button exactly right in the ordinary
+  // case — a browser on the same machine — and honestly wrong nowhere else,
+  // because no other address is any better a guess.
+  //
+  // noopener is not optional on a target=_blank: without it the opened page
+  // gets a handle on this one, and this one holds a token that starts processes.
+  function openService(name) {
+    var st = owns.call(statusOf, name) ? statusOf[name] : null;
+    var row = owns.call(rows, name) ? rows[name] : null;
+    var port = (st && st.port) || (row && row.svc.port);
+    if (!port) { return; }
+    window.open("http://localhost:" + port + "/", "_blank", "noopener,noreferrer");
+  }
+
+  var btnStartAll = document.getElementById("btn-start-all");
+  var btnStopAll  = document.getElementById("btn-stop-all");
+  var btnRefresh  = document.getElementById("btn-refresh");
+
+  function setGlobalBusy(on) {
+    busyGlobal = on;
+    btnStartAll.classList.toggle("busy", on && btnStartAll.dataset.active === "1");
+    btnStopAll.classList.toggle("busy", on && btnStopAll.dataset.active === "1");
+    paintGlobalButtons();
+    for (var k in rows) {
+      if (owns.call(rows, k)) { rows[k].paintButtons(); }
+    }
+    detail.paintButtons();
+  }
+
+  // "Start all" on a stack that is entirely up is an offer to do nothing, and
+  // "Stop all" with nothing running is the same. Both used to be live whatever
+  // the services were doing, so the header made a claim the rows contradicted.
+  function paintGlobalButtons() {
+    var total = services.length, live = 0;
+    for (var i = 0; i < total; i++) {
+      var st = owns.call(statusOf, services[i].name) ? statusOf[services[i].name] : null;
+      if (st && phaseLabel(st.phase).alive) { live++; }
+    }
+    var allUp = total > 0 && live === total;
+    var noneUp = live === 0;
+
+    btnStartAll.disabled = busyGlobal || total === 0 || allUp;
+    btnStopAll.disabled = busyGlobal || total === 0 || noneUp;
+    btnStartAll.title = total === 0 ? "no services are declared"
+      : (allUp ? "every service is already running" : "start every declared service");
+    btnStopAll.title = total === 0 ? "no services are declared"
+      : (noneUp ? "nothing is running" : "stop every declared service");
+  }
+
+  function bulk(path, verb, btn) {
+    if (busyGlobal) { return; }
+    btn.dataset.active = "1";
+    setGlobalBusy(true);
+    activity([{ text: verb + " requested for every service…" }]);
+    request("POST", path, MUTATE_TIMEOUT)
+      .then(function (res) { activity(linesFromMutation(res)); })
+      .catch(function (err) { activity([{ kind: "err", text: verb + " failed: " + err.message }]); })
+      .then(function () {
+        btn.dataset.active = "0";
+        setGlobalBusy(false);
+        pollNow();
+      });
+  }
+
+  btnStartAll.addEventListener("click", function () { bulk("/api/start-all", "start-all", btnStartAll); });
+  btnStopAll.addEventListener("click", function () { bulk("/api/stop-all", "stop-all", btnStopAll); });
+  btnRefresh.addEventListener("click", function () { pollNow(); });
+
+  /* =======================================================================
+     Config view
+     ---------------------------------------------------------------------
+     Port precedence has four levels — --ports, then a <NAME>_PORT variable in
+     the caller's environment, then the persisted .dev/run.env, then the
+     declared default — and template expansion rewrites cmd, env and health on
+     the way past. Until this panel existed nothing showed any of it, so "why is
+     backend on 7999?" was a source-reading exercise. The SOURCE is the point of
+     the panel and is drawn as a badge on every row.
+
+     It is fetched lazily, on first open, and never polled: /api/config is a
+     read of the resolution that ran once, before the socket was bound. Nothing
+     in it changes while mabo-ctl serve is running, so a poll would be two
+     requests a second answering a question that has one answer.
+     ======================================================================= */
+
+  var configView = document.getElementById("config-view");
+  var configBody = document.getElementById("cfg-body");
+  var configNote = document.getElementById("cfg-note");
+  var btnConfig  = document.getElementById("btn-config");
+  var splitEl    = document.getElementById("split");
+
+  var configLoaded = false;
+  var configBusy   = false;
+
+  var SOURCES = {
+    "flag":    { cls: "src-flag",    hint: "--ports on the command line, which outranks everything else" },
+    "env":     { cls: "src-env",     hint: "a <NAME>_PORT variable in the environment mabo-ctl was started from" },
+    "run.env": { cls: "src-runenv",  hint: "the port an earlier run persisted in .dev/run.env" },
+    "default": { cls: "src-default", hint: "the port declared in mabo-ctl.yaml" }
+  };
+
+  // The source arrives from the server as an arbitrary string, so the lookup
+  // goes through hasOwnProperty for the same reason phaseLabel does.
+  function sourceBadge(src) {
+    var meta = (typeof src === "string" && owns.call(SOURCES, src)) ? SOURCES[src] : null;
+    var b = el("span", "src " + (meta ? meta.cls : "src-unknown"), src || "unknown");
+    b.title = meta ? meta.hint
+      : "mabo-ctl did not record which precedence level produced this port";
+    return b;
+  }
+
+  // The trap this panel exists for: a port persisted in .dev/run.env outranks
+  // the declared default, so editing mabo-ctl.yaml does nothing until run.env is
+  // cleared. It cost a real debugging round, so it is never only a colour.
+  function overrideBadge(declared, label) {
+    var b = el("span", "override", label);
+    b.title = "a port persisted in .dev/run.env is outranking the port declared in " +
+      "mabo-ctl.yaml" + (declared ? " (" + declared + ")" : "") +
+      "; the declared value does nothing until the state is cleared with mabo-ctl reset";
+    return b;
+  }
+
+  // The badge sits beside the declared port in the table and away from it on
+  // the card, so it says "overridden" in one place and names the number in the
+  // other. "7100 overrides 7100" is what saying it one way in both looks like.
+  function overrideLabel(declared) {
+    return declared ? "overrides " + declared : "overrides the declared default";
+  }
+
+  function configOpen() { return !configView.hidden; }
+
+  function showConfig(on) {
+    if (on === configOpen()) { return; }
+    configView.hidden = !on;
+    splitEl.hidden = !!on;
+    btnConfig.setAttribute("aria-pressed", on ? "true" : "false");
+    if (on) {
+      loadConfig(false);
+      configBody.focus();
+    } else {
+      btnConfig.focus();
+    }
+  }
+
+  function loadConfig(force) {
+    if (configBusy) { return; }
+    if (configLoaded && !force) { return; }
+    configBusy = true;
+    configNote.textContent = "reading…";
+
+    request("GET", "/api/config", STATUS_TIMEOUT).then(function (cfg) {
+      configLoaded = true;
+      renderConfig(cfg || {});
+      configNote.textContent = "read at " + clock(new Date());
+    }, function (err) {
+      // A stale panel that says nothing is worse than an empty one that says
+      // why, so the failure replaces the content rather than sitting under it.
+      configLoaded = false;
+      clear(configBody);
+      var box = el("div", "placeholder");
+      box.appendChild(el("h3", null, "Cannot read the configuration"));
+      box.appendChild(el("p", null, err.message));
+      configBody.appendChild(box);
+      configNote.textContent = "unavailable";
+    }).then(function () { configBusy = false; });
+  }
+
+  function renderConfig(cfg) {
+    clear(configBody);
+    var list = cfg.services || [];
+    configBody.appendChild(configSource(cfg.source || {}));
+    configBody.appendChild(originsSection());
+    configBody.appendChild(configPorts(list));
+    configBody.appendChild(configServices(list));
+    loadOrigins();
+  }
+
+  /* =======================================================================
+     Trusted origins
+
+     The console refuses a request whose Origin is not the address mabo-ctl
+     bound. That is the CSRF layer behind the token, and it is exactly right
+     until the console is reached through a tunnel or a port forward — then the
+     browser sits on some other hostname, every button 403s, and the page
+     itself keeps working, so it reads as a broken button rather than as a
+     control doing its job.
+
+     This editor is here rather than only on the command line because a tunnel
+     is set up AFTER mabo-ctl is already supervising a stack, and restarting to
+     add a hostname would stop every service.
+
+     Two things keep it from being a foot-gun. The bound loopback address is
+     always accepted and is never in this list, so a browser on 127.0.0.1 can
+     always undo a bad edit; and the entry this page is currently relying on
+     cannot be removed from here — the server refuses that change too, with 409,
+     because the UI is not where a security guard belongs.
+     ======================================================================= */
+
+  var originsState = null;   // last /api/origins response
+  var originsBusy = false;
+
+  function originsSection() {
+    var sec = el("section", "cfg-sec");
+    sec.id = "cfg-origins";
+    sec.appendChild(el("h3", null, "browser access"));
+    sec.appendChild(el("p", "why",
+      "Requests are accepted from the address mabo-ctl bound. Add an origin here " +
+      "when you reach this console through a tunnel or a port forward, where your " +
+      "browser is on a different hostname and every button would otherwise be refused."));
+    sec.appendChild(el("div", "origins-body", "reading\u2026"));
+    return sec;
+  }
+
+  function loadOrigins() {
+    request("GET", "/api/origins", STATUS_TIMEOUT).then(function (data) {
+      originsState = data || {};
+      renderOrigins();
+    }, function (err) {
+      var body = document.querySelector("#cfg-origins .origins-body");
+      if (body) { clear(body); body.appendChild(el("p", "origins-msg err", err.message)); }
+    });
+  }
+
+  function renderOrigins() {
+    var body = document.querySelector("#cfg-origins .origins-body");
+    if (!body || !originsState) { return; }
+    clear(body);
+
+    var here = window.location.origin;
+    var trusted = originsState.trusted || [];
+    var implicit = originsState.implicit || "";
+
+    var dl = el("dl", "facts");
+    var d = fact(dl, "bound address", txt(implicit || "\u2013"), !implicit, true);
+    d.title = "always accepted, and not removable \u2014 this is what makes a bad edit recoverable";
+    fact(dl, "this browser", txt(here), false, true).title =
+      "the Origin your browser sends with every action";
+    body.appendChild(dl);
+
+    var ul = el("ul", "origins-list");
+    if (!trusted.length) {
+      ul.appendChild(el("li", "dim", "no additional origins"));
+    }
+    trusted.forEach(function (o) {
+      var li = el("li", "origin-row");
+      li.appendChild(el("span", "origin-val", o));
+      // The one the page is using cannot be dropped from here. The server
+      // enforces this too; disabling the button is so the user is told before
+      // they try, not instead of the server checking.
+      if (o === here) {
+        var tag = el("span", "origin-tag", "in use");
+        tag.title = "you are reaching this console from here; remove it from 127.0.0.1 instead";
+        li.appendChild(tag);
+      } else {
+        var rm = el("button", "ghost tiny", "Remove");
+        rm.type = "button";
+        rm.onclick = function () { saveOrigins(trusted.filter(function (x) { return x !== o; })); };
+        li.appendChild(rm);
+      }
+      ul.appendChild(li);
+    });
+    body.appendChild(ul);
+
+    var form = el("form", "origins-add");
+    var input = el("input");
+    input.type = "text";
+    input.placeholder = "https://dev.tunnel.example";
+    input.setAttribute("aria-label", "origin to trust");
+    input.spellcheck = false;
+    var add = el("button", "ghost tiny", "Add");
+    add.type = "submit";
+    form.appendChild(input);
+    form.appendChild(add);
+    form.onsubmit = function (e) {
+      e.preventDefault();
+      var v = input.value.trim();
+      if (!v) { return; }
+      if (trusted.indexOf(v) !== -1) { input.value = ""; return; }
+      saveOrigins(trusted.concat([v]));
+    };
+    body.appendChild(form);
+
+    var note = el("p", "origins-note");
+    note.appendChild(txt(
+      "Scheme, host and port only \u2014 https, or http for a loopback host. Changes apply " +
+      "immediately and last until mabo-ctl exits; pass --allow-origin to make one permanent."));
+    body.appendChild(note);
+
+    if (originsState.error) {
+      body.appendChild(el("p", "origins-msg err", originsState.error));
+    } else if (originsState.notice) {
+      body.appendChild(el("p", "origins-msg ok", originsState.notice));
+    }
+  }
+
+  function saveOrigins(next) {
+    if (originsBusy) { return; }
+    originsBusy = true;
+    request("POST", "/api/origins", STATUS_TIMEOUT, { trusted: next }).then(function (data) {
+      originsState = data || {};
+      originsState.error = "";
+      originsState.notice = "updated";
+      renderOrigins();
+    }, function (err) {
+      // The list is re-read rather than patched from what we hoped for: a
+      // refused change means the server's list is not what this page assumed.
+      if (originsState) {
+        originsState.error = err.message;
+        originsState.notice = "";
+      }
+      renderOrigins();
+    }).then(function () { originsBusy = false; });
+  }
+
+  // Where the configuration came from. Discovery walks UP the tree, so the file
+  // that won is not always the one the reader was looking at, and the state
+  // directory is where the persisted ports that outrank it live.
+  function configSource(src) {
+    var sec = el("section", "cfg-sec");
+    sec.appendChild(el("h3", null, "source"));
+    sec.appendChild(el("p", "why",
+      "mabo-ctl finds its configuration by walking UP the directory tree, so the " +
+      "file that won is not always the one you were looking at."));
+
+    var dl = el("dl", "facts");
+    fact(dl, "config file", ellipsised(src.path || "–"), !src.path, true);
+    fact(dl, "found by", txt(src.explicit ? "--config" : "discovery"), false)
+      .title = src.explicit
+        ? "this path was given on the command line with --config"
+        : "found by walking up the directory tree from the working directory, the way git finds its root";
+    fact(dl, "repo root", ellipsised(src.root || "–"), !src.root, true);
+    fact(dl, "state dir", ellipsised(src.state_dir || "–"), !src.state_dir, true);
+    fact(dl, "stop grace", txt(fmtSetting(src.stop_grace_ms)), !src.stop_grace_ms)
+      .title = "how long stop waits after SIGTERM before it escalates to SIGKILL";
+    fact(dl, "ready timeout", txt(fmtSetting(src.ready_timeout_ms)), !src.ready_timeout_ms)
+      .title = "how long a readiness probe polls before a service is reported slow, " +
+        "and the point past which a live service that is not answering is degraded";
+    sec.appendChild(dl);
+    return sec;
+  }
+
+  // Mirrors internal/ui.formatDuration so a configured timeout reads the same
+  // here as it does in `mabo-ctl config`. fmtDuration above is the page's
+  // MEASUREMENT formatter and drops the decimal once a number is large enough
+  // not to need it; two spellings of one declared value is exactly the small
+  // drift that makes a reader stop and work out which front end is lying.
+  function fmtSetting(ms) {
+    if (!isFinite(ms) || ms <= 0) { return "–"; }
+    if (ms < 1) { return "<1ms"; }
+    if (ms < 1000) { return Math.round(ms) + "ms"; }
+    if (ms < 60000) { return (ms / 1000).toFixed(1) + "s"; }
+    var s = Math.floor(ms / 1000);
+    if (ms < 3600000) { return Math.floor(s / 60) + "m" + pad2(s % 60) + "s"; }
+    return Math.floor(s / 3600) + "h" + pad2(Math.floor((s % 3600) / 60)) + "m";
+  }
+
+  function configPorts(list) {
+    var sec = el("section", "cfg-sec");
+    sec.appendChild(el("h3", null, "ports — resolved, and why"));
+    sec.appendChild(el("p", "why",
+      "Precedence, highest first: --ports on the command line, then a " +
+      "<NAME>_PORT variable in the environment mabo-ctl was started from, then " +
+      "the port persisted in .dev/run.env, then the port declared in " +
+      "mabo-ctl.yaml. The source column is which of the four won."));
+
+    var wrap = el("div", "tbl-wrap");
+    var tbl = el("table", "cfg-tbl");
+
+    var thead = el("thead");
+    var hrow = el("tr");
+    var cols = ["service", "port", "source", "declared"];
+    for (var c = 0; c < cols.length; c++) {
+      var th = el("th", c === 1 ? "num" : null, cols[c]);
+      th.scope = "col";
+      hrow.appendChild(th);
+    }
+    thead.appendChild(hrow);
+    tbl.appendChild(thead);
+
+    var tbody = el("tbody");
+    for (var i = 0; i < list.length; i++) {
+      var s = list[i];
+      var tr = el("tr");
+
+      var name = el("td", "svc", s.name);
+      var accent = accentClass(s.color, s.name);
+      if (accent.cls) { name.className = "svc " + accent.cls; }
+      if (accent.hex) { name.style.setProperty("--svc-accent", accent.hex); }
+      tr.appendChild(name);
+
+      tr.appendChild(el("td", "num" + (s.port ? "" : " dim"), s.port ? String(s.port) : "–"));
+
+      var srcCell = el("td");
+      if (s.port) {
+        srcCell.appendChild(sourceBadge(s.port_source));
+      } else {
+        srcCell.appendChild(el("span", "src src-unknown", "portless"));
+      }
+      tr.appendChild(srcCell);
+
+      var decl = el("td", "mono" + (s.port_declared ? "" : " dim"));
+      decl.appendChild(txt(s.port_declared ? String(s.port_declared) : "–"));
+      if (s.port_override) { decl.appendChild(overrideBadge(s.port_declared, "overridden")); }
+      tr.appendChild(decl);
+
+      tbody.appendChild(tr);
+    }
+    tbl.appendChild(tbody);
+    wrap.appendChild(tbl);
+    sec.appendChild(wrap);
+
+    if (!list.length) {
+      sec.appendChild(el("p", "why", "mabo-ctl.yaml declares no services."));
+    }
+    return sec;
+  }
+
+  function configServices(list) {
+    var sec = el("section", "cfg-sec");
+    sec.appendChild(el("h3", null, "services — resolved"));
+    sec.appendChild(el("p", "why",
+      // NOT the literal port template: this page is executed as a Go
+      // html/template, so a double-braced .Port here would be substituted away
+      // by the server before any reader ever saw it.
+      "Every value below is the EXPANDED one: the port templates substituted, the " +
+      "working directory made absolute, and cmd[0] resolved to the interpreter " +
+      "the declared runtime chose rather than whatever the ambient PATH offers. " +
+      "Credential-shaped values are withheld by the server, in the command and " +
+      "the health URL as well as in the environment."));
+    for (var i = 0; i < list.length; i++) { sec.appendChild(configCard(list[i])); }
+    return sec;
+  }
+
+  function configCard(s) {
+    var card = el("article", "cfg-card");
+    var accent = accentClass(s.color, s.name);
+    if (accent.cls) { card.className = "cfg-card " + accent.cls; }
+    if (accent.hex) { card.style.setProperty("--svc-accent", accent.hex); }
+
+    var head = el("header");
+    head.appendChild(el("h4", null, s.name));
+    var portChip = el("span", "chip");
+    portChip.appendChild(el("b", null, "port "));
+    portChip.appendChild(txt(s.port ? String(s.port) : "none"));
+    head.appendChild(portChip);
+    if (s.port) { head.appendChild(sourceBadge(s.port_source)); }
+    if (s.port_override) {
+      head.appendChild(overrideBadge(s.port_declared, overrideLabel(s.port_declared)));
+    }
+    card.appendChild(head);
+
+    // cmd[0] is the resolved interpreter — unless it could not be resolved, in
+    // which case it is the bare name mabo-ctl.yaml wrote and the service is not
+    // startable at all. Labelling the second as the first is the substitution
+    // the runtime field exists to prevent.
+    var argv0 = (s.cmd && s.cmd.length) ? s.cmd[0] : "";
+    var deps = s.depends_on && s.depends_on.length ? s.depends_on.join(", ") : "";
+    var dl = el("dl", "facts");
+    fact(dl, "runtime", txt(s.runtime || "system"), !s.runtime);
+    fact(dl, "depends on", txt(deps || "nothing"), !deps);
+    fact(dl, "cmd[0]", ellipsised(argv0 || "–"), !argv0 || !!s.cmd_error, true)
+      .title = s.cmd_error
+        ? "unresolved: this is the name as written, not an executable mabo-ctl found"
+        : "the executable mabo-ctl execs, resolved from the declared runtime";
+    fact(dl, "dir", ellipsised(s.dir || "–"), !s.dir, true);
+    fact(dl, "health", ellipsised(s.health || "no probe declared"), !s.health, true);
+    card.appendChild(dl);
+
+    var cw = el("div", "cmd-wrap");
+    var ch = el("div", "cmd-head");
+    ch.appendChild(el("span", "lbl", "command"));
+    ch.appendChild(el("div", "grow"));
+    var copy = el("button", "ghost tiny", "Copy");
+    copy.type = "button";
+    copy.title = "Copy the command to the clipboard";
+    copy.addEventListener("click", function () { copyText(s.cmd_line || "", copy, "Copy"); });
+    ch.appendChild(copy);
+    cw.appendChild(ch);
+
+    cw.appendChild(el("code", "cmd", s.cmd_line || "(no command)"));
+
+    if (s.cmd_error) {
+      var bad = el("div", "alert");
+      bad.appendChild(el("b", null, "not startable: "));
+      bad.appendChild(txt(s.cmd_error));
+      cw.appendChild(bad);
+    }
+
+    var chips = el("div", "chips");
+    var env = s.env || [];
+    for (var e = 0; e < env.length; e++) {
+      var chip = el("span", "chip" + (env[e].redacted ? " redacted" : ""));
+      chip.appendChild(el("b", null, env[e].key));
+      chip.appendChild(txt("=" + env[e].value));
+      if (env[e].redacted) {
+        chip.title = "value withheld: this key or value is shaped like a credential";
+      }
+      chips.appendChild(chip);
+    }
+    if (!env.length) { chips.appendChild(el("span", "chip", "no declared env")); }
+    cw.appendChild(chips);
+
+    card.appendChild(cw);
+    return card;
+  }
+
+  btnConfig.addEventListener("click", function () { showConfig(!configOpen()); });
+  document.getElementById("btn-config-reload")
+    .addEventListener("click", function () { loadConfig(true); });
+  document.getElementById("btn-config-close")
+    .addEventListener("click", function () { showConfig(false); });
+
+  /* =======================================================================
+     Keyboard
+     ---------------------------------------------------------------------
+     j/k and the arrows move the selection over the VISIBLE rows, so the
+     filter and the shortcuts agree about what the list currently is.
+     ======================================================================= */
+
+  function moveSelection(delta) {
+    var vis = visibleNames();
+    if (!vis.length) { return; }
+    var at = vis.indexOf(selected);
+    var next = at < 0 ? (delta > 0 ? 0 : vis.length - 1) : at + delta;
+    if (next < 0) { next = 0; }
+    if (next >= vis.length) { next = vis.length - 1; }
+    select(vis[next], true);
+  }
+
+  document.addEventListener("keydown", function (ev) {
+    var t = ev.target;
+    var typing = t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable);
+
+    if (ev.key === "/" && !typing && !ev.metaKey && !ev.ctrlKey && !ev.altKey) {
+      ev.preventDefault();
+      // The filter belongs to the service list, so asking for it asks for the
+      // list back: focusing an input inside a hidden view does nothing.
+      showConfig(false);
+      filterEl.focus();
+      filterEl.select();
+      return;
+    }
+    if (typing || ev.metaKey || ev.ctrlKey || ev.altKey) { return; }
+
+    if (ev.key === "Escape" && configOpen()) {
+      ev.preventDefault();
+      showConfig(false);
+      return;
+    }
+    if (ev.key === "c") {
+      ev.preventDefault();
+      showConfig(!configOpen());
+      return;
+    }
+    // Every remaining shortcut acts on the service list, which the config view
+    // has replaced. Moving or starting something the reader cannot see is worse
+    // than doing nothing.
+    if (configOpen()) { return; }
+
+    // Arrow keys inside the detail pane belong to whatever is scrolling there.
+    var inDetail = t && t.closest && t.closest("#detail");
+
+    switch (ev.key) {
+      case "j":
+        ev.preventDefault(); moveSelection(1); break;
+      case "k":
+        ev.preventDefault(); moveSelection(-1); break;
+      case "ArrowDown":
+        if (inDetail) { return; }
+        ev.preventDefault(); moveSelection(1); break;
+      case "ArrowUp":
+        if (inDetail) { return; }
+        ev.preventDefault(); moveSelection(-1); break;
+      case "s":
+        if (selected) { ev.preventDefault(); mutate(selected, "start"); } break;
+      case "x":
+        if (selected) { ev.preventDefault(); mutate(selected, "stop"); } break;
+      case "r":
+        if (selected) { ev.preventDefault(); mutate(selected, "restart"); } break;
+      default:
+        break;
+    }
+  });
+
+  /* =======================================================================
+     Status polling
+     ======================================================================= */
+
+  var pollTimer = 0;
+  var polling = false;
+
+  function pollInterval() {
+    return document.visibilityState === "hidden" ? POLL_HIDDEN_MS : POLL_VISIBLE_MS;
+  }
+
+  function schedulePoll() {
+    clearTimeout(pollTimer);
+    pollTimer = setTimeout(pollNow, pollInterval());
+  }
+
+  function pollNow() {
+    clearTimeout(pollTimer);
+    if (polling) { return; }   // never let slow health probes stack up
+    polling = true;
+    request("GET", "/api/status", STATUS_TIMEOUT)
+      .then(function (list) {
+        health.poll = "ok";
+        health.pollWhy = "";
+        applyStatuses(list || []);
+      })
+      .catch(function (err) {
+        health.poll = "down";
+        health.pollWhy = err.message;
+      })
+      .then(function () {
+        polling = false;
+        paintHealth();
+        schedulePoll();
+      });
+  }
+
+  // There is no client-side reconciliation here, and that is the point.
+  //
+  // This function used to re-label the server's "stopped" back to "failed" for
+  // any service this page had watched fail, because /api/status was a snapshot
+  // of live pids and a process that died was simply gone from it. The terminal
+  // front ends had no such workaround, so the browser said "failed" while the
+  // TUI said "stopped" for the same service at the same instant — two read
+  // implementations of one question, drifted exactly as they always do.
+  //
+  // The server now answers the question: it persists the death it observes and
+  // reports it as `exited` or `failed`. The workaround was deleted in the same
+  // change, because keeping both is the defect rather than the fix.
+
+  function applyStatuses(list) {
+    var now = Date.now();
+    for (var i = 0; i < list.length; i++) {
+      var st = list[i];
+      if (!st || !owns.call(rows, st.service)) { continue; }
+
+      // Uptime is keyed on the pid: a restart gets a new pid and therefore a
+      // fresh clock, which is the only reading that is not a lie. The server
+      // sends the spawn time it wrote down at the spawn, so a reloaded page
+      // shows the real uptime instead of restarting the clock at the reload —
+      // the local timestamp is only the fallback for a pid file too old to
+      // carry one.
+      if (st.pid) {
+        var prev = owns.call(uptime, st.service) ? uptime[st.service] : null;
+        if (!prev || prev.pid !== st.pid) {
+          var spawned = st.started_at ? Date.parse(st.started_at) : NaN;
+          uptime[st.service] = isNaN(spawned)
+            ? { pid: st.pid, since: now, exact: false }
+            : { pid: st.pid, since: spawned, exact: true };
+        }
+      } else {
+        delete uptime[st.service];
+      }
+
+      statusOf[st.service] = st;
+      rows[st.service].applyStatus(st);
+      if (st.service === selected) { detail.applyStatus(st); }
+    }
+    paintTiles();
+    paintList();
+
+    if (autoSelect) {
+      autoSelect = false;
+      var top = visibleNames();
+      if (top.length) { select(top[0], false); }
+    }
+  }
+
+  document.addEventListener("visibilitychange", function () {
+    if (document.visibilityState === "visible") { pollNow(); }
+    else { schedulePoll(); }
+  });
+
+  // Uptime is derived from a timestamp, so it must tick between polls or it
+  // would visibly jump in two-second steps.
+  setInterval(function () {
+    for (var k in rows) {
+      if (owns.call(rows, k)) { rows[k].paintUptime(); }
+    }
+    detail.paintUptime();
+  }, 1000);
+
+  /* =======================================================================
+     Lifecycle event stream
+     ======================================================================= */
+
+  var eventsES = null, eventsRetryAt = RECONNECT_MIN, eventsTimer = 0;
+
+  function openEvents() {
+    closeEvents();
+    health.events = "connecting";
+    paintHealth();
+
+    var es;
+    try { es = new EventSource("/api/events"); }
+    catch (e) {
+      health.events = "down";
+      health.eventsWhy = "this browser cannot open an event stream";
+      paintHealth();
+      return;
+    }
+    eventsES = es;
+
+    es.onopen = function () {
+      eventsRetryAt = RECONNECT_MIN;
+      health.events = "live";
+      health.eventsWhy = "";
+      paintHealth();
+    };
+
+    es.onmessage = function (ev) {
+      var e;
+      try { e = JSON.parse(ev.data); } catch (err) { return; }
+      health.events = "live";
+      paintHealth();
+
+      // A lifecycle event is the earliest signal that something changed, so
+      // take the phase straight away rather than waiting for the next poll.
+      if (e.service && owns.call(rows, e.service) && e.phase) {
+        var st = owns.call(statusOf, e.service) ? statusOf[e.service] : { service: e.service };
+        // Taking the phase from the event is an OPTIMISATION now, not a
+        // workaround: the poll two seconds from now reports the same phase from
+        // the same record, so nothing here has to be remembered to survive it.
+        st.phase = e.phase;
+        statusOf[e.service] = st;
+        rows[e.service].applyStatus(st);
+        if (e.service === selected) { detail.applyStatus(st); }
+        paintTiles();
+        paintList();
+      }
+
+      var text = (e.phase ? "[" + e.phase + "] " : "") + (e.msg || "");
+      if (e.error) { text += (text ? " — " : "") + e.error; }
+      if (!text) { return; }
+      if (e.service && e.service === selected) {
+        pane.push("— " + text, e.error ? "err" : "meta");
+      }
+      activity([{ kind: e.error ? "err" : "", text: (e.service ? e.service + " " : "") + text }]);
+      pollSoon();
+    };
+
+    es.onerror = function () {
+      if (!eventsES) { return; }
+      if (eventsES.readyState === 2) {
+        closeEvents();
+        health.events = "down";
+        health.eventsWhy = "the event stream was refused or closed; retrying in " +
+          Math.round(eventsRetryAt / 1000) + "s";
+        paintHealth();
+        var wait = eventsRetryAt;
+        eventsRetryAt = Math.min(eventsRetryAt * 2, RECONNECT_MAX);
+        eventsTimer = setTimeout(openEvents, wait);
+      } else {
+        health.events = "retrying";
+        health.eventsWhy = "the connection dropped; the browser is reconnecting";
+        paintHealth();
+      }
+    };
+  }
+
+  function closeEvents() {
+    clearTimeout(eventsTimer);
+    eventsTimer = 0;
+    if (eventsES) {
+      eventsES.onopen = eventsES.onmessage = eventsES.onerror = null;
+      eventsES.close();
+      eventsES = null;
+    }
+  }
+
+  var soonTimer = 0;
+  function pollSoon() {
+    clearTimeout(soonTimer);
+    soonTimer = setTimeout(pollNow, 250);
+  }
+
+  window.addEventListener("beforeunload", function () {
+    closeEvents();
+    pane.stop();
+  });
+
+  /* =======================================================================
+     Boot
+     ======================================================================= */
+
+  var tokenChip = document.getElementById("token-chip");
+  var tokenVal  = document.getElementById("token-val");
+  var btnCopyToken = document.getElementById("btn-copy-token");
+
+  function paintToken() {
+    if (!TOKEN) {
+      tokenChip.className = "token missing";
+      tokenVal.textContent = "missing";
+      btnCopyToken.disabled = true;
+      tokenChip.title = "this page carries no session token, so every mutation would be refused";
+      return;
+    }
+    // A prefix, never the whole credential: a screenshot of this page must not
+    // hand over control of the stack.
+    tokenVal.textContent = TOKEN.slice(0, 8) + "…";
+    btnCopyToken.addEventListener("click", function () {
+      copyText(TOKEN, btnCopyToken, "Copy");
+    });
+  }
+
+  function fatal(title, detailText) {
+    clear(detailEl);
+    var box = el("div", "placeholder");
+    box.appendChild(el("h3", null, title));
+    box.appendChild(el("p", null, detailText));
+    detailEl.appendChild(box);
+  }
+
+  function boot() {
+    paintToken();
+    buildTiles();
+    paintTiles();
+
+    if (!TOKEN) {
+      activity([{
+        kind: "err",
+        text: "No session token found in this page, so start, stop and restart " +
+              "would be refused. Reopen the URL mabo-ctl printed."
+      }]);
+    }
+
+    request("GET", "/api/services", STATUS_TIMEOUT).then(function (list) {
+      services = list || [];
+      clear(listEl);
+
+      if (!services.length) {
+        fatal("No services declared",
+          "mabo-ctl.yaml declares no services, so there is nothing to supervise here.");
+        return;
+      }
+
+      for (var i = 0; i < services.length; i++) {
+        var r = new Row(services[i], i);
+        rows[services[i].name] = r;
+        listEl.appendChild(r.root);
+        order.push(services[i].name);
+      }
+      lastOrder = order.join("|");
+      paintList();
+
+      // Open on the TOP row rather than the first declared service: the list is
+      // sorted so whatever needs attention is first, and the detail pane should
+      // be looking at it. Only the OPENING selection is chosen this way — a
+      // refresh never moves the selection out from under the reader.
+      var first = visibleNames();
+      select(first.length ? first[0] : services[0].name, false);
+
+      openEvents();
+      pollNow();
+    }).catch(function (err) {
+      health.poll = "down";
+      health.pollWhy = err.message;
+      paintHealth();
+      fatal("Cannot reach mabo-ctl", err.message);
+    });
+  }
+
+  boot();
+})();
+</script>
+</body>
+</html>
