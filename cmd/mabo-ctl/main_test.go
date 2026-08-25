@@ -1185,10 +1185,10 @@ func TestLookPath(t *testing.T) {
 	})
 }
 
-// TestCompletionScripts checks both supported shells emit something, and that
+// TestCompletionScripts checks every supported shell emits something, and that
 // an unsupported shell is a usage error rather than an empty file.
 func TestCompletionScripts(t *testing.T) {
-	for _, shell := range []string{"bash", "zsh"} {
+	for _, shell := range []string{"bash", "zsh", "fish", "powershell"} {
 		h := newHarness(t, "completion", shell)
 		if code := h.run(); code != exitOK {
 			t.Fatalf("completion %s exit code = %d (stderr: %s)", shell, code, h.stderr)
@@ -1197,7 +1197,7 @@ func TestCompletionScripts(t *testing.T) {
 			t.Fatalf("completion %s produced no script:\n%s", shell, h.stdout)
 		}
 	}
-	h := newHarness(t, "completion", "fish")
+	h := newHarness(t, "completion", "tcsh")
 	if code := h.run(); code != exitUsage {
 		t.Fatalf("exit code = %d, want %d (stderr: %s)", code, exitUsage, h.stderr)
 	}

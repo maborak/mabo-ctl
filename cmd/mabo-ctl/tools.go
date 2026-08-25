@@ -524,16 +524,18 @@ func parseHTTPURL(rawURL string) (*url.URL, error) {
 // completionCmd builds `mabo-ctl completion`.
 func (a *app) completionCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "completion <bash|zsh>",
+		Use:   "completion <bash|zsh|fish|powershell>",
 		Short: "Print a shell completion script",
 		Long: `Completion writes a completion script to stdout.
 
-  bash:  source <(mabo-ctl completion bash)
-  zsh:   mabo-ctl completion zsh > "${fpath[1]}/_mabo-ctl"
+  bash:        source <(mabo-ctl completion bash)
+  zsh:         mabo-ctl completion zsh > "${fpath[1]}/_mabo-ctl"
+  fish:        mabo-ctl completion fish > ~/.config/fish/completions/mabo-ctl.fish
+  powershell:  mabo-ctl completion powershell >> $PROFILE
 
-Only bash and zsh are supported; the shells mabo-ctl targets are the ones its
-Unix-only process handling supports.`,
-		Args:          argsOneOf("bash", "zsh"),
+The completion scripts cover every shell cobra generates for; the mabo-ctl
+BINARY itself still runs on macOS and Linux only.`,
+		Args:          argsOneOf("bash", "zsh", "fish", "powershell"),
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -542,8 +544,12 @@ Unix-only process handling supports.`,
 				return cmd.Root().GenBashCompletionV2(a.env.Stdout, true)
 			case "zsh":
 				return cmd.Root().GenZshCompletion(a.env.Stdout)
+			case "fish":
+				return cmd.Root().GenFishCompletion(a.env.Stdout, true)
+			case "powershell":
+				return cmd.Root().GenPowerShellCompletion(a.env.Stdout)
 			default:
-				return usageErrorf("unsupported shell %q; use bash or zsh", args[0])
+				return usageErrorf("unsupported shell %q; use bash, zsh, fish or powershell", args[0])
 			}
 		},
 	}

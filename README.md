@@ -201,7 +201,7 @@ Leave the key out to inherit the global.
 | `mabo-ctl shell <name>` | Run a declared `shells:` entry, or open `$SHELL` in a service's environment. |
 | `mabo-ctl open` | Hand each running service's URL to `open` (macOS) or `xdg-open` (Linux). |
 | `mabo-ctl serve [--addr] [--open] [--i-know-this-is-dangerous]` | Serve the web console on `127.0.0.1:7999` until interrupted. It can start and stop services — see [Web console](#web-console). |
-| `mabo-ctl completion <bash\|zsh>` | Print a completion script. |
+| `mabo-ctl completion <bash\|zsh\|fish\|powershell>` | Print a completion script. |
 | `mabo-ctl upgrade [--force]` | Replace this binary with the latest GitHub release — see [Upgrading](#upgrading). |
 
 Global `--config <path>` overrides discovery on every command.
