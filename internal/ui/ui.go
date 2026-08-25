@@ -867,3 +867,46 @@ func formatDuration(d time.Duration) string {
 		return fmt.Sprintf("%dh%02dm", int(d/time.Hour), int(d%time.Hour/time.Minute))
 	}
 }
+
+// DoctorStatus is the severity of one `mabo-ctl doctor` finding.
+type DoctorStatus int
+
+const (
+	// DoctorOK means the check passed.
+	DoctorOK DoctorStatus = iota
+	// DoctorWarn means something wants a look but nothing is broken.
+	DoctorWarn
+	// DoctorFail means the check found a real problem.
+	DoctorFail
+)
+
+// DoctorLine renders one doctor finding: the status word, the service label in
+// its own colour, and the detail. The status word carries the meaning even
+// without colour, the way every glyph in this package does.
+func (r *Renderer) DoctorLine(status DoctorStatus, name, detail string) string {
+	switch status {
+	case DoctorWarn:
+		if detail == "" {
+			return r.paint(style{"33"}, "warn") + "  " + r.ServiceLabel(name)
+		}
+		return r.paint(style{"33"}, "warn") + "  " + r.ServiceLabel(name) + "  " + detail
+	case DoctorFail:
+		return r.paint(style{"1;31"}, "FAIL") + "  " + r.ServiceLabel(name) + "  " + detail
+	default:
+		return r.paint(style{"32"}, " ok ") + "  " + r.ServiceLabel(name)
+	}
+}
+
+// DoctorSummary renders the closing line: how many checks ran and how they
+// came out.
+func (r *Renderer) DoctorSummary(fails, warns, total int) string {
+	s := fmt.Sprintf("%d service(s) checked", total)
+	switch {
+	case fails > 0:
+		return r.paint(style{"1;31"}, "FAIL") + "  " + s + fmt.Sprintf(", %d failed, %d warned", fails, warns)
+	case warns > 0:
+		return r.paint(style{"33"}, "warn") + "  " + s + fmt.Sprintf(", %d warned — nothing is broken yet", warns)
+	default:
+		return r.paint(style{"32"}, " ok ") + "  " + s + ", everything checks out"
+	}
+}

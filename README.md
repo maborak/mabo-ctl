@@ -204,6 +204,7 @@ Leave the key out to inherit the global.
 | `mabo-ctl logs [svc\|all] [--tail=N] [-f]` | Tail a log, or interleave every log with per-service labels. `tailf` is an alias. |
 | `mabo-ctl reset [--force]` | Stop everything and delete `.dev/`. `--force` also kills whatever still holds a declared port. |
 | `mabo-ctl preflight` | Run the `checks:` block: a TCP dial for `tcp:`, an exec for `command:`. |
+| `mabo-ctl doctor` | Read-only stack exam: unresolvable runtimes, stale or recycled pids, foreign port holders, unsurfaced crashes, loose `.dev/` permissions. Warn → 0, FAIL → 1. |
 | `mabo-ctl exec <svc> <cmd>...` | Run a command in the service's exact environment and directory; forwards the child's exit code. |
 | `mabo-ctl shell <name>` | Run a declared `shells:` entry, or open `$SHELL` in a service's environment. |
 | `mabo-ctl open` | Hand each running service's URL to `open` (macOS) or `xdg-open` (Linux). |

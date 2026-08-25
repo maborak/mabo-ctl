@@ -75,6 +75,16 @@ func verifyGroup(pid int) (int, error) {
 	return pgid, nil
 }
 
+// CheckIdentity reports whether a live pid looks like one mabo-ctl spawned:
+// its own process-group leader, not init, not privileged. It is the same test
+// signalling runs before every kill, exported for read-only diagnostics —
+// `mabo-ctl doctor` asks "is this pid file still honest?" without ever
+// signalling anything.
+func CheckIdentity(pid int) error {
+	_, err := verifyGroup(pid)
+	return err
+}
+
 // signalPID sends sig to exactly ONE process, never to a group.
 //
 // This is the counterpart to [signalGroup], and choosing between them is a
