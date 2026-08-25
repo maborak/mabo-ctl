@@ -394,7 +394,8 @@ Everything mabo-ctl remembers lives in `.dev/`, next to `mabo-ctl.yaml`. Add it 
 
 ```
 .dev/
-├── logs/<service>.log    stdout+stderr, truncated on each start, mode 0600
+├── logs/<service>.log      stdout+stderr of THIS run, mode 0600
+│   logs/<service>.log.1    the previous run, kept as crash evidence
 ├── pids/<service>.pid    {"pid":…,"started_at":…}, written after spawn,
 │                         removed on confirmed death
 ├── exits/<service>.json  the last observed death: exit code or signal, when it

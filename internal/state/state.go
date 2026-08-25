@@ -244,10 +244,17 @@ func (d *Dir) RemovePID(svc string) error {
 	return nil
 }
 
-// TruncateLog empties svc's log file and returns it open for writing in append
-// mode with permission 0600, ready to be handed to a child process as stdout
-// and stderr. An existing log is chmodded back to 0600 so a file created by an
-// older version or a different umask cannot leak what the service prints.
+// TruncateLog rotates svc's previous log to `<log>.1` — overwriting the
+// generation before it, so disk use stays bounded at two files per service —
+// and returns the fresh log open for writing in append mode with permission
+// 0600, ready to be handed to a child process as stdout and stderr. An existing
+// log is chmodded back to 0600 so a file created by an older version or a
+// different umask cannot leak what the service prints.
+//
+// The rotation is the point: truncating outright destroyed the previous run's
+// output, which is the only evidence a crash leaves behind once the spawning
+// process is gone. One generation, not an archive — a developer debugging a
+// crash wants the run before the one they just did, not the whole history.
 //
 // The caller owns the returned file and must Close it once the child has been
 // spawned. It returns an error wrapping ErrInvalidService for an unsafe svc, or
@@ -257,6 +264,9 @@ func (d *Dir) TruncateLog(svc string) (*os.File, error) {
 		return nil, err
 	}
 	p := d.LogPath(svc)
+	if err := os.Rename(p, p+".1"); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return nil, fmt.Errorf("state: rotate log %s: %w", p, err)
+	}
 	f, err := os.OpenFile(p, os.O_CREATE|os.O_WRONLY|os.O_TRUNC|os.O_APPEND, filePerm)
 	if err != nil {
 		return nil, fmt.Errorf("state: truncate log %s: %w", p, err)

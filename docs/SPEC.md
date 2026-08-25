@@ -113,7 +113,7 @@ Current registry, for reference (the 7100 port convention):
 `$ROOT/.dev/` — git-ignored, safe to delete:
 
 ```
-.dev/logs/<svc>.log     truncated on each start
+.dev/logs/<svc>.log     this run's output; the previous run is kept as <svc>.log.1
 .dev/pids/<svc>.pid     written after spawn, removed on confirmed death
 .dev/run.env            persisted resolved ports
 ```

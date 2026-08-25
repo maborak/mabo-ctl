@@ -378,3 +378,90 @@ func TestReset(t *testing.T) {
 		t.Errorf("Reset (second call) = %v, want nil", err)
 	}
 }
+
+// TestTruncateLogKeepsThePreviousRun: the run before this one survives as
+// <log>.1 — the only evidence a crash leaves once the spawning process is
+// gone — and the generation before THAT is overwritten, so disk use stays
+// bounded at two files per service.
+func TestTruncateLogKeepsThePreviousRun(t *testing.T) {
+	root := t.TempDir()
+	st, err := New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	write := func(content string) {
+		t.Helper()
+		f, err := st.TruncateLog("svc")
+		if err != nil {
+			t.Fatalf("TruncateLog: %v", err)
+		}
+		if _, err := f.WriteString(content); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+		if err := f.Close(); err != nil {
+			t.Fatalf("close: %v", err)
+		}
+	}
+
+	write("first run\n")
+	write("second run\n")
+
+	// The fresh log holds this run; the rotated one holds the run before it.
+	got := readLog(t, filepath.Join(root, ".dev", "logs", "svc.log"))
+	if got != "second run\n" {
+		t.Errorf("current log = %q, want this run's output", got)
+	}
+	prev := readLog(t, filepath.Join(root, ".dev", "logs", "svc.log.1"))
+	if prev != "first run\n" {
+		t.Errorf("rotated log = %q, want the previous run's output", prev)
+	}
+
+	// A third start overwrites the generation before it rather than growing.
+	write("third run\n")
+	prev = readLog(t, filepath.Join(root, ".dev", "logs", "svc.log.1"))
+	if prev != "second run\n" {
+		t.Errorf("rotated log = %q, want the overwritten generation", prev)
+	}
+	entries, err := os.ReadDir(filepath.Join(root, ".dev", "logs"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 2 {
+		names := make([]string, 0, len(entries))
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		t.Errorf("logs dir holds %d entries (%v), want exactly the two generations", len(entries), names)
+	}
+}
+
+// TestTruncateLogFirstRunHasNoGeneration: rotating a log that does not exist
+// yet is not an error — the first start of a service has no previous run.
+func TestTruncateLogFirstRunHasNoGeneration(t *testing.T) {
+	root := t.TempDir()
+	st, err := New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, err := st.TruncateLog("fresh")
+	if err != nil {
+		t.Fatalf("TruncateLog on a service with no previous log: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".dev", "logs", "fresh.log.1")); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("a rotated generation exists after a first start: %v", err)
+	}
+}
+
+// readLog reads a file, failing the test on any error.
+func readLog(t *testing.T, path string) string {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return string(b)
+}
