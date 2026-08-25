@@ -382,6 +382,17 @@ func (s *Supervisor) readyTimeout() time.Duration {
 	return 30 * time.Second
 }
 
+// readyTimeoutFor is the per-service form: an instance that declares its own
+// ready_timeout overrides the global, because a service that legitimately
+// needs two minutes to warm up must not force the whole stack to wait two
+// minutes before anything is called slow.
+func (s *Supervisor) readyTimeoutFor(in service.Instance) time.Duration {
+	if in.ReadyTimeout > 0 {
+		return in.ReadyTimeout
+	}
+	return s.readyTimeout()
+}
+
 // ErrStalePID reports that a pid file names a live process that mabo-ctl did not
 // start — the pid was recycled by an unrelated process while the file survived.
 var ErrStalePID = errors.New("stale pid file")
@@ -550,7 +561,7 @@ func (s *Supervisor) status(ctx context.Context, withHolders bool) []Status {
 		// Assume the probe will fail and let the goroutine below upgrade it, so
 		// a probe that never returns leaves the pessimistic answer rather than
 		// a hopeful one.
-		st.Phase = s.probeFailPhase(rec.StartedAt)
+		st.Phase = s.probeFailPhase(in, rec.StartedAt)
 		out[i] = st
 
 		wg.Add(1)
@@ -606,8 +617,8 @@ func wantsHolder(st Status, port int) bool {
 // the right one: a legacy pid file carries no spawn time, and accusing a
 // service of being degraded on the strength of a timestamp mabo-ctl does not have
 // would be the same kind of invention this whole change removes.
-func (s *Supervisor) probeFailPhase(startedAt time.Time) Phase {
-	if startedAt.IsZero() || time.Since(startedAt) < s.readyTimeout() {
+func (s *Supervisor) probeFailPhase(in service.Instance, startedAt time.Time) Phase {
+	if startedAt.IsZero() || time.Since(startedAt) < s.readyTimeoutFor(in) {
 		return PhaseSlow
 	}
 	return PhaseDegraded
@@ -964,7 +975,7 @@ func (s *Supervisor) startOne(ctx context.Context, in service.Instance, ev chan<
 		return PhaseRunning, nil
 	}
 
-	waitCtx, cancel := context.WithTimeout(ctx, s.readyTimeout())
+	waitCtx, cancel := context.WithTimeout(ctx, s.readyTimeoutFor(in))
 	defer cancel()
 	res := health.Wait(waitCtx, in.Health, func() bool { return state.Alive(pid) })
 
@@ -1000,14 +1011,14 @@ func (s *Supervisor) startOne(ctx context.Context, in service.Instance, ev chan<
 			Msg: "failed: process died\n" + detail})
 		return PhaseFailed, err
 
-	case s.probeFailPhase(startedAt) == PhaseDegraded:
+	case s.probeFailPhase(in, startedAt) == PhaseDegraded:
 		// The whole startup window went by. Saying "still starting" here would
 		// be the lie that made `slow` worthless, and it is the same phase the
 		// status block below is about to derive from the same spawn time.
 		emit(ev, Event{Service: in.Name, Phase: PhaseDegraded,
 			Msg: fmt.Sprintf("degraded: alive (pid %d) but not answering %s after %s — "+
 				"past ready_timeout (%s), so it is not merely slow",
-				pid, redact.URL(in.Health), res.Elapsed.Round(time.Millisecond), s.readyTimeout())})
+				pid, redact.URL(in.Health), res.Elapsed.Round(time.Millisecond), s.readyTimeoutFor(in))})
 		return PhaseDegraded, nil
 
 	default:

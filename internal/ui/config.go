@@ -103,6 +103,10 @@ type ConfigService struct {
 	// declares none. The file's values are merged into Env at resolve time and
 	// redacted there; this row exists so the reader knows the file exists.
 	EnvFile string `json:"env_file,omitempty"`
+	// ReadyTimeout is the service's own readiness window, 0 when it inherits
+	// the global ready_timeout. Shown only when set, for the same reason the
+	// autostart row is.
+	ReadyTimeout time.Duration `json:"ready_timeout,omitempty"`
 	// DependsOn lists the services that start first.
 	DependsOn []string `json:"depends_on"`
 	// Color is the label colour declared in mabo-ctl.yaml, "" when none.
@@ -180,6 +184,7 @@ func BuildConfigView(in ConfigInput) ConfigView {
 		if spec, ok := in.Config.Service(inst.Name); ok {
 			svc.Env = redact.Env(spec.Env)
 			svc.EnvFile = spec.EnvFile
+			svc.ReadyTimeout = spec.ReadyTimeout
 		}
 		view.Services = append(view.Services, svc)
 	}
@@ -308,6 +313,10 @@ func (r *Renderer) configService(s ConfigService) string {
 	}
 	if s.EnvFile != "" {
 		lines = append(lines, r.configField("env_file", s.EnvFile))
+	}
+	if s.ReadyTimeout > 0 {
+		lines = append(lines, r.configField("ready_timeout", s.ReadyTimeout.String()+
+			"  "+r.paint(style{"2"}, "(overrides the global)")))
 	}
 	for i, e := range s.Env {
 		label := ""

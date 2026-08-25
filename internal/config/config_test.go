@@ -1318,3 +1318,62 @@ func TestEnvFileAbsentMeansNoEnv(t *testing.T) {
 		t.Errorf("EnvFile = %q, want empty", cfg.Services[0].EnvFile)
 	}
 }
+
+// TestPerServiceReadyTimeout: the service-level key parses, an absent key
+// means inherit, and a negative value is a load-time error.
+func TestPerServiceReadyTimeout(t *testing.T) {
+	t.Parallel()
+	t.Run("parses and inherits", func(t *testing.T) {
+		root := t.TempDir()
+		body := `
+services:
+  - name: slow
+    cmd: [echo, hi]
+    ready_timeout: 2m
+  - name: quick
+    cmd: [echo, hi]
+`
+		cfg, err := Load(write(t, root, body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := cfg.Services[0].ReadyTimeout; got != 2*time.Minute {
+			t.Errorf("slow ReadyTimeout = %s, want 2m", got)
+		}
+		if got := cfg.Services[1].ReadyTimeout; got != 0 {
+			t.Errorf("quick ReadyTimeout = %s, want 0 (inherit the global)", got)
+		}
+	})
+
+	t.Run("negative is rejected", func(t *testing.T) {
+		root := t.TempDir()
+		body := `
+services:
+  - name: slow
+    cmd: [echo, hi]
+    ready_timeout: -5s
+`
+		_, err := Load(write(t, root, body))
+		var ve *ValidationError
+		if !errors.As(err, &ve) || !strings.Contains(err.Error(), "negative") {
+			t.Fatalf("err = %v, want a negative-duration problem", err)
+		}
+	})
+
+	t.Run("bare seconds accepted like the global", func(t *testing.T) {
+		root := t.TempDir()
+		body := `
+services:
+  - name: slow
+    cmd: [echo, hi]
+    ready_timeout: 45
+`
+		cfg, err := Load(write(t, root, body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := cfg.Services[0].ReadyTimeout; got != 45*time.Second {
+			t.Errorf("ReadyTimeout = %s, want 45s", got)
+		}
+	})
+}

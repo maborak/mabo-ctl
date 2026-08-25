@@ -31,6 +31,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/maborak/mabo-ctl/internal/config"
 	"github.com/maborak/mabo-ctl/internal/state"
@@ -68,6 +69,10 @@ type Instance struct {
 	// Runtime is the declared runtime string ("", "system", "conda:<env>" or
 	// "node:<version>"), kept for display.
 	Runtime string
+	// ReadyTimeout is the service's own readiness window; 0 means inherit the
+	// global ready_timeout. The supervisor reads it through
+	// [Supervisor.readyTimeoutFor], the one place that knows the fallback.
+	ReadyTimeout time.Duration
 	// NoAutostart excludes this service from a bare `mabo-ctl start`.
 	//
 	// It is stored NEGATED so that the zero value is the common answer. A plain
@@ -281,17 +286,18 @@ func build(cfg *config.Config, s config.Spec, port int, exp *expander, base []st
 	}
 
 	return Instance{
-		Name:        s.Name,
-		Dir:         dir,
-		Port:        port,
-		Health:      health,
-		Cmd:         cmd,
-		Env:         buildEnv(base, exp.names, exp.ports, specEnv, rt),
-		Color:       s.Color,
-		DependsOn:   append([]string(nil), s.DependsOn...),
-		Runtime:     s.Runtime,
-		NoAutostart: !s.Autostarts(),
-		CmdErr:      cmdErr,
+		Name:         s.Name,
+		Dir:          dir,
+		Port:         port,
+		Health:       health,
+		Cmd:          cmd,
+		Env:          buildEnv(base, exp.names, exp.ports, specEnv, rt),
+		Color:        s.Color,
+		DependsOn:    append([]string(nil), s.DependsOn...),
+		Runtime:      s.Runtime,
+		ReadyTimeout: s.ReadyTimeout,
+		NoAutostart:  !s.Autostarts(),
+		CmdErr:       cmdErr,
 	}, nil
 }
 

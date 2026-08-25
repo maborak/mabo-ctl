@@ -122,6 +122,7 @@ services:
     dir: backend
     runtime: conda:app-dev
     cmd: [python, cli.py, monitor, run]
+    ready_timeout: 5s      # this service's own window; the global stays 30s
     depends_on: [backend]
 
   - name: seed             # autostart: false — kept out of a bare `mabo-ctl start`
@@ -174,6 +175,11 @@ base and the inline `env:` map overrides it key by key — the same rule as
 docker-compose, so a one-off override does not mean editing the file. The file
 is validated at load time and re-read at every resolve, so editing it takes
 effect on the next start without touching `mabo-ctl.yaml`.
+
+**Per-service `ready_timeout:`** overrides the global for one service — a
+worker that legitimately needs two minutes to warm up sets its own window
+instead of forcing the whole stack to call everything slow for two minutes.
+Leave the key out to inherit the global.
 
 ## Commands
 

@@ -1915,3 +1915,37 @@ func TestEveryServiceManualIsReportedNotSilent(t *testing.T) {
 		t.Error("a start with nothing to do said nothing; that reads as success")
 	}
 }
+
+// TestPerServiceReadyTimeoutOverridesTheGlobal: a service that declares its
+// own ready_timeout crosses from slow to degraded on ITS clock, not the
+// global's — the same spawn-time arithmetic as TestSlowBecomesDegradedPastReady
+// Timeout, with an instance value the global would never produce.
+func TestPerServiceReadyTimeoutOverridesTheGlobal(t *testing.T) {
+	sup, st := fixture(t, service.Instance{
+		Name:   "svc",
+		Cmd:    helperCmd(),
+		Env:    helperEnvFor("sleep"),
+		Health: "http://127.0.0.1:1/", // nothing will ever answer this
+		// The service's own window, far SHORTER than the 30s global: if the
+		// global were consulted, ten minutes ago would still read "slow".
+		ReadyTimeout: 5 * time.Second,
+	})
+	defer func() { _ = sup.Stop(context.Background(), nil, nil); sup.Wait() }()
+
+	if err := sup.Start(context.Background(), nil, nil); err != nil && !errors.Is(err, ErrNotStarted) {
+		t.Fatalf("Start: %v", err)
+	}
+	pid, _ := st.ReadPID("svc")
+	if pid <= 0 || !state.Alive(pid) {
+		t.Fatal("the service is not running, so neither phase is under test")
+	}
+
+	// Ten seconds ago: past the service's own 5s window, inside the 30s
+	// global. Degraded here proves the instance value decided.
+	if err := st.WritePIDAt("svc", pid, time.Now().Add(-10*time.Second)); err != nil {
+		t.Fatalf("WritePIDAt: %v", err)
+	}
+	if got := statusOf(t, sup, "svc"); got.Phase != PhaseDegraded {
+		t.Fatalf("phase past the service's own 5s window = %q, want %q", got.Phase, PhaseDegraded)
+	}
+}

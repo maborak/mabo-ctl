@@ -89,6 +89,11 @@ type Spec struct {
 	// of something that was named: a service must not come up against a
 	// dependency that is not there.
 	Autostart *bool `yaml:"autostart"`
+
+	// ReadyTimeout is this service's readiness window, overriding the global
+	// ready_timeout when set. It is a POINTER for the same reason Autostart is:
+	// absent must mean "use the global", not "no wait at all".
+	ReadyTimeout time.Duration
 }
 
 // Autostarts reports whether a bare `mabo-ctl start` should include this service.
@@ -437,6 +442,8 @@ type specDoc struct {
 	DependsOn []string               `yaml:"depends_on"`
 	Color     string                 `yaml:"color"`
 	Autostart *bool                  `yaml:"autostart"`
+	// ReadyTimeout is a pointer so an absent key means "inherit the global".
+	ReadyTimeout *durationValue `yaml:"ready_timeout"`
 }
 
 func (d specDoc) spec() Spec {
@@ -451,6 +458,9 @@ func (d specDoc) spec() Spec {
 		DependsOn: d.DependsOn,
 		Color:     d.Color,
 		Autostart: d.Autostart,
+	}
+	if d.ReadyTimeout != nil {
+		s.ReadyTimeout = time.Duration(*d.ReadyTimeout)
 	}
 	if d.Env != nil {
 		s.Env = make(map[string]string, len(d.Env))

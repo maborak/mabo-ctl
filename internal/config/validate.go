@@ -178,6 +178,9 @@ func (v *validator) checkServices() {
 		v.checkTemplates(id, s)
 		v.checkEnvKeys(id, s)
 		v.checkEnvFile(id, s)
+		if s.ReadyTimeout < 0 {
+			v.addf("%s: ready_timeout %s is negative; use a positive duration, or leave the key out to inherit the global", id, s.ReadyTimeout)
+		}
 	}
 }
 
