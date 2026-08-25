@@ -422,6 +422,10 @@ func (s Spec) clone() Spec {
 // can stay strict about unknown keys while still accepting the scalar forms a
 // human writes (an unquoted integer env value, "10s" or a bare second count).
 type fileDoc struct {
+	// Schema carries the editor's `$schema:` reference. It is parsed so the
+	// strict decoder accepts the key and IGNORED beyond that: it points an
+	// editor at the schema, it says nothing to mabo-ctl.
+	Schema       string         `yaml:"$schema"`
 	StopGrace    *durationValue `yaml:"stop_grace"`
 	ReadyTimeout *durationValue `yaml:"ready_timeout"`
 	Services     []specDoc      `yaml:"services"`

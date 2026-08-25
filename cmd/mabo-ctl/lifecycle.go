@@ -140,6 +140,7 @@ func (a *app) rootCmd() *cobra.Command {
 		a.replCmd(),
 		a.completionCmd(),
 		a.upgradeCmd(),
+		a.schemaCmd(),
 	)
 	return root
 }

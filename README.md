@@ -146,6 +146,13 @@ shells:                    # mabo-ctl shell <name>
 A fully commented reference file, with every field explained, is in
 [`examples/mabo-ctl.yaml`](examples/mabo-ctl.yaml).
 
+**Editor validation**: `mabo-ctl schema` prints a JSON Schema for the file
+(also checked in at `schema/mabo-ctl.schema.json`). Point your editor at it —
+the example does it with a `# yaml-language-server: $schema=...` line, and the
+parser deliberately accepts a `$schema:` key it ignores. The schema is
+drift-guarded against the shipped example, so a field the parser accepts but
+the schema does not describe is a test failure.
+
 Three things about that file are worth stating outright:
 
 - **Everything is validated at load time**, and every problem is reported at

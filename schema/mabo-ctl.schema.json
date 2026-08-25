@@ -1,0 +1,183 @@
+{
+  "$id": "mabo-ctl.schema.json",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "description": "A JSON Schema reference for editors; mabo-ctl ignores it.",
+      "type": "string"
+    },
+    "checks": {
+      "items": {
+        "additionalProperties": false,
+        "anyOf": [
+          {
+            "required": [
+              "command"
+            ]
+          },
+          {
+            "required": [
+              "tcp"
+            ]
+          }
+        ],
+        "properties": {
+          "command": {
+            "description": "Run this argv; exit 0 passes. Exactly one of command/tcp.",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "type": "array"
+          },
+          "name": {
+            "description": "Check name, shown in preflight output.",
+            "type": "string"
+          },
+          "tcp": {
+            "description": "Dial host:port; connecting passes. Exactly one of command/tcp.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "ready_timeout": {
+      "description": "How long a readiness probe polls before a service is slow, then degraded. Default 30s. Accepts \"10s\", \"1m30s\", \"500ms\" or a bare number of seconds.",
+      "type": [
+        "string",
+        "number"
+      ]
+    },
+    "services": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "autostart": {
+            "description": "false opts out of a bare `mabo-ctl start` only; naming the service always starts it. Default true.",
+            "type": "boolean"
+          },
+          "cmd": {
+            "description": "The argv to run — never a shell string. cmd[0] is resolved through runtime:.",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "type": "array"
+          },
+          "color": {
+            "description": "Terminal colour for this service's label: a name (green, blue, bright-cyan, …), a 0-255 palette number, or #rrggbb.",
+            "type": "string"
+          },
+          "depends_on": {
+            "description": "Services that start first. Orders STARTS only — stop never expands dependencies.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "dir": {
+            "description": "Working directory relative to this file; must exist and stay inside the repo root. Defaults to the repo root.",
+            "type": "string"
+          },
+          "env": {
+            "additionalProperties": {
+              "description": "Environment values are scalars; unquoted numbers and booleans are read as strings.",
+              "type": [
+                "string",
+                "number",
+                "boolean",
+                "null"
+              ]
+            },
+            "description": "Inline environment. Values are templates. Overrides env_file key by key.",
+            "type": "object"
+          },
+          "env_file": {
+            "description": "KEY=VALUE file anchored at the repo root; inline env: overrides it. Validated at load, re-read at every resolve.",
+            "type": "string"
+          },
+          "health": {
+            "description": "Readiness URL; {{.Port}} and {{.Port \"name\"}} templates allowed. Empty = no readiness probe.",
+            "type": "string"
+          },
+          "name": {
+            "description": "Required. Must match the pattern: the name composes .dev/logs/\u003cname\u003e.log and .dev/pids/\u003cname\u003e.pid, so / or .. would write outside .dev/.",
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$",
+            "type": "string"
+          },
+          "port": {
+            "description": "0 (the default) = no port and no port guard.",
+            "maximum": 65535,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "ready_timeout": {
+            "description": "This service's own readiness window, overriding the global. Leave out to inherit. Accepts \"10s\", \"1m30s\", \"500ms\" or a bare number of seconds.",
+            "type": [
+              "string",
+              "number"
+            ]
+          },
+          "runtime": {
+            "description": "\"\", \"system\", \"conda:\u003cenv\u003e\" or \"node:\u003cversion\u003e\". Resolves cmd[0] to an absolute interpreter path; never falls back to ambient PATH.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "cmd"
+        ],
+        "type": "object"
+      },
+      "minItems": 1,
+      "type": "array"
+    },
+    "shells": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "description": "The argv to run.",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "type": "array"
+          },
+          "name": {
+            "description": "Shell name for `mabo-ctl shell \u003cname\u003e`.",
+            "type": "string"
+          },
+          "service": {
+            "description": "Service whose dir and environment to reuse; empty means the repo root and the caller's environment.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "command"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "stop_grace": {
+      "description": "How long Stop waits after SIGTERM before SIGKILL. Default 10s. Accepts \"10s\", \"1m30s\", \"500ms\" or a bare number of seconds.",
+      "type": [
+        "string",
+        "number"
+      ]
+    }
+  },
+  "required": [
+    "services"
+  ],
+  "title": "mabo-ctl.yaml",
+  "type": "object"
+}

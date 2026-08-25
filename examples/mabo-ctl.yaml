@@ -1,5 +1,7 @@
 # mabo-ctl.yaml — the service registry for one repository.
 #
+# yaml-language-server: $schema=../schema/mabo-ctl.schema.json
+#
 # Copy this file to the root of your repo and edit it. mabo-ctl finds it by
 # walking UP from the current directory, the same way git finds .git, so
 # `mabo-ctl status` works from any subdirectory. `mabo-ctl --config <path>` skips
