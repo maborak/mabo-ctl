@@ -177,6 +177,7 @@ func (v *validator) checkServices() {
 		v.checkRuntime(id, s.Runtime)
 		v.checkTemplates(id, s)
 		v.checkEnvKeys(id, s)
+		v.checkEnvFile(id, s)
 	}
 }
 
@@ -295,13 +296,55 @@ func (v *validator) checkTemplates(id string, s Spec) {
 // "KEY=VALUE" for exec.Cmd.Env.
 func (v *validator) checkEnvKeys(id string, s Spec) {
 	for _, k := range sortedKeys(s.Env) {
-		switch {
-		case strings.TrimSpace(k) == "":
-			v.addf("%s: env has an empty variable name", id)
-		case strings.ContainsAny(k, "=\x00"):
-			v.addf("%s: invalid env variable name %q; a name may not contain %q or a NUL byte, "+
-				"because the variable is passed to the child as \"KEY=VALUE\"", id, k, "=")
+		v.checkEnvKeyName(id, "env", k)
+	}
+}
+
+// checkEnvKeyName applies the env-key rules to one variable name, labelled by
+// where it came from ("env" or "env_file"), so a file entry is held to the
+// same standard as an inline one.
+func (v *validator) checkEnvKeyName(id, source, k string) {
+	switch {
+	case strings.TrimSpace(k) == "":
+		v.addf("%s: %s has an empty variable name", id, source)
+	case strings.ContainsAny(k, "=\x00"):
+		v.addf("%s: invalid env variable name %q; a name may not contain %q or a NUL byte, "+
+			"because the variable is passed to the child as \"KEY=VALUE\"", id, k, "=")
+	}
+}
+
+// checkEnvFile validates a service's env_file: the path must resolve inside
+// the project root, the file must parse as KEY=VALUE lines, and every key and
+// template value in it is held to the same rules as an inline env entry. The
+// file is read here AND again at resolve time — the load-time read turns a
+// broken file into a listed validation problem, the resolve-time read picks up
+// edits without demanding a reload.
+func (v *validator) checkEnvFile(id string, s Spec) {
+	if s.EnvFile == "" {
+		return
+	}
+	path := s.EnvFilePath(v.cfg.Root)
+	if !within(v.cfg.Root, path) {
+		v.addf("%s: env_file %q resolves to %s, which is outside the project root %s; "+
+			"an env file further up belongs to something else", id, s.EnvFile, path, v.cfg.Root)
+		return
+	}
+	fileEnv, err := ParseEnvFile(path)
+	if err != nil {
+		v.addf("%s: %v", id, err)
+		return
+	}
+	check := func(what, text string) {
+		if !strings.Contains(text, "{{") {
+			return
 		}
+		if _, err := template.New("t").Parse(text); err != nil {
+			v.addf("%s: %s is not a valid template: %v", id, what, err)
+		}
+	}
+	for _, k := range sortedKeys(fileEnv) {
+		v.checkEnvKeyName(id, "env_file", k)
+		check(fmt.Sprintf("env_file[%q] %q", k, fileEnv[k]), fileEnv[k])
 	}
 }
 

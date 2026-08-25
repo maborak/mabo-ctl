@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -1215,5 +1216,105 @@ func TestDiscoverStillClimbsToAPrivateDirectory(t *testing.T) {
 	}
 	if filepath.Dir(cfg.Path) != root {
 		t.Errorf("loaded %s, want %s", cfg.Path, root)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// env_file
+// ---------------------------------------------------------------------------
+
+// TestParseEnvFile covers the file grammar: comments, blanks, first-= splits,
+// later-line overrides, and an error that names the offending line.
+func TestParseEnvFile(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".env")
+	body := "# comment\n\nA=1\nB = spaced value \nA=overrides\nEMPTY=\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ParseEnvFile(path)
+	if err != nil {
+		t.Fatalf("ParseEnvFile: %v", err)
+	}
+	want := map[string]string{"A": "overrides", "B": "spaced value", "EMPTY": ""}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+
+	bad := filepath.Join(dir, "bad.env")
+	if err := os.WriteFile(bad, []byte("GOOD=1\nNOTAPAIR\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ParseEnvFile(bad); err == nil || !strings.Contains(err.Error(), "line 2") {
+		t.Fatalf("err = %v, want a failure naming line 2", err)
+	}
+}
+
+// TestEnvFileValidation holds env_file entries to the same rules as inline
+// env: traversal outside the root, a malformed line, a bad variable name and a
+// broken template are all load-time problems.
+func TestEnvFileValidation(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name    string
+		envFile string
+		want    string
+	}{
+		{"escapes the root", "../../etc/secrets", "outside the project root"},
+		{"missing file", "absent.env", "no such file"},
+		{"malformed line", "broken.env", "not KEY=VALUE"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			if tc.envFile == "broken.env" {
+				if err := os.WriteFile(filepath.Join(root, "broken.env"), []byte("NOTAPAIR\n"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			body := "services:\n  - name: backend\n    cmd: [echo, hi]\n    env_file: " + tc.envFile + "\n"
+			_, err := Load(write(t, root, body))
+			var ve *ValidationError
+			if !errors.As(err, &ve) || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want a ValidationError naming %q", err, tc.want)
+			}
+		})
+	}
+
+	t.Run("bad key and broken template in the file", func(t *testing.T) {
+		root := t.TempDir()
+		if err := os.WriteFile(filepath.Join(root, "svc.env"),
+			[]byte("=NOVALUE\nTEMPLATE={{oops\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		body := "services:\n  - name: backend\n    cmd: [echo, hi]\n    env_file: svc.env\n"
+		_, err := Load(write(t, root, body))
+		var ve *ValidationError
+		if !errors.As(err, &ve) {
+			t.Fatalf("err = %v, want a ValidationError", err)
+		}
+		msg := err.Error()
+		if !(strings.Contains(msg, "invalid env variable name") || strings.Contains(msg, "empty variable name")) ||
+			!strings.Contains(msg, "env_file") {
+			t.Errorf("the bad key was not reported as an env_file problem:\n%s", msg)
+		}
+		if !strings.Contains(msg, "is not a valid template") {
+			t.Errorf("the broken template was not reported:\n%s", msg)
+		}
+	})
+}
+
+// TestEnvFileAbsentMeansNoEnv: a service without env_file behaves exactly as
+// before — the field's absence is not an error and changes nothing.
+func TestEnvFileAbsentMeansNoEnv(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	cfg, err := Load(write(t, root, okService))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Services[0].EnvFile != "" {
+		t.Errorf("EnvFile = %q, want empty", cfg.Services[0].EnvFile)
 	}
 }

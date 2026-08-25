@@ -72,7 +72,8 @@ type Spec struct {
 	Health    string            `yaml:"health"` // "" = no readiness probe
 	Cmd       []string          `yaml:"cmd"`
 	Env       map[string]string `yaml:"env"`
-	Runtime   string            `yaml:"runtime"` // "", "system", "conda:<env>", "node:<ver>"
+	EnvFile   string            `yaml:"env_file"` // KEY=VALUE file; env: overrides it
+	Runtime   string            `yaml:"runtime"`  // "", "system", "conda:<env>", "node:<ver>"
 	DependsOn []string          `yaml:"depends_on"`
 	Color     string            `yaml:"color"`
 
@@ -94,6 +95,20 @@ type Spec struct {
 // An unset autostart field means yes, which is what every config written before
 // the field existed means.
 func (s Spec) Autostarts() bool { return s.Autostart == nil || *s.Autostart }
+
+// EnvFilePath resolves the service's env_file against the project root, the
+// same anchor as dir. An empty EnvFile yields "". The path is cleaned but NOT
+// checked against the root — that is validation's job at load time; callers
+// that arrive without a load (there are none today) must not assume it.
+func (s Spec) EnvFilePath(root string) string {
+	if s.EnvFile == "" {
+		return ""
+	}
+	if filepath.IsAbs(s.EnvFile) {
+		return filepath.Clean(s.EnvFile)
+	}
+	return filepath.Clean(filepath.Join(root, s.EnvFile))
+}
 
 // Check is a preflight probe: exactly one of Command or TCP is set.
 type Check struct {
@@ -417,6 +432,7 @@ type specDoc struct {
 	Health    string                 `yaml:"health"`
 	Cmd       []string               `yaml:"cmd"`
 	Env       map[string]scalarValue `yaml:"env"`
+	EnvFile   string                 `yaml:"env_file"`
 	Runtime   string                 `yaml:"runtime"`
 	DependsOn []string               `yaml:"depends_on"`
 	Color     string                 `yaml:"color"`
@@ -430,6 +446,7 @@ func (d specDoc) spec() Spec {
 		Port:      d.Port,
 		Health:    d.Health,
 		Cmd:       d.Cmd,
+		EnvFile:   d.EnvFile,
 		Runtime:   d.Runtime,
 		DependsOn: d.DependsOn,
 		Color:     d.Color,
@@ -501,4 +518,33 @@ func nodeKind(k yaml.Kind) string {
 	default:
 		return "an unknown node"
 	}
+}
+
+// ParseEnvFile reads a KEY=VALUE environment file: one variable per line,
+// blank lines and `#` comments skipped, the value being everything after the
+// first `=` with surrounding spaces trimmed (so `KEY = value` and quoted
+// values behave as the file author wrote them). It names the file and line
+// number for any line that is none of those, because an env file that half
+// parses is worse than one that refuses to.
+//
+// Later lines override earlier ones: the file is read top to bottom and a map
+// cannot express the difference.
+func ParseEnvFile(path string) (map[string]string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("config: read env file %s: %w", path, err)
+	}
+	out := make(map[string]string)
+	for i, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		k, v, ok := strings.Cut(line, "=")
+		if !ok {
+			return nil, fmt.Errorf("config: %s line %d: %q is not KEY=VALUE; env files hold one VARIABLE=value per line", path, i+1, line)
+		}
+		out[strings.TrimSpace(k)] = strings.TrimSpace(v)
+	}
+	return out, nil
 }

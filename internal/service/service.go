@@ -234,9 +234,25 @@ func build(cfg *config.Config, s config.Spec, port int, exp *expander, base []st
 		return Instance{}, fmt.Errorf("service %q: cmd[0] expanded to an empty string", s.Name)
 	}
 
+	// The env file lays the base and the inline env overrides it, key by key:
+	// compose semantics, so a one-off override does not mean editing the file.
+	// The file is parsed AGAIN here, after load-time validation, so an edit to
+	// it is picked up by the next resolve without touching mabo-ctl.yaml.
 	specEnv := make(map[string]string, len(s.Env))
-	for _, k := range sortedKeys(s.Env) {
-		expanded, err := exp.expand(s.Name, fmt.Sprintf("env[%q]", k), s.Env[k])
+	if s.EnvFile != "" {
+		fileEnv, err := config.ParseEnvFile(s.EnvFilePath(cfg.Root))
+		if err != nil {
+			return Instance{}, fmt.Errorf("service %q: %w", s.Name, err)
+		}
+		for k, v := range fileEnv {
+			specEnv[k] = v
+		}
+	}
+	for k, v := range s.Env {
+		specEnv[k] = v
+	}
+	for _, k := range sortedKeys(specEnv) {
+		expanded, err := exp.expand(s.Name, fmt.Sprintf("env[%q]", k), specEnv[k])
 		if err != nil {
 			return Instance{}, err
 		}

@@ -115,6 +115,7 @@ services:
     health: http://localhost:{{.Port}}/health
     runtime: conda:app-dev
     cmd: [uvicorn, "api_main:app", --port, "{{.Port}}", --reload]
+    env_file: backend.env   # KEY=VALUE lines; inline `env:` overrides a shared key
     color: blue
 
   - name: worker           # no port, no health: "running" once it is alive
@@ -164,8 +165,15 @@ Three things about that file are worth stating outright:
   mabo-ctl does not care whether it was invoked from a login shell.
 
 `{{.Port}}` is this service's resolved port and `{{.Port "backend"}}` is another
-service's. Templates are expanded in `cmd`, `env` values and `health`, *after*
-every port has resolved.
+service's. Templates are expanded in `cmd`, `env` values, `env_file` values and
+`health`, *after* every port has resolved.
+
+**`env_file:`** points at a file of `KEY=VALUE` lines (blank lines and `#`
+comments ignored), anchored at the repository root like `dir:`. It lays the
+base and the inline `env:` map overrides it key by key — the same rule as
+docker-compose, so a one-off override does not mean editing the file. The file
+is validated at load time and re-read at every resolve, so editing it takes
+effect on the next start without touching `mabo-ctl.yaml`.
 
 ## Commands
 

@@ -1644,3 +1644,71 @@ func TestSelectLevelsPropagatesSelectErrors(t *testing.T) {
 		t.Error("an unknown service name was accepted")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// env_file
+// ---------------------------------------------------------------------------
+
+// TestEnvFileFeedsTheChildEnvironment: file values land in Instance.Env,
+// inline env overrides the same key, and a template inside the file expands.
+func TestEnvFileFeedsTheChildEnvironment(t *testing.T) {
+	root, _ := testRepo(t)
+	envPath := filepath.Join(root, "api.env")
+	if err := os.WriteFile(envPath, []byte(
+		"# base\nSHARED=from-file\nFILE_ONLY=hello\nURL=http://localhost:{{.Port}}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := testConfig(t, root, config.Spec{
+		Name: "backend", Port: 7102, Cmd: []string{"runme"},
+		EnvFile: "api.env",
+		Env:     map[string]string{"SHARED": "from-inline"},
+	})
+
+	insts, _, err := Resolve(cfg, nil, Options{})
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	env := instFor(t, insts, "backend").Env
+	for k, want := range map[string]string{
+		"SHARED":    "from-inline", // inline wins over the file
+		"FILE_ONLY": "hello",
+		"URL":       "http://localhost:7102", // file values are templates too
+	} {
+		if got, ok := envValue(env, k); !ok || got != want {
+			t.Errorf("%s = %q (present=%t), want %q", k, got, ok, want)
+		}
+	}
+}
+
+// TestEnvFileRereadAtResolve: the file is parsed at RESOLVE time, so an edit
+// after Load is picked up without touching mabo-ctl.yaml.
+func TestEnvFileRereadAtResolve(t *testing.T) {
+	root, _ := testRepo(t)
+	envPath := filepath.Join(root, "api.env")
+	if err := os.WriteFile(envPath, []byte("TOKEN=before\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := testConfig(t, root, config.Spec{Name: "backend", Cmd: []string{"runme"}, EnvFile: "api.env"})
+
+	if err := os.WriteFile(envPath, []byte("TOKEN=after\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	insts, _, err := Resolve(cfg, nil, Options{})
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if got, _ := envValue(instFor(t, insts, "backend").Env, "TOKEN"); got != "after" {
+		t.Errorf("TOKEN = %q, want the edited value %q", got, "after")
+	}
+}
+
+// TestEnvFileBrokenAtResolveIsAnError: a file deleted or broken after load
+// fails the resolve naming the service, instead of silently starting with a
+// half environment.
+func TestEnvFileBrokenAtResolveIsAnError(t *testing.T) {
+	root, _ := testRepo(t)
+	cfg := testConfig(t, root, config.Spec{Name: "backend", Cmd: []string{"runme"}, EnvFile: "gone.env"})
+	if _, _, err := Resolve(cfg, nil, Options{}); err == nil || !strings.Contains(err.Error(), "backend") {
+		t.Fatalf("err = %v, want a failure naming the service", err)
+	}
+}

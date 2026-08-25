@@ -99,6 +99,10 @@ type ConfigService struct {
 	// resolved environment, which is the caller's entire environment; see
 	// redact.Env.
 	Env []redact.Var `json:"env"`
+	// EnvFile is the service's declared env_file path as written, "" when it
+	// declares none. The file's values are merged into Env at resolve time and
+	// redacted there; this row exists so the reader knows the file exists.
+	EnvFile string `json:"env_file,omitempty"`
 	// DependsOn lists the services that start first.
 	DependsOn []string `json:"depends_on"`
 	// Color is the label colour declared in mabo-ctl.yaml, "" when none.
@@ -175,6 +179,7 @@ func BuildConfigView(in ConfigInput) ConfigView {
 		// Instance.Env, which is the whole environment mabo-ctl was started with.
 		if spec, ok := in.Config.Service(inst.Name); ok {
 			svc.Env = redact.Env(spec.Env)
+			svc.EnvFile = spec.EnvFile
 		}
 		view.Services = append(view.Services, svc)
 	}
@@ -300,6 +305,9 @@ func (r *Renderer) configService(s ConfigService) string {
 	}
 	if len(s.DependsOn) > 0 {
 		lines = append(lines, r.configField("depends", strings.Join(s.DependsOn, ", ")))
+	}
+	if s.EnvFile != "" {
+		lines = append(lines, r.configField("env_file", s.EnvFile))
 	}
 	for i, e := range s.Env {
 		label := ""
