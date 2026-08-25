@@ -764,6 +764,17 @@ ol.argv-list li code { color: var(--text); }
 .log-line { padding: 0 var(--sp-3); white-space: pre-wrap; color: var(--text); }
 .log-line.meta { color: var(--text-faint); font-style: italic; }
 .log-line.err  { color: var(--danger); }
+/* Severity tints applied by detectLevel(); info keeps the default ink so a
+   page full of routine chatter does not turn into a Christmas tree. */
+.log-line.lvl-error { color: var(--danger); }
+.log-line.lvl-warn  { color: var(--warn); }
+.log-line.lvl-debug { color: var(--text-faint); }
+.log-line.ok        { color: var(--ok); }
+/* The severity chips sit between the text filter and the count. */
+.log-levels { display: inline-flex; gap: 2px; }
+.log-levels button.toggle[aria-pressed="true"] {
+  background: var(--surface-3); border-color: var(--border-strong); color: var(--text);
+}
 .log-empty {
   padding: var(--sp-4); color: var(--text-faint); text-align: center;
   font-family: var(--font); font-size: var(--fs-sm); font-style: italic;
@@ -1444,6 +1455,44 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
      page up one appendChild at a time.
      ======================================================================= */
 
+  // detectLevel classifies one raw output line by severity so the level chips
+  // have something to filter on. Only JSON can carry a level: anything that
+  // does not parse, or parses without a recognised level key or value, is
+  // plain output and shows under every chip. Success folds into info but keeps
+  // a green tint, because "it worked" is not the same ink as routine chatter.
+  var LEVEL_KEYS = ["log.level", "level", "severity", "loglevel", "lvl"];
+  var LEVEL_MAP = {
+    error: "error", err: "error", fatal: "error", critical: "error",
+    crit: "error", emerg: "error", alert: "error", panic: "error",
+    warn: "warn", warning: "warn",
+    debug: "debug", trace: "debug", verbose: "debug",
+    info: "info", informational: "info", notice: "info",
+    success: "info", ok: "info", succeeded: "info"
+  };
+  var LEVEL_TINTS = { success: "ok", ok: "ok", succeeded: "ok" };
+
+  function detectLevel(text) {
+    var s = text;
+    if (s.charAt(0) !== "{") {
+      s = s.replace(/^\s+/, "");
+      if (s.charAt(0) !== "{") { return null; }
+    }
+    var obj;
+    try { obj = JSON.parse(s); } catch (e) { return null; }
+    if (!obj || typeof obj !== "object" || obj instanceof Array) { return null; }
+    for (var i = 0; i < LEVEL_KEYS.length; i++) {
+      var v = obj[LEVEL_KEYS[i]];
+      if (typeof v !== "string") { continue; }
+      // The first string-valued level key wins, recognised or not: guessing a
+      // second key when the first said something unexpected would relabel a
+      // line the service already classified.
+      var k = v.toLowerCase();
+      if (!Object.prototype.hasOwnProperty.call(LEVEL_MAP, k)) { return null; }
+      return { lvl: LEVEL_MAP[k], tint: LEVEL_TINTS[k] || "" };
+    }
+    return null;
+  }
+
   function LogPane() {
     var self = this;
     this.name = "";
@@ -1454,6 +1503,8 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     this.pausedCount = 0;
     this.follow = true;
     this.filter = "";
+    this.levelFilter = "";    // "" = All; otherwise one of detectLevel's buckets
+    this.chipButtons = null;  // level -> button, built below
     this.es = null;
     this.retryAt = RECONNECT_MIN;
     this.retryTimer = 0;
@@ -1522,6 +1573,31 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
       }, 120);
     });
     bar.appendChild(this.filterBox);
+
+    // Severity chips. Pressed means "only this bucket", All is the reset — the
+    // same one-toggle-per-state grammar as Stream/Pause/Follow, so nothing new
+    // is taught. They deliberately do NOT reuse the accent-blue pressed style:
+    // blue already means "transport active" on this bar, and a blue chip would
+    // read as a second stream control rather than a filter.
+    this.levelChips = el("span", "log-levels");
+    this.levelChips.setAttribute("role", "group");
+    this.levelChips.setAttribute("aria-label", "filter log lines by level");
+    var LEVEL_CHIPS = [["", "All"], ["error", "Err"], ["warn", "Warn"], ["info", "Info"], ["debug", "Dbg"]];
+    this.chipButtons = {};
+    for (var ci = 0; ci < LEVEL_CHIPS.length; ci++) {
+      (function (level, label, pane) {
+        var b = el("button", "toggle tiny", label);
+        b.type = "button";
+        b.setAttribute("aria-pressed", level === "" ? "true" : "false");
+        b.title = level
+          ? "Show only " + label.toLowerCase() + "-level lines"
+          : "Show every line regardless of level";
+        b.addEventListener("click", function () { pane.setLevelFilter(level); });
+        pane.levelChips.appendChild(b);
+        pane.chipButtons[level] = b;
+      })(LEVEL_CHIPS[ci][0], LEVEL_CHIPS[ci][1], self);
+    }
+    bar.appendChild(this.levelChips);
 
     this.count = el("span", "log-count", "0 lines");
     bar.appendChild(this.count);
@@ -1597,6 +1673,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     this.pending = [];
     this.pausedCount = 0;
     this.retryAt = RECONNECT_MIN;
+    this.setLevelFilter("");   // a new service starts unfiltered
     this.title.textContent = "output · " + name;
     this.root.setAttribute("aria-label", "log output for " + name);
     this.filterBox.setAttribute("aria-label", "filter " + name + " log lines");
@@ -1611,6 +1688,16 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     this.jump.hidden = on;
   };
 
+  LogPane.prototype.setLevelFilter = function (level) {
+    this.levelFilter = level;
+    for (var k in this.chipButtons) {
+      if (Object.prototype.hasOwnProperty.call(this.chipButtons, k)) {
+        this.chipButtons[k].setAttribute("aria-pressed", k === level ? "true" : "false");
+      }
+    }
+    this.rebuild();
+  };
+
   LogPane.prototype.togglePause = function () {
     this.paused = !this.paused;
     this.btnPause.setAttribute("aria-pressed", this.paused ? "true" : "false");
@@ -1623,7 +1710,10 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
   };
 
   LogPane.prototype.push = function (text, kind) {
-    this.buf.push({ text: text, kind: kind || "" });
+    // Classify once at ingest: tail-backfill and live lines both enter here,
+    // and flush/rebuild must never re-parse a line already in the buffer.
+    var sev = detectLevel(text);
+    this.buf.push({ text: text, kind: kind || "", lvl: sev ? sev.lvl : "", tint: sev ? sev.tint : "" });
     if (this.buf.length > MAX_LINES) { this.buf.splice(0, this.buf.length - MAX_LINES); }
     if (this.paused) {
       this.pausedCount++;
@@ -1644,7 +1734,8 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
   };
 
   LogPane.prototype.matches = function (rec) {
-    return !this.filter || rec.text.toLowerCase().indexOf(this.filter) >= 0;
+    if (this.filter && rec.text.toLowerCase().indexOf(this.filter) < 0) { return false; }
+    return !this.levelFilter || rec.lvl === this.levelFilter;
   };
 
   LogPane.prototype.flush = function () {
@@ -1655,7 +1746,9 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     var frag = document.createDocumentFragment(), drew = 0;
     for (var i = 0; i < batch.length; i++) {
       if (!this.matches(batch[i])) { continue; }
-      frag.appendChild(el("div", "log-line" + (batch[i].kind ? " " + batch[i].kind : ""), batch[i].text));
+      var r = batch[i];
+      frag.appendChild(el("div", "log-line" + (r.kind ? " " + r.kind : "") +
+        (r.lvl ? " lvl-" + r.lvl : "") + (r.tint ? " " + r.tint : ""), r.text));
       drew++;
     }
     if (drew) {
@@ -1679,14 +1772,19 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     var frag = document.createDocumentFragment(), drew = 0;
     for (var i = 0; i < this.buf.length; i++) {
       if (!this.matches(this.buf[i])) { continue; }
-      frag.appendChild(el("div", "log-line" + (this.buf[i].kind ? " " + this.buf[i].kind : ""), this.buf[i].text));
+      var r = this.buf[i];
+      frag.appendChild(el("div", "log-line" + (r.kind ? " " + r.kind : "") +
+        (r.lvl ? " lvl-" + r.lvl : "") + (r.tint ? " " + r.tint : ""), r.text));
       drew++;
     }
     this.body.appendChild(frag);
     this.empty.hidden = drew > 0;
     if (!drew) {
+      // Name the level the way the service list names its phase: a reader who
+      // sees an empty pane has to know which of the two active filters ate it.
       this.empty.textContent = this.buf.length
-        ? "No line matches this filter (" + this.buf.length + " held)."
+        ? "No line matches this filter (" + this.buf.length + " held)" +
+          (this.levelFilter ? " at level " + this.levelFilter : "") + "."
         : "No output yet.";
     }
     this.paintCount();
@@ -1705,7 +1803,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
   LogPane.prototype.paintCount = function () {
     var shown = this.body.getElementsByClassName("log-line").length;
     var s = this.buf.length + (this.buf.length === 1 ? " line" : " lines");
-    if (this.filter) { s = shown + " of " + s; }
+    if (this.filter || this.levelFilter) { s = shown + " of " + s; }
     if (this.paused && this.pausedCount) { s += " · " + this.pausedCount + " held"; }
     if (this.buf.length >= MAX_LINES) { s += " · oldest dropped"; }
     this.count.textContent = s;

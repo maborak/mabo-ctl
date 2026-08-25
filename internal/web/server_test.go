@@ -1868,6 +1868,33 @@ func TestConsolePageHasNoClientSidePhaseReconciliation(t *testing.T) {
 	}
 }
 
+// TestConsolePageClassifiesAndFiltersLogLevels is the drift guard for the log
+// pane's severity filter. The classification lives entirely in the page's
+// JavaScript because the stream carries raw child output — the server never
+// parses a line it only relays — so nothing in Go can vouch that the feature
+// survived a page rewrite. These assertions pin the pieces that make it work:
+// the detector, one CSS rule per bucket, the pressed-state chip grammar and
+// the match gate that lets a level filter compose with the text filter.
+func TestConsolePageClassifiesAndFiltersLogLevels(t *testing.T) {
+	t.Parallel()
+	for _, want := range []string{
+		"function detectLevel(", // the classifier itself
+		`"log.level"`,           // ECS dotted key first: the common case
+		".log-line.lvl-error ",  // one tint per bucket …
+		".log-line.lvl-warn ",
+		".log-line.lvl-debug ",
+		".log-line.ok ",                           // … success folded into info keeps its own ink
+		`aria-label", "filter log lines by level`, // the chip group is announced
+		`"All"`, `"Err"`, `"Warn"`, `"Info"`, `"Dbg"`, // the whole chip set
+		"setLevelFilter",               // chips actually drive the pane …
+		"rec.lvl === this.levelFilter", // … through the same matches() gate as the text filter
+	} {
+		if !strings.Contains(consoleHTML, want) {
+			t.Errorf("console.html lost %q; the log level filter is not wired", want)
+		}
+	}
+}
+
 // TestStatusRedactsCredentialsInTheProbeFailure covers the channel that opened
 // when the supervisor started quoting the dial error in Detail: a failed probe
 // names the URL it dialled VERBATIM, so redacting the health field alone would
