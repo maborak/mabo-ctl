@@ -2093,7 +2093,7 @@ func TestStreamAllRequiresASession(t *testing.T) {
 func TestConsolePageHasAMergedLogMode(t *testing.T) {
 	t.Parallel()
 	for _, want := range []string{
-		`"All"`,                      // the toggle button
+		`"All services"`,             // the toggle button
 		"bindAll",                    // entering merged mode
 		`this.name = "all"`,          // the sentinel that keeps stale-frame guards working
 		"all services",               // title and aria strings

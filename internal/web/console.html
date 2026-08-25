@@ -1496,6 +1496,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
   function LogPane() {
     var self = this;
     this.name = "";
+    this.lastName = "";       // the last single service bound, for leaving merged mode
     this.all = false;         // merged mode: every service's tail in this pane
     this.buf = [];            // { text, kind }
     this.pending = [];
@@ -1539,14 +1540,19 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     // Merged mode: every service's tail fanned into this one pane, each line
     // labelled with its service. The text filter and the level chips already
     // operate on whatever the buffer holds, so in this mode they ARE the
-    // cross-service search. Selecting a service row leaves merged mode the
-    // ordinary way — through bind(name).
-    this.btnAll = el("button", "toggle", "All");
+    // cross-service search. A true toggle: clicking again returns to the
+    // service that was selected before, and selecting a service row leaves
+    // merged mode the ordinary way — through bind(name).
+    this.btnAll = el("button", "toggle", "All services");
     this.btnAll.type = "button";
     this.btnAll.setAttribute("aria-pressed", "false");
-    this.btnAll.title = "Stream every service's output into this pane, labelled";
+    this.btnAll.title = "Stream every service's output into this pane, labelled; click again to return to the selected service";
     this.btnAll.addEventListener("click", function () {
-      if (!self.all) { self.bindAll(); }
+      if (self.all) {
+        if (self.lastName) { self.bind(self.lastName); }
+        return;
+      }
+      self.bindAll();
     });
     bar.appendChild(this.btnAll);
 
@@ -1685,6 +1691,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
   LogPane.prototype.bind = function (name) {
     this.stop();
     this.name = name;
+    this.lastName = name;
     this.all = false;
     this.btnAll.setAttribute("aria-pressed", "false");
     this.buf = [];
