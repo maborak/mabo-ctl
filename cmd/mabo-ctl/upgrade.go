@@ -68,7 +68,7 @@ func (a *app) runUpgrade(ctx context.Context, force bool) error {
 	}
 
 	fmt.Fprintln(a.env.Stderr, "checking the latest mabo-ctl release")
-	rel, err := selfupdate.Latest(ctx, selfupdate.Options{})
+	rel, err := selfupdate.Latest(ctx, selfupdate.Options{Token: githubToken()})
 	if err != nil {
 		return err
 	}
@@ -92,10 +92,21 @@ func (a *app) runUpgrade(ctx context.Context, force bool) error {
 	}
 
 	fmt.Fprintf(a.env.Stderr, "downloading %s (%s)\n", rel.Tag, rel.AssetName)
-	if err := selfupdate.Apply(ctx, selfupdate.Options{}, exe, rel); err != nil {
+	if err := selfupdate.Apply(ctx, selfupdate.Options{Token: githubToken()}, exe, rel); err != nil {
 		return err
 	}
 	fmt.Fprintf(a.env.Stdout, "upgraded %s → %s; the running process keeps the old image until it exits\n",
 		version, rel.Tag)
 	return nil
+}
+
+// githubToken reads the token that authenticates a private repository's
+// releases. GITHUB_TOKEN first, GH_TOKEN second — the same precedence the gh
+// CLI documents. Empty means anonymous, which is right for a public repo and
+// gets an honest 404 for a private one.
+func githubToken() string {
+	if t := os.Getenv("GITHUB_TOKEN"); t != "" {
+		return t
+	}
+	return os.Getenv("GH_TOKEN")
 }
