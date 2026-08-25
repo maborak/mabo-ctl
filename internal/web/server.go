@@ -428,6 +428,11 @@ func (s *Server) routes() *http.ServeMux {
 	get("GET /api/config", s.handleConfig)
 	get("GET /api/status", s.handleStatus)
 	get("GET /api/logs/{svc}", s.handleLogs)
+	// The merged stream is a LITERAL pattern, registered deliberately beside
+	// the parameterised one: Go's mux prefers the more specific pattern, so
+	// "all" reaches handleStreamAll and every other name reaches
+	// handleStream, which still rejects it as an unknown service.
+	get("GET /api/stream/all", s.handleStreamAll)
 	get("GET /api/stream/{svc}", s.handleStream)
 	get("GET /api/events", s.handleEvents)
 	get("GET /api/origins", s.handleGetOrigins)

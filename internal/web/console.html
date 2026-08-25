@@ -1496,6 +1496,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
   function LogPane() {
     var self = this;
     this.name = "";
+    this.all = false;         // merged mode: every service's tail in this pane
     this.buf = [];            // { text, kind }
     this.pending = [];
     this.frame = 0;
@@ -1534,6 +1535,20 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
       if (self.wanted) { self.close(""); } else if (self.name) { self.open(); }
     });
     bar.appendChild(this.btnStream);
+
+    // Merged mode: every service's tail fanned into this one pane, each line
+    // labelled with its service. The text filter and the level chips already
+    // operate on whatever the buffer holds, so in this mode they ARE the
+    // cross-service search. Selecting a service row leaves merged mode the
+    // ordinary way — through bind(name).
+    this.btnAll = el("button", "toggle", "All");
+    this.btnAll.type = "button";
+    this.btnAll.setAttribute("aria-pressed", "false");
+    this.btnAll.title = "Stream every service's output into this pane, labelled";
+    this.btnAll.addEventListener("click", function () {
+      if (!self.all) { self.bindAll(); }
+    });
+    bar.appendChild(this.btnAll);
 
     this.btnPause = el("button", "toggle", "Pause");
     this.btnPause.type = "button";
@@ -1665,10 +1680,13 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
   }
 
   // bind points the one pane at a different service. Closing the old transport
-  // FIRST is the whole point of this method.
+  // FIRST is the whole point of this method. It also leaves merged mode: the
+  // sentinel name "all" is only ever set by bindAll.
   LogPane.prototype.bind = function (name) {
     this.stop();
     this.name = name;
+    this.all = false;
+    this.btnAll.setAttribute("aria-pressed", "false");
     this.buf = [];
     this.pending = [];
     this.pausedCount = 0;
@@ -1677,6 +1695,28 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     this.title.textContent = "output · " + name;
     this.root.setAttribute("aria-label", "log output for " + name);
     this.filterBox.setAttribute("aria-label", "filter " + name + " log lines");
+    this.setFollow(true);
+    this.rebuild();
+    this.open();
+  };
+
+  // bindAll switches the pane to merged mode: one stream carrying every
+  // service's output, each line labelled. The sentinel name "all" keeps every
+  // stale-frame guard working unchanged — a frame for a pane that has since
+  // moved on is still dropped by comparing names.
+  LogPane.prototype.bindAll = function () {
+    this.stop();
+    this.name = "all";
+    this.all = true;
+    this.btnAll.setAttribute("aria-pressed", "true");
+    this.buf = [];
+    this.pending = [];
+    this.pausedCount = 0;
+    this.retryAt = RECONNECT_MIN;
+    this.setLevelFilter("");
+    this.title.textContent = "output · all services";
+    this.root.setAttribute("aria-label", "log output for all services");
+    this.filterBox.setAttribute("aria-label", "filter log lines across all services");
     this.setFollow(true);
     this.rebuild();
     this.open();
@@ -1709,11 +1749,14 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     this.paintCount();
   };
 
-  LogPane.prototype.push = function (text, kind) {
+  LogPane.prototype.push = function (text, kind, svc) {
     // Classify once at ingest: tail-backfill and live lines both enter here,
     // and flush/rebuild must never re-parse a line already in the buffer.
     var sev = detectLevel(text);
-    this.buf.push({ text: text, kind: kind || "", lvl: sev ? sev.lvl : "", tint: sev ? sev.tint : "" });
+    this.buf.push({
+      text: text, kind: kind || "", lvl: sev ? sev.lvl : "", tint: sev ? sev.tint : "",
+      svc: svc || ""
+    });
     if (this.buf.length > MAX_LINES) { this.buf.splice(0, this.buf.length - MAX_LINES); }
     if (this.paused) {
       this.pausedCount++;
@@ -1738,6 +1781,16 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     return !this.levelFilter || rec.lvl === this.levelFilter;
   };
 
+  // lineText is what a record draws. In merged mode the service name prefixes
+  // the line — the label IS the attribution, and because it is part of the
+  // text node the browser's own find-in-page sees it too. The filter matches
+  // rec.text only, so searching "api" finds api's lines without also finding
+  // every line that merely mentions api in its label.
+  LogPane.prototype.lineText = function (rec) {
+    if (this.all && rec.svc) { return rec.svc + " · " + rec.text; }
+    return rec.text;
+  };
+
   LogPane.prototype.flush = function () {
     var batch = this.pending;
     this.pending = [];
@@ -1748,7 +1801,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
       if (!this.matches(batch[i])) { continue; }
       var r = batch[i];
       frag.appendChild(el("div", "log-line" + (r.kind ? " " + r.kind : "") +
-        (r.lvl ? " lvl-" + r.lvl : "") + (r.tint ? " " + r.tint : ""), r.text));
+        (r.lvl ? " lvl-" + r.lvl : "") + (r.tint ? " " + r.tint : ""), this.lineText(r)));
       drew++;
     }
     if (drew) {
@@ -1774,7 +1827,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
       if (!this.matches(this.buf[i])) { continue; }
       var r = this.buf[i];
       frag.appendChild(el("div", "log-line" + (r.kind ? " " + r.kind : "") +
-        (r.lvl ? " lvl-" + r.lvl : "") + (r.tint ? " " + r.tint : ""), r.text));
+        (r.lvl ? " lvl-" + r.lvl : "") + (r.tint ? " " + r.tint : ""), this.lineText(r)));
       drew++;
     }
     this.body.appendChild(frag);
@@ -1863,6 +1916,13 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
       var d;
       try { d = JSON.parse(ev.data); } catch (e) { return; }
       if (d.end) {
+        // Merged mode: one service's tail ending is not the pane's end — the
+        // other tails keep flowing, so the marker names the service.
+        if (self.all && d.service) {
+          self.push("— " + d.service + " stream ended" + (d.error ? ": " + d.error : ""),
+            d.error ? "err" : "meta", d.service);
+          return;
+        }
         self.stop();
         self.push("— stream ended" + (d.error ? ": " + d.error : ""), d.error ? "err" : "meta");
         self.wanted = true;              // still wanted; just not currently open
@@ -1872,7 +1932,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
       if (typeof d.line === "string") {
         self.retryAt = RECONNECT_MIN;
         if (self.state !== "live") { self.setState("live", ""); }
-        self.push(d.line, "");
+        self.push(d.line, "", d.service || "");
       }
     };
 

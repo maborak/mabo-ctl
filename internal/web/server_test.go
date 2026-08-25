@@ -2025,3 +2025,83 @@ func TestStartAllStartsEvenServicesThatOptOutOfAutostart(t *testing.T) {
 			"\"all\" must not be narrowed by a per-service default", got)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// the merged stream
+// ---------------------------------------------------------------------------
+
+// TestStreamAllFansEveryServiceIntoOneStream: /api/stream/all starts one tail
+// per declared service, labels every line with its service on the wire, and
+// leaves no tail or handler goroutine behind when the client leaves.
+func TestStreamAllFansEveryServiceIntoOneStream(t *testing.T) {
+	ctrl := twoServices()
+	s, base := newLiveServer(t, ctrl)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	resp := openStream(t, ctx, sse(s, base, "/api/stream/all"))
+
+	// Read until BOTH services have spoken — the interleaving is the
+	// scheduler's business, not the test's. The fake tail replays the same
+	// fixture lines for every service, so the assertion is the LABELLING and
+	// the fan-in, not the content.
+	seen := map[string]string{}
+	br := bufio.NewReader(resp.Body)
+	for len(seen) < 2 {
+		var line logLine
+		if err := json.Unmarshal(readSSEData(t, br), &line); err != nil {
+			t.Fatalf("decoding a merged line: %v", err)
+		}
+		if line.Service == "" {
+			t.Fatalf("a merged line arrived with no service label: %+v", line)
+		}
+		if _, dup := seen[line.Service]; !dup {
+			seen[line.Service] = line.Line
+		}
+	}
+	if seen["backend"] == "" || seen["frontend"] == "" {
+		t.Fatalf("merged lines = %v, want a labelled line from each service", seen)
+	}
+
+	// One connection, one tails-per-service count, nothing left behind.
+	if got := s.streams.Load(); got != 1 {
+		t.Fatalf("live streams = %d, want 1 for the merged connection", got)
+	}
+	waitFor(t, "both tails to start", func() bool { return ctrl.tailCount() == 2 })
+
+	cancel()
+	_ = resp.Body.Close()
+	waitFor(t, "both tails to stop when the tab closed", ctrl.tailsFinished)
+	waitFor(t, "the stream handler to return", func() bool { return s.streams.Load() == 0 })
+}
+
+// TestStreamAllRequiresASession: the merged stream can read every log at once,
+// which makes the session guard MORE important, not less.
+func TestStreamAllRequiresASession(t *testing.T) {
+	ctrl := twoServices()
+	s := newRecorderServer(t, ctrl)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/stream/all", nil)
+	rec := httptest.NewRecorder()
+	s.routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("GET /api/stream/all without a session = %d, want 403", rec.Code)
+	}
+}
+
+// TestConsolePageHasAMergedLogMode is the page-content drift guard for merged
+// mode: the toggle, the sentinel, the labelling and the endpoint it opens.
+func TestConsolePageHasAMergedLogMode(t *testing.T) {
+	t.Parallel()
+	for _, want := range []string{
+		`"All"`,                      // the toggle button
+		"bindAll",                    // entering merged mode
+		`this.name = "all"`,          // the sentinel that keeps stale-frame guards working
+		"all services",               // title and aria strings
+		"lineText",                   // the labelling render
+		`rec.svc + " · " + rec.text`, // the label format
+	} {
+		if !strings.Contains(consoleHTML, want) {
+			t.Errorf("console.html lost %q; merged log mode is not wired", want)
+		}
+	}
+}

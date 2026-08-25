@@ -498,7 +498,9 @@ volunteers the only change worth interrupting for.
 shows worst: the **exact command** each service runs, verbatim and copyable, next
 to its resolved working directory, runtime and declared environment; and a live
 log stream per service that you can filter, pause and scroll without losing your
-place.
+place. The log pane's **All** toggle streams every service into the same pane,
+each line labelled with its service — and the text filter and level chips then
+search across all of them at once, which is the web form of `mabo-ctl logs all`.
 
 ```sh
 $ mabo-ctl serve

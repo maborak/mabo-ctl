@@ -317,3 +317,135 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 }
+
+// streamMsg is one thing the merged stream can deliver: a line from a service,
+// or the end of one service's tail. One channel carries both so the SSE loop
+// stays a single select.
+type streamMsg struct {
+	line logLine
+	end  *streamEnd
+}
+
+// handleStreamAll fans in one tail per declared service into a single SSE
+// stream, so the console can show every service's output interleaved and
+// filtered as one buffer. It is the web form of `mabo-ctl logs all`: the same
+// Tail-per-service shape, the same "Tail owns and closes its channel" rule,
+// one connection, one streams count.
+//
+// The cleanup contract is the one this file exists to enforce, widened to N
+// tails: one cancel, a drain of the merged channel, and a wait for every
+// goroutine — a tail blocked mid-send must observe the cancellation through
+// its forwarder, and nothing may outlive the request.
+func (s *Server) handleStreamAll(w http.ResponseWriter, r *http.Request) {
+	insts := s.ctrl.Instances()
+	if len(insts) == 0 {
+		http.Error(w, "no services are declared", http.StatusNotFound)
+		return
+	}
+
+	sse, ok := newSSE(w)
+	if !ok {
+		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+
+	s.streams.Add(1)
+	defer s.streams.Add(-1)
+
+	ctx, cancel := context.WithCancel(r.Context())
+	merged := make(chan streamMsg, streamBuffer)
+	tail := tailCount(r.URL.Query().Get("tail"))
+
+	var wg sync.WaitGroup
+	for _, in := range insts {
+		name := in.Name
+		lines := make(chan string, streamBuffer)
+		done := make(chan error, 1)
+
+		// The tailer: exactly one per service, panics captured like the
+		// single-service stream captures them.
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			defer func() {
+				if rec := recover(); rec != nil {
+					done <- fmt.Errorf("web: tailing %s panicked: %v", name, rec)
+				}
+			}()
+			done <- s.ctrl.Tail(ctx, name, tail, true, lines)
+		}()
+
+		// The end-reporter: when this service's tail returns, say so — with
+		// the reason when there is one — and let the other services continue.
+		// done is buffered and Tail always sends, so this never leaks.
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			err := <-done
+			if ctx.Err() != nil {
+				return
+			}
+			end := streamEnd{Service: name, End: true}
+			if err != nil {
+				end.Error = err.Error()
+			}
+			select {
+			case merged <- streamMsg{end: &end}:
+			case <-ctx.Done():
+			}
+		}()
+
+		// The forwarder: labels every line with its service and relays it.
+		// Tail closes lines when it returns, so this ends on its own.
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for line := range lines {
+				select {
+				case merged <- streamMsg{line: logLine{Service: name, Line: line}}:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
+	}
+	go func() {
+		wg.Wait()
+		close(merged)
+	}()
+
+	defer func() {
+		cancel()
+		for range merged { //nolint:revive // draining, the values are dead
+		}
+	}()
+
+	_ = sse.retry(2 * time.Second)
+
+	hb := time.NewTicker(s.heartbeat)
+	defer hb.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case msg, ok := <-merged:
+			if !ok {
+				return
+			}
+			if msg.end != nil {
+				if err := sse.send(*msg.end); err != nil {
+					return
+				}
+				continue
+			}
+			if err := sse.send(msg.line); err != nil {
+				return
+			}
+		case <-hb.C:
+			if err := sse.comment("heartbeat"); err != nil {
+				return
+			}
+		}
+	}
+}
