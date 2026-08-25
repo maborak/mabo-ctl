@@ -329,7 +329,8 @@ func (r *Renderer) configPort(s ConfigService) string {
 	switch {
 	case s.PortOverride:
 		out += "  " + r.paint(style{"1;33"}, fmt.Sprintf(
-			"(OVERRIDES the declared %d — clear it with `mabo-ctl reset`)", s.PortDeclared))
+			"(OVERRIDES the declared %d — adopt it with `mabo-ctl --refresh-ports`, or clear it with `mabo-ctl reset`)",
+			s.PortDeclared))
 	case s.PortDeclared != 0 && s.PortDeclared != s.Port:
 		out += "  " + r.paint(style{"2"}, fmt.Sprintf("(declared %d)", s.PortDeclared))
 	}

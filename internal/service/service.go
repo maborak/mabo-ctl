@@ -138,6 +138,14 @@ type Options struct {
 	// service names. Resolve deliberately does not read the process environment
 	// for ports itself: capture must happen once, early, before any spawn.
 	EnvVars map[string]string
+	// IgnoreRunEnv drops the persisted .dev/run.env level from the precedence
+	// chain, so a service falls through to its declared default unless --ports
+	// or a caller variable speaks first. It exists so the CLI can offer to
+	// adopt ports the yaml has since changed: the run.env level exists to keep
+	// ports stable across invocations, and a port kept stable against a yaml
+	// that no longer agrees with it is stale, not stable. Resolve still writes
+	// nothing; the caller refreshes the file with [Persist].
+	IgnoreRunEnv bool
 }
 
 // Resolve applies the precedence chain, expands templates, and validates the
@@ -149,8 +157,9 @@ type Options struct {
 // its interpreter resolved.
 //
 // st may be nil, in which case the persisted .dev/run.env level is skipped —
-// useful before the state directory exists. Resolve itself writes nothing; see
-// [Persist].
+// useful before the state directory exists. Options.IgnoreRunEnv skips the same
+// level explicitly, for a caller that has a state dir but wants the declared
+// defaults to win this once. Resolve itself writes nothing; see [Persist].
 //
 // Errors: a nil or empty config; a --ports slot that is out of range or has no
 // service; a <NAME>_PORT value that is not a port; a resolved-port collision

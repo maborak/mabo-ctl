@@ -493,6 +493,110 @@ func TestPersistedPortOverrideIsAnnounced(t *testing.T) {
 	}
 }
 
+// driftedHarness is a harness whose .dev/run.env holds a port the fixture no
+// longer declares: the stale-state trap, ready for a refresh conversation.
+func driftedHarness(t *testing.T, args ...string) *harness {
+	t.Helper()
+	h := newHarness(t, args...)
+	mkdir(t, filepath.Join(h.root, ".dev"))
+	writeFile(t, filepath.Join(h.root, ".dev", "run.env"), "PORT_ALPHA=7999\n")
+	return h
+}
+
+// runEnvIs reads .dev/run.env and fails the test unless it contains want.
+func runEnvIs(t *testing.T, h *harness, want string) {
+	t.Helper()
+	got := readFile(t, filepath.Join(h.root, ".dev", "run.env"))
+	if !strings.Contains(got, want) {
+		t.Fatalf(".dev/run.env is missing %q:\n%s", want, got)
+	}
+}
+
+// TestRefreshPortsFlagAdoptsDeclaredPorts is the scripted form of the drift
+// prompt: the flag skips the run.env level, adopts the declared defaults and
+// rewrites the file, so the NEXT plain invocation agrees too.
+func TestRefreshPortsFlagAdoptsDeclaredPorts(t *testing.T) {
+	h := driftedHarness(t, "status", "--refresh-ports")
+
+	if code := h.run(); code != exitOK {
+		t.Fatalf("exit code = %d, want %d (stderr: %s)", code, exitOK, h.stderr)
+	}
+	runEnvIs(t, h, "PORT_ALPHA=7100")
+	if got := readFile(t, filepath.Join(h.root, ".dev", "run.env")); strings.Contains(got, "7999") {
+		t.Fatalf("the stale port survived --refresh-ports:\n%s", got)
+	}
+	if msg := h.stderr.String(); strings.Contains(msg, "port override") {
+		t.Fatalf("an adoption run still announced an override:\n%s", msg)
+	}
+}
+
+// TestPortDriftPromptAdoptsOnYes: an interactive run with drift asks, and yes
+// adopts — the file is rewritten so the answer outlives the invocation.
+func TestPortDriftPromptAdoptsOnYes(t *testing.T) {
+	h := driftedHarness(t, "status")
+	h.env.IsTTY = func() bool { return true }
+	h.env.Stdin = strings.NewReader("y\n")
+
+	if code := h.run(); code != exitOK {
+		t.Fatalf("exit code = %d, want %d (stderr: %s)", code, exitOK, h.stderr)
+	}
+	runEnvIs(t, h, "PORT_ALPHA=7100")
+	if msg := h.stderr.String(); !strings.Contains(msg, "adopted declared ports") {
+		t.Fatalf("the adoption was not announced:\n%s", msg)
+	}
+}
+
+// TestPortDriftPromptKeepsOldOnEnter pins the [y/N] default: pressing Enter
+// alone keeps the persisted ports, because a run.env value may have been set
+// deliberately and must not move on a careless keystroke.
+func TestPortDriftPromptKeepsOldOnEnter(t *testing.T) {
+	h := driftedHarness(t, "status")
+	h.env.IsTTY = func() bool { return true }
+	h.env.Stdin = strings.NewReader("\n")
+
+	if code := h.run(); code != exitOK {
+		t.Fatalf("exit code = %d, want %d (stderr: %s)", code, exitOK, h.stderr)
+	}
+	runEnvIs(t, h, "PORT_ALPHA=7999")
+	if msg := h.stderr.String(); strings.Contains(msg, "adopted declared ports") {
+		t.Fatalf("Enter must not adopt:\n%s", msg)
+	}
+}
+
+// TestPortDriftPromptNeverBlocksAPipe: without a terminal there is nobody to
+// ask, so the run proceeds on the persisted ports with the notice only.
+func TestPortDriftPromptNeverBlocksAPipe(t *testing.T) {
+	h := driftedHarness(t, "status") // IsTTY false, stdin empty
+
+	if code := h.run(); code != exitOK {
+		t.Fatalf("exit code = %d, want %d (stderr: %s)", code, exitOK, h.stderr)
+	}
+	runEnvIs(t, h, "PORT_ALPHA=7999")
+	if msg := h.stderr.String(); strings.Contains(msg, "adopt the declared ports?") {
+		t.Fatalf("a non-interactive run was asked a question:\n%s", msg)
+	}
+}
+
+// TestStatusJSONNeverPrompts guards the machine contract: --json on a terminal
+// must stay byte-clean even when drift exists and stdin is full of yes.
+func TestStatusJSONNeverPrompts(t *testing.T) {
+	h := driftedHarness(t, "status", "--json")
+	h.env.IsTTY = func() bool { return true }
+	h.env.Stdin = strings.NewReader("y\n")
+
+	if code := h.run(); code != exitOK {
+		t.Fatalf("exit code = %d, want %d (stderr: %s)", code, exitOK, h.stderr)
+	}
+	var v any
+	if err := json.Unmarshal(h.stdout.Bytes(), &v); err != nil {
+		t.Fatalf("stdout is not JSON: %v\n%s", err, h.stdout)
+	}
+	runEnvIs(t, h, "PORT_ALPHA=7999")
+	if msg := h.stderr.String(); strings.Contains(msg, "adopt the declared ports?") {
+		t.Fatalf("--json was asked a question on stderr:\n%s", msg)
+	}
+}
+
 // TestCaptureEnvUnsetsCallerPort proves the capture happens before anything can
 // spawn: after a mabo-ctl run, the caller's variable is gone from the environment
 // a child would inherit.

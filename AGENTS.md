@@ -25,7 +25,8 @@ Three front ends over ONE supervisor:
 
 1. **One-shot CLI** — `start`, `stop`, `restart`, `status [--json]`, `health`,
    `config`, `logs`/`tailf`, `open`, `reset`, `preflight`, `exec`, `shell`,
-   `serve`, `completion`. `ui.StatusJSON` is the stable machine contract.
+   `serve`, `completion`, `upgrade`. `ui.StatusJSON` is the stable machine
+   contract.
 2. **Interactive console** — running the bare binary drops into a TUI
    (`internal/console`) or prompt (`internal/repl`).
 3. **Web console** — `serve` binds a loopback HTTP listener (`127.0.0.1:7999`)
@@ -56,13 +57,15 @@ internal/console/     full-screen TUI (bubbletea)
 internal/repl/        interactive prompt + session
 internal/ui/          colour, fixed-width labels, table + status rendering
 internal/redact/      THE one credential-redaction implementation
+internal/selfupdate/  self-upgrade: latest release, version compare, verified binary swap
 internal/web/         web console: embedded page, JSON/SSE API, HTTP guards
 ```
 
 ### Layering rules — BINDING
 
 - Dependencies point inward:
-  `cmd` → `console`/`web`/`ui` → `supervisor`/`health` → `service`/`state` → `config`.
+  `cmd` → `console`/`web`/`ui` → `supervisor`/`health` → `service`/`state` → `config`,
+  with `selfupdate` a stdlib-only leaf that only `cmd` calls.
 - `ui`, `console`, `web` never call `os/exec` or `syscall`; web drives processes
   only through the supervisor and never opens a browser itself.
 - `supervisor` never formats user-facing strings; it returns state, `ui` renders.

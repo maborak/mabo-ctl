@@ -80,6 +80,17 @@ type app struct {
 	// ports holds the parsed --ports slots of the executing command.
 	ports portsFlag
 
+	// refreshPorts records the global --refresh-ports flag: re-resolve every
+	// port from the declared defaults, ignoring the persisted .dev/run.env
+	// level, and rewrite the file so later invocations agree. It is the
+	// non-interactive form of the drift prompt [app.reconcilePorts] asks.
+	refreshPorts bool
+
+	// jsonContract records that this command emits the stable machine contract
+	// on stdout (`status --json`). Nothing human-facing may be interpolated into
+	// such a run, including the port-drift prompt.
+	jsonContract bool
+
 	// allowOrigins holds --allow-origin: extra browser origins the web console
 	// accepts, for a console reached through a tunnel or a port forward.
 	allowOrigins []string
@@ -305,10 +316,11 @@ func asFile(w io.Writer) *os.File {
 // resolve loads the config, creates the state directory, resolves every port
 // and expands every template, exactly once per process.
 //
-// It prints the port-override notice to stderr as a side effect, because a
-// persisted .dev/run.env value outranking a changed default is the trap this
-// tool exists to stop being silent. The notice goes to stderr so `status
-// --json` stays a clean machine contract on stdout.
+// It hands the port-override conversation to [app.reconcilePorts], which prints
+// the drift notice to stderr — a persisted .dev/run.env value outranking a
+// changed default is the trap this tool exists to stop being silent — and, on
+// an interactive terminal, offers to adopt the declared ports. The notice goes
+// to stderr so `status --json` stays a clean machine contract on stdout.
 func (a *app) resolve() ([]service.Instance, error) {
 	if a.resolved {
 		if a.cfgErr != nil {
@@ -327,9 +339,14 @@ func (a *app) resolve() ([]service.Instance, error) {
 	}
 
 	insts, origins, err := service.Resolve(cfg, st, service.Options{
-		Ports:   a.ports.values,
-		EnvVars: a.captured,
+		Ports:        a.ports.values,
+		EnvVars:      a.captured,
+		IgnoreRunEnv: a.refreshPorts,
 	})
+	if err != nil {
+		return nil, err
+	}
+	insts, origins, err = a.reconcilePorts(cfg, st, insts, origins)
 	if err != nil {
 		return nil, err
 	}
@@ -339,9 +356,6 @@ func (a *app) resolve() ([]service.Instance, error) {
 	a.insts = insts
 	a.origins = origins
 	a.renderer().SetInstanceColors(insts)
-	if notice := a.renderer().PortOrigins(origins); notice != "" {
-		fmt.Fprintln(a.env.Stderr, notice)
-	}
 	return insts, nil
 }
 

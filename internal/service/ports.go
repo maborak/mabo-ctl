@@ -111,7 +111,7 @@ func resolvePorts(cfg *config.Config, st *state.Dir, opt Options) ([]Origin, err
 	}
 
 	var persisted *state.RunEnv
-	if st != nil {
+	if st != nil && !opt.IgnoreRunEnv {
 		persisted, err = st.ReadRunEnv()
 		if err != nil {
 			return nil, fmt.Errorf("service: read persisted ports: %w", err)

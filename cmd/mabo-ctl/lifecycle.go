@@ -94,6 +94,11 @@ func (a *app) rootCmd() *cobra.Command {
 		SilenceErrors: true,
 		PersistentPreRun: func(cmd *cobra.Command, _ []string) {
 			a.reconcileConfig(cmd.Root().PersistentFlags().Lookup("config").Value.String())
+			// Global, like --config: port drift is a repository condition, not
+			// a property of one command, and every command that resolves ports
+			// can meet it. Deliberately NOT in startFlagNames — it must not
+			// turn a bare `mabo-ctl --refresh-ports` into a start.
+			a.refreshPorts = boolFlag(cmd, "refresh-ports")
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 0 && !startFlagsChanged(cmd) {
@@ -114,6 +119,8 @@ func (a *app) rootCmd() *cobra.Command {
 	root.CompletionOptions.DisableDefaultCmd = true
 
 	root.PersistentFlags().String("config", "", "path to mabo-ctl.yaml; skips the walk up the directory tree")
+	root.PersistentFlags().Bool("refresh-ports", false,
+		"re-resolve every port from the declared defaults, ignoring persisted .dev/run.env, and rewrite the file")
 	addStartFlags(root)
 
 	root.AddCommand(
@@ -132,6 +139,7 @@ func (a *app) rootCmd() *cobra.Command {
 		a.serveCmd(),
 		a.replCmd(),
 		a.completionCmd(),
+		a.upgradeCmd(),
 	)
 	return root
 }

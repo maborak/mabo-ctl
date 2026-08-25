@@ -235,6 +235,46 @@ func TestOriginOverrideOnChangedDefault(t *testing.T) {
 	}
 }
 
+// TestIgnoreRunEnvLetsTheDeclaredDefaultWin is the --refresh-ports switch: the
+// same stale-state trap as TestOriginOverrideOnChangedDefault, resolved by
+// dropping the run.env level for this one resolution instead of by hand-deleting
+// the file. Higher levels keep their ranks — a flag or caller variable still
+// beats the declared default.
+func TestIgnoreRunEnvLetsTheDeclaredDefaultWin(t *testing.T) {
+	root, _ := testRepo(t)
+	cfg := testConfig(t, root, svc("website", 7100), svc("backend", 7102))
+	st := testState(t, root, map[string]int{"backend": 7002, "website": 7001})
+
+	insts, origins, err := Resolve(cfg, st, Options{IgnoreRunEnv: true})
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	for _, svcName := range []string{"backend", "website"} {
+		o := originFor(t, origins, svcName)
+		if o.Source != FromDefault {
+			t.Errorf("%s resolved from %q, want default — IgnoreRunEnv must skip the run.env level", svcName, o.Source)
+		}
+		if o.Override {
+			t.Errorf("%s: Override = true with run.env skipped; there is nothing to override", svcName)
+		}
+	}
+	if got := instFor(t, insts, "backend").Port; got != 7102 {
+		t.Errorf("backend port = %d, want the declared 7102", got)
+	}
+	if got := instFor(t, insts, "website").Port; got != 7100 {
+		t.Errorf("website port = %d, want the declared 7100", got)
+	}
+
+	// A caller variable still outranks the declared default with run.env skipped.
+	_, origins, err = Resolve(cfg, st, Options{IgnoreRunEnv: true, EnvVars: map[string]string{"BACKEND_PORT": "7500"}})
+	if err != nil {
+		t.Fatalf("Resolve with caller env: %v", err)
+	}
+	if o := originFor(t, origins, "backend"); o.Source != FromEnv || o.Port != 7500 {
+		t.Errorf("backend = %d from %q, want 7500 from env", o.Port, o.Source)
+	}
+}
+
 // TestOriginNoOverrideWhenPersistedMatchesDefault keeps Override meaningful:
 // run.env agreeing with the default is not an override and must not print.
 func TestOriginNoOverrideWhenPersistedMatchesDefault(t *testing.T) {

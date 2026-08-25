@@ -65,6 +65,23 @@ mabo-ctl stop           # SIGTERM the process GROUP, then SIGKILL
 `examples/mabo-ctl.yaml` is a fuller one: several services, a pinned runtime, and
 one service told where another landed via `{{.Port "backend"}}`.
 
+### Upgrading
+
+```sh
+mabo-ctl upgrade
+```
+
+`upgrade` asks GitHub for the latest release of this repository, compares it
+against the version this binary was built from, and — when a newer one exists —
+downloads the asset for this platform, verifies it against the release's
+`SHA256SUMS`, and renames it over the running binary. A checksum mismatch or a
+failed download leaves the installed binary untouched; the running process keeps
+executing the old image until it exits.
+
+`--force` reinstalls the latest release even when this binary is not older. A
+binary built from source (a commit sha or `dev`) cannot be version-compared;
+`upgrade` says so and installs the latest release anyway.
+
 ## Configuration
 
 `mabo-ctl.yaml` lives at the repository root and is found by walking **up** from
@@ -166,6 +183,7 @@ every port has resolved.
 | `mabo-ctl open` | Hand each running service's URL to `open` (macOS) or `xdg-open` (Linux). |
 | `mabo-ctl serve [--addr] [--open] [--i-know-this-is-dangerous]` | Serve the web console on `127.0.0.1:7999` until interrupted. It can start and stop services — see [Web console](#web-console). |
 | `mabo-ctl completion <bash\|zsh>` | Print a completion script. |
+| `mabo-ctl upgrade [--force]` | Replace this binary with the latest GitHub release — see [Upgrading](#upgrading). |
 
 Global `--config <path>` overrides discovery on every command.
 
@@ -312,11 +330,16 @@ Two rules are not optional:
   bind the caller's value, and the supervisor would probe a port nobody is
   listening on. mabo-ctl re-injects the authoritative `<NAME>_PORT` for every
   service into each child's environment.
-- **A persisted port that outranks a changed default is announced.** Changing a
-  default port in `mabo-ctl.yaml` appearing to do nothing, because `.dev/run.env`
-  silently won, cost a real debugging round. mabo-ctl prints a line on stderr
-  saying which service is on which port and where it came from. Stderr, so
-  `status --json` on stdout stays a clean machine contract.
+- **A persisted port that outranks a changed default is announced — and can be
+  adopted.** Changing a default port in `mabo-ctl.yaml` appearing to do nothing,
+  because `.dev/run.env` silently won, cost a real debugging round. mabo-ctl
+  prints a line on stderr saying which service is on which port and where it
+  came from, and on an interactive terminal asks whether to adopt the declared
+  ports (answering yes rewrites `.dev/run.env`; Enter keeps them). Scripts and
+  the committed yaml-as-truth skip the question with the global
+  `--refresh-ports` flag, which adopts the declared defaults and rewrites the
+  file in one step. Stderr, so `status --json` on stdout stays a clean machine
+  contract — and `--json` is never asked a question.
 
 Port collisions are computed pairwise over the **resolved** ports and the error
 names both services and the port.
@@ -332,7 +355,7 @@ $ mabo-ctl config website
   timeouts   stop_grace 10.0s   ready_timeout 30.0s
 
 website
-  port       7999  from run.env  (OVERRIDES the declared 7100 — clear it with `mabo-ctl reset`)
+  port       7999  from run.env  (OVERRIDES the declared 7100 — adopt it with `mabo-ctl --refresh-ports`, or clear it with `mabo-ctl reset`)
   dir        /repo/website
   cmd        /usr/local/bin/npm run dev -- --port 7999
   runtime    node:20  →  /usr/local/bin/npm
