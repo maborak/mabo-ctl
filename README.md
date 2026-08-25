@@ -82,6 +82,11 @@ executing the old image until it exits.
 binary built from source (a commit sha or `dev`) cannot be version-compared;
 `upgrade` says so and installs the latest release anyway.
 
+If the repository is private, `upgrade` authenticates with `GITHUB_TOKEN` (or
+`GH_TOKEN`, the same precedence the gh CLI documents); without a token a private
+repository is an honest 404. The token travels only in an Authorization header
+to GitHub's https endpoints.
+
 ## Configuration
 
 `mabo-ctl.yaml` lives at the repository root and is found by walking **up** from

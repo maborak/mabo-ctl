@@ -65,6 +65,20 @@ type Options struct {
 	// reach an httptest server; production never sets it, and the flag is named
 	// so that a grep for "http://" in a security review lands here.
 	AllowPlainHTTP bool
+	// Token authenticates the requests, for repositories that are not public.
+	// Empty means anonymous. It travels only in an Authorization header to the
+	// https URLs this package fetches — never in a query string, never to a
+	// URL the release metadata invented.
+	Token string
+}
+
+// ghAsset is one asset of a GitHub release. URL is the API endpoint that
+// serves the bytes (the only door a private repository opens);
+// BrowserDownloadURL is the human-facing one.
+type ghAsset struct {
+	Name               string `json:"name"`
+	URL                string `json:"url"`
+	BrowserDownloadURL string `json:"browser_download_url"`
 }
 
 // assetName is the dist/ file name of the binary for one platform, matching the
@@ -96,11 +110,8 @@ func Latest(ctx context.Context, opt Options) (Release, error) {
 		return Release{}, err
 	}
 	var meta struct {
-		TagName string `json:"tag_name"`
-		Assets  []struct {
-			Name               string `json:"name"`
-			BrowserDownloadURL string `json:"browser_download_url"`
-		} `json:"assets"`
+		TagName string    `json:"tag_name"`
+		Assets  []ghAsset `json:"assets"`
 	}
 	if err := json.Unmarshal(rel, &meta); err != nil {
 		return Release{}, fmt.Errorf("selfupdate: release metadata is not the shape GitHub sends: %w", err)
@@ -109,15 +120,26 @@ func Latest(ctx context.Context, opt Options) (Release, error) {
 		return Release{}, errors.New("selfupdate: release metadata carries no tag")
 	}
 
+	// A PRIVATE repository serves assets only through the API endpoint with a
+	// token, never through browser_download_url; a public one works either way.
+	// The choice is made once, here, so both assets of one release download
+	// through the same door.
+	pick := func(a ghAsset) string {
+		if opt.Token != "" {
+			return a.URL
+		}
+		return a.BrowserDownloadURL
+	}
+
 	want := assetName(goos, goarch)
 	var sumsURL string
 	out := Release{Tag: meta.TagName, AssetName: want}
 	for _, a := range meta.Assets {
 		switch {
 		case a.Name == want:
-			out.AssetURL = a.BrowserDownloadURL
+			out.AssetURL = pick(a)
 		case a.Name == "SHA256SUMS":
-			sumsURL = a.BrowserDownloadURL
+			sumsURL = pick(a)
 		}
 	}
 	if out.AssetURL == "" {
@@ -233,7 +255,7 @@ func Apply(ctx context.Context, opt Options, exePath string, rel Release) error 
 		return fmt.Errorf("selfupdate: stat %s: %w", exePath, err)
 	}
 
-	resp, err := opt.getResponse(ctx, rel.AssetURL)
+	resp, err := opt.getResponse(ctx, rel.AssetURL, "application/octet-stream")
 	if err != nil {
 		return err
 	}
@@ -285,12 +307,16 @@ func (o Options) getJSON(ctx context.Context, raw string) ([]byte, error) {
 		return nil, fmt.Errorf("selfupdate: %w", err)
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
+	o.authorize(req)
 	resp, err := o.client().Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("selfupdate: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusNotFound {
+		if o.Token == "" {
+			return nil, errors.New("selfupdate: no release of mabo-ctl has been published yet (or the repository is private — set GITHUB_TOKEN)")
+		}
 		return nil, errors.New("selfupdate: no release of mabo-ctl has been published yet")
 	}
 	if resp.StatusCode != http.StatusOK {
@@ -301,7 +327,7 @@ func (o Options) getJSON(ctx context.Context, raw string) ([]byte, error) {
 
 // get GETs url and returns the body, with the same guards as getJSON.
 func (o Options) get(ctx context.Context, raw string) ([]byte, error) {
-	resp, err := o.getResponse(ctx, raw)
+	resp, err := o.getResponse(ctx, raw, "application/octet-stream")
 	if err != nil {
 		return nil, err
 	}
@@ -312,8 +338,10 @@ func (o Options) get(ctx context.Context, raw string) ([]byte, error) {
 	return io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 }
 
-// getResponse GETs url without reading the body; the caller closes it.
-func (o Options) getResponse(ctx context.Context, raw string) (*http.Response, error) {
+// getResponse GETs url without reading the body; the caller closes it. accept
+// is the Accept header: octet-stream for assets, GitHub's JSON media type for
+// the release metadata.
+func (o Options) getResponse(ctx context.Context, raw, accept string) (*http.Response, error) {
 	if err := o.checkHTTPS(raw); err != nil {
 		return nil, err
 	}
@@ -321,11 +349,20 @@ func (o Options) getResponse(ctx context.Context, raw string) (*http.Response, e
 	if err != nil {
 		return nil, fmt.Errorf("selfupdate: %w", err)
 	}
+	req.Header.Set("Accept", accept)
+	o.authorize(req)
 	resp, err := o.client().Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("selfupdate: %w", err)
 	}
 	return resp, nil
+}
+
+// authorize attaches the token, when there is one, as a Bearer header.
+func (o Options) authorize(req *http.Request) {
+	if o.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+o.Token)
+	}
 }
 
 // client returns opt's client or the default one with a timeout.

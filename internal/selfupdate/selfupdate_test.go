@@ -229,3 +229,28 @@ func TestApplyRefusesPlainHTTP(t *testing.T) {
 		t.Fatal("Apply accepted a non-https asset URL")
 	}
 }
+
+// TestTokenAuthenticatesTheRequest: a private repository's only door is the
+// Authorization header, and it must appear on the metadata request exactly
+// when a token is configured — never when one is not.
+func TestTokenAuthenticatesTheRequest(t *testing.T) {
+	var got []string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/releases/latest", func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Values("Authorization")
+		http.Error(w, "Not Found", http.StatusNotFound)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	_, _ = Latest(context.Background(), Options{BaseURL: srv.URL, AllowPlainHTTP: true, Token: "tok-123"})
+	if len(got) != 1 || got[0] != "Bearer tok-123" {
+		t.Fatalf("Authorization = %v, want exactly [Bearer tok-123]", got)
+	}
+
+	got = nil
+	_, _ = Latest(context.Background(), Options{BaseURL: srv.URL, AllowPlainHTTP: true})
+	if len(got) != 0 {
+		t.Fatalf("anonymous request sent Authorization: %v", got)
+	}
+}
