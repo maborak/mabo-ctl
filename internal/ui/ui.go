@@ -510,7 +510,7 @@ func (r *Renderer) PortOrigins(origins []service.Origin) string {
 		return ""
 	}
 	lines = append(lines, r.paint(style{"2"},
-		"clear the persisted ports with `mabo-ctl reset`, or delete .dev/run.env"))
+		"adopt them with `mabo-ctl --refresh-ports`, or clear .dev/run.env with `mabo-ctl reset`"))
 	return strings.Join(lines, "\n")
 }
 

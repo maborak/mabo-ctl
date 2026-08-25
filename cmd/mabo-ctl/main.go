@@ -107,6 +107,10 @@ type Env struct {
 	RunConsole func(sup *supervisor.Supervisor) error
 	// OpenURL hands one URL to the platform browser opener. Nil means openURL.
 	OpenURL func(ctx context.Context, rawURL string) error
+	// RunUpgrader performs `upgrade` end to end. Nil means the real one, which
+	// talks to GitHub and swaps the binary. It is a test seam: no test may
+	// touch the network or replace the binary under test.
+	RunUpgrader func(ctx context.Context, force bool) error
 	// NewSupervisor wraps the real supervisor in the interface the one-shot
 	// commands drive. Nil means the identity. It is a test seam: the console
 	// always receives the real *supervisor.Supervisor regardless.

@@ -42,6 +42,10 @@ information, not a failure of the command.`,
 
 // runStatus prints the status block, or the stable JSON contract when asJSON.
 func (a *app) runStatus(cmd *cobra.Command, asJSON bool) error {
+	// Recorded before anything resolves: --json on a TTY must not grow the
+	// port-drift prompt, because ui.StatusJSON is the machine contract and
+	// nothing human may interleave with it.
+	a.jsonContract = asJSON
 	sup, _, err := a.supervisor()
 	if err != nil {
 		return err

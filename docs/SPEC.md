@@ -121,9 +121,12 @@ Current registry, for reference (the 7100 port convention):
 **`run.env` outranks the compiled defaults.** This is a real trap: changing the
 default ports in source does nothing until `.dev/run.env` is cleared, because a
 persisted value wins. It cost a debugging round during the 7000→7100 move. The
-Go version should either (a) version the state file and invalidate it when the
-declared defaults change, or (b) print a visible line when a persisted port
-overrides a default. Silently preferring stale state is the wrong default.
+Go version implements option (b) of the two below, and goes one step further:
+it prints a visible line when a persisted port overrides a default, offers to
+adopt the declared ports on an interactive terminal (yes rewrites `run.env`;
+Enter keeps them), and ships a global `--refresh-ports` flag that adopts the
+declared defaults without asking. Silently preferring stale state is the wrong
+default; so is reordering the chain — consent, not precedence, is the remedy.
 
 ## Port resolution
 
