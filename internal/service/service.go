@@ -291,7 +291,7 @@ func build(cfg *config.Config, s config.Spec, port int, exp *expander, base []st
 		Port:         port,
 		Health:       health,
 		Cmd:          cmd,
-		Env:          buildEnv(base, exp.names, exp.ports, specEnv, rt),
+		Env:          buildEnv(base, exp.names, exp.ports, specEnv, rt, port),
 		Color:        s.Color,
 		DependsOn:    append([]string(nil), s.DependsOn...),
 		Runtime:      s.Runtime,
@@ -346,10 +346,11 @@ func within(root, path string) bool {
 }
 
 // buildEnv composes the child environment: the caller's environment, then the
-// resolved <NAME>_PORT variables for every ported service, then whatever the
-// runtime needs, then the service's own declared env, which wins over all of
-// them. A PATH contributed by the runtime is prepended to whichever PATH
-// survived that merge.
+// resolved <NAME>_PORT variables for every ported service plus this service's
+// own port as a bare PORT (the Procfile/Heroku convention, gated on the
+// service declaring a port), then whatever the runtime needs, then the
+// service's own declared env, which wins over all of them. A PATH contributed
+// by the runtime is prepended to whichever PATH survived that merge.
 //
 // Re-injecting the resolved port variables is the other half of [CaptureEnv]:
 // capture removes the caller's possibly-stale value, and this puts the
@@ -358,12 +359,18 @@ func within(root, path string) bool {
 //
 // The result is deterministic: inherited variables keep the order the
 // environment gave them, and the overrides follow, sorted by name.
-func buildEnv(base, names []string, ports map[string]int, specEnv map[string]string, rt resolvedRuntime) []string {
-	over := make(map[string]string, len(names)+len(specEnv)+len(rt.Env)+1)
+func buildEnv(base, names []string, ports map[string]int, specEnv map[string]string, rt resolvedRuntime, ownPort int) []string {
+	over := make(map[string]string, len(names)+len(specEnv)+len(rt.Env)+2)
 	for _, n := range names {
 		if p := ports[n]; p > 0 {
 			over[PortEnvVar(n)] = strconv.Itoa(p)
 		}
+	}
+	// The bare name every Procfile-era framework reads. Gated on the service
+	// declaring a port: injecting it into a portless service would hand a
+	// random-looking "0" to processes that mean something else entirely by it.
+	if ownPort > 0 {
+		over["PORT"] = strconv.Itoa(ownPort)
 	}
 	for k, v := range rt.Env {
 		over[k] = v

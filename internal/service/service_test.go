@@ -1712,3 +1712,44 @@ func TestEnvFileBrokenAtResolveIsAnError(t *testing.T) {
 		t.Fatalf("err = %v, want a failure naming the service", err)
 	}
 }
+
+// TestBuildEnvInjectsBarePORT: a service that declares a port gets it again as
+// a bare PORT, the Procfile convention, and its declared env still wins.
+func TestBuildEnvInjectsBarePORT(t *testing.T) {
+	base := []string{"PATH=/usr/bin"}
+	names := []string{"web"}
+	ports := map[string]int{"web": 7100}
+	specEnv := map[string]string{}
+
+	env := buildEnv(base, names, ports, specEnv, resolvedRuntime{}, 7100)
+	if lookupEnv(env, "PORT") != "7100" {
+		t.Errorf("PORT = %q, want 7100", lookupEnv(env, "PORT"))
+	}
+	if lookupEnv(env, "WEB_PORT") != "7100" {
+		t.Errorf("WEB_PORT = %q, want 7100 beside PORT", lookupEnv(env, "WEB_PORT"))
+	}
+
+	// A service that declares no port gets no PORT at all: injecting one would
+	// hand a meaningless number to processes that mean something else by it.
+	env = buildEnv(base, []string{"worker"}, ports, specEnv, resolvedRuntime{}, 0)
+	if v, ok := lookupEnvOK(env, "PORT"); ok {
+		t.Errorf("a portless service got PORT=%q; it must not be injected without a declared port", v)
+	}
+
+	// The declared env wins over both injected forms.
+	env = buildEnv(base, names, ports, map[string]string{"PORT": "9999"}, resolvedRuntime{}, 7100)
+	if lookupEnv(env, "PORT") != "9999" {
+		t.Errorf("PORT = %q, want the declared 9999 to outrank the injection", lookupEnv(env, "PORT"))
+	}
+}
+
+// lookupEnvOK is lookupEnv with a presence bit, for tests asserting absence.
+func lookupEnvOK(env []string, key string) (string, bool) {
+	prefix := key + "="
+	for _, entry := range env {
+		if strings.HasPrefix(entry, prefix) {
+			return entry[len(prefix):], true
+		}
+	}
+	return "", false
+}
