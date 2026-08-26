@@ -1514,3 +1514,83 @@ func TestInitAddsDevToGitIgnore(t *testing.T) {
 		t.Errorf(".gitignore = %q, want exactly one .dev/", body2)
 	}
 }
+
+// --notify: the crash watcher behind the resident front ends
+
+// TestNotifierFiresOnlyOnLiveToDeadTransitions: a watcher that announced the
+// state it STARTED with would pop a dialog for every already-dead service on
+// boot; only a death DURING residency is news.
+func TestNotifierFiresOnlyOnLiveToDeadTransitions(t *testing.T) {
+	sup := &fakeSup{statuses: []supervisor.Status{
+		{Name: "api", Phase: supervisor.PhaseExited, Detail: "killed by SIGSEGV, 0s ago\nlog line"},
+	}}
+	n := newNotifier(sup, func(context.Context, string, string) error { return nil })
+
+	// First poll learns the world; nothing may fire.
+	n.poll(t.Context())
+	var sent []string
+	n.send = func(_ context.Context, title, body string) error {
+		sent = append(sent, title+" | "+body)
+		return nil
+	}
+
+	// The service comes up and then dies: one notification.
+	sup.statuses = []supervisor.Status{
+		{Name: "api", Phase: supervisor.PhaseReady},
+	}
+	n.poll(t.Context())
+	sup.statuses = []supervisor.Status{
+		{Name: "api", Phase: supervisor.PhaseExited, Detail: "killed by SIGKILL, 1s ago\npanic: gone"},
+	}
+	n.poll(t.Context())
+
+	if len(sent) != 1 {
+		t.Fatalf("notifications = %v, want exactly one for the live→dead transition", sent)
+	}
+	if !strings.Contains(sent[0], "api exited") || !strings.Contains(sent[0], "killed by SIGKILL") {
+		t.Errorf("notification %q does not name the service, phase and cause", sent[0])
+	}
+	// And a second poll of the same dead state stays silent.
+	n.poll(t.Context())
+	if len(sent) != 1 {
+		t.Errorf("repeat polls re-fired: %v", sent)
+	}
+}
+
+// TestNotifierStaysQuietForDeliberateStop: stopped is not news.
+func TestNotifierStaysQuietForDeliberateStop(t *testing.T) {
+	sup := &fakeSup{statuses: []supervisor.Status{{Name: "api", Phase: supervisor.PhaseReady}}}
+	n := newNotifier(sup, func(context.Context, string, string) error { return nil })
+	n.poll(t.Context())
+
+	n.send = func(context.Context, string, string) error {
+		t.Error("a deliberate stop produced a notification")
+		return nil
+	}
+	sup.statuses = []supervisor.Status{{Name: "api", Phase: supervisor.PhaseStopped}}
+	n.poll(t.Context())
+}
+
+// TestAppleScriptEscapesAndTruncates: the body is interpolated into an
+// AppleScript string literal, so a quote in a log line must not end it early,
+// and a stack-trace line must not flood the notification centre.
+func TestAppleScriptEscapesAndTruncates(t *testing.T) {
+	got := appleScriptNotification(`t"itle`, `he said "hi" \ done`)
+	want := `display notification "he said \"hi\" \\ done" with title "t\"itle"`
+	if got != want {
+		t.Errorf("appleScriptNotification = %s, want %s", got, want)
+	}
+	long := strings.Repeat("x", 500)
+	if got := truncateRunes(long, notifyBodyLimit); len([]rune(got)) > notifyBodyLimit+1 {
+		t.Errorf("truncateRunes kept %d runes over a %d limit", len([]rune(got)), notifyBodyLimit)
+	}
+}
+
+// TestNotifyFlagIsWiredToStartAndServe: the flag exists where residency lives.
+func TestNotifyFlagIsWiredToStartAndServe(t *testing.T) {
+	h := newHarnessAt(t, t.TempDir(), "start", "--help")
+	h.run()
+	if !strings.Contains(h.stdout.String(), "--notify") && !strings.Contains(h.stderr.String(), "--notify") {
+		t.Errorf("start help does not mention --notify")
+	}
+}

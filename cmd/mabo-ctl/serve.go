@@ -73,6 +73,8 @@ func (a *app) serveCmd() *cobra.Command {
 	f.Bool("open", false, "open the console in the default browser once the socket is bound")
 	f.Bool("i-know-this-is-dangerous", false,
 		"permit a non-loopback bind, exposing start/stop/restart to every machine that can route to it")
+	f.Bool("notify", false,
+		"show a desktop notification when a service dies while this console is served")
 	f.StringArray("allow-origin", nil,
 		"additional browser origin to accept, e.g. https://dev.tunnel.example; repeatable. "+
 			"Needed when the console is reached through a tunnel or port forward, where the browser's "+
@@ -91,6 +93,9 @@ type serveOptions struct {
 	Force bool
 	// AllowOrigins is --allow-origin: extra browser origins to accept.
 	AllowOrigins []string
+	// Notify is --notify: fire a desktop notification when a service dies
+	// while this console is being served.
+	Notify bool
 }
 
 // runServe parses the flags and serves until the first SIGINT.
@@ -108,6 +113,7 @@ func (a *app) runServe(cmd *cobra.Command, _ []string) error {
 		Open:         boolFlag(cmd, "open"),
 		Force:        boolFlag(cmd, "i-know-this-is-dangerous"),
 		AllowOrigins: allow,
+		Notify:       boolFlag(cmd, "notify"),
 	}
 
 	ctx, cancel := interruptible(cmd.Context())
@@ -173,6 +179,12 @@ func (a *app) serve(ctx context.Context, opt serveOptions) error {
 	}
 	if err := srv.Listen(); err != nil {
 		return err
+	}
+
+	if opt.Notify {
+		watcher := newNotifier(sup, sendDesktopNotification)
+		go watcher.watch(ctx)
+		fmt.Fprintln(a.env.Stderr, "Desktop notifications on: a dying service will announce itself.")
 	}
 
 	a.announceServe(srv, serveClosing)

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+
 	"errors"
 	"fmt"
 
@@ -228,6 +230,16 @@ func (a *app) handOff(cmd *cobra.Command, m startMode, console *web.Server, outc
 		return outcome
 	}
 
+	// The crash watcher runs alongside WHATEVER resident front end was asked
+	// for: it reads the supervisor itself and needs nothing from the console
+	// or the prompt. Its lifetime is exactly the residency — cancelled when
+	// this function returns, which happens when the front end quits.
+	var stopWatch func()
+	if boolFlag(cmd, "notify") {
+		stopWatch = a.watchDeaths(context.Background())
+		defer stopWatch()
+	}
+
 	var err error
 	switch {
 	case m.attach:
@@ -244,6 +256,21 @@ func (a *app) handOff(cmd *cobra.Command, m startMode, console *web.Server, outc
 		return err
 	}
 	return outcome
+}
+
+// watchDeaths starts a [notifier] against the real supervisor and returns its
+// stop function. It reports nothing at startup: a watcher that announced
+// itself would train the operator to dismiss mabo-ctl notifications.
+func (a *app) watchDeaths(ctx context.Context) func() {
+	ctx, cancel := context.WithCancel(ctx)
+	sup, err := a.realSupervisor()
+	if err != nil {
+		cancel()
+		return func() {}
+	}
+	n := newNotifier(sup, sendDesktopNotification)
+	go n.watch(ctx)
+	return cancel
 }
 
 // attachConsole hands the terminal to the full-screen console, over the same

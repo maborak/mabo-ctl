@@ -111,7 +111,6 @@ func (a *app) rootCmd() *cobra.Command {
 			return a.runStart(cmd, args)
 		},
 	}
-
 	// `--version` is the machine-readable self-report — the block a bug
 	// report pastes (SECURITY.md asks for exactly this output). The summary
 	// in Version stays the template fallback for anything that renders it,
@@ -121,6 +120,7 @@ func (a *app) rootCmd() *cobra.Command {
 	root.SetVersionTemplate(`{{if index .Annotations "build-report"}}{{index .Annotations "build-report"}}{{else}}{{.Version}}
 {{end}}`)
 	root.Annotations = map[string]string{"build-report": b.Report()}
+
 	root.SetIn(a.env.Stdin)
 	root.SetOut(a.env.Stdout)
 	root.SetErr(a.env.Stderr)
@@ -170,6 +170,8 @@ func addStartFlags(cmd *cobra.Command) {
 	f.Var(&namedPortsFlag{}, "port", "named port override SERVICE=PORT, e.g. --port backend=7999; repeatable. Cannot be combined with --ports")
 	f.BoolP("attach", "a", false,
 		"after starting, hand off to the full-screen console instead of exiting; needs a terminal, and is ignored without one")
+	f.Bool("notify", false,
+		"while resident (--attach, --interactive or --web-console), show a desktop notification when a service dies; off by default")
 	f.BoolP("interactive", "i", false,
 		"after starting, drop into the interactive prompt instead of exiting; needs a terminal, and is ignored without one")
 	f.StringArray("allow-origin", nil,
@@ -190,7 +192,7 @@ func addStartFlags(cmd *cobra.Command) {
 var startFlagNames = []string{
 	"follow", "all", "ports", "port",
 	"attach", "interactive", "web-console", "web-addr", "i-know-this-is-dangerous",
-	"allow-origin",
+	"allow-origin", "notify",
 }
 
 // startFlagsChanged reports whether the user set any of the start flags, which
