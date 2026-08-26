@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -2066,5 +2067,288 @@ func TestExecProbeFailureIsNotReady(t *testing.T) {
 	}
 	if !strings.Contains(st.Detail, "boom-marker") || !strings.Contains(st.Detail, "exit status 7") {
 		t.Errorf("detail = %q, want the captured diagnostic with the exit code", st.Detail)
+	}
+}
+
+// Destructive paths: signalPID, Restart, Reset against a real foreign process.
+//
+// Every victim here is a process THIS TEST SPAWNED via the TestHelperProcess
+// fixture — never a hardcoded or looked-up pid — because a buggy reset test is
+// a test that kills the developer's editor.
+
+// spawnForeign starts a detached-from-mabo-ctl helper process the way the
+// world outside would have left one behind: no pid file, no record, just a pid.
+//
+// It returns dead, the test-friendly way to ask whether the victim FINISHED —
+// not merely whether its pid answers, which a zombie does until it is waited
+// on, and this test process is the one that must wait for it.
+func spawnForeign(t *testing.T) (pid int, dead func() bool) {
+	t.Helper()
+	cmd := exec.Command(os.Args[0], "-test.run=TestHelperProcess")
+	cmd.Env = helperEnvFor("sleep")
+	cmd.Stdout = nil
+	cmd.Stderr = nil
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("spawn foreign helper: %v", err)
+	}
+	pid = cmd.Process.Pid
+	done := make(chan struct{})
+	go func() {
+		_ = cmd.Wait()
+		close(done)
+	}()
+	dead = func() bool {
+		select {
+		case <-done:
+			return true
+		default:
+			return false
+		}
+	}
+	t.Cleanup(func() {
+		if !dead() {
+			_ = cmd.Process.Kill()
+			<-done
+		}
+	})
+	return pid, dead
+}
+
+// awaitForeignDeath polls dead until it holds or the deadline passes.
+func awaitForeignDeath(dead func() bool) bool {
+	deadline := time.Now().Add(5 * time.Second)
+	for !dead() && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	return dead()
+}
+
+// TestSignalPIDRefusesTheUnsafePids covers both refusal branches of signalPID:
+// init (and everything below it), and mabo-ctl's own pid. Both are
+// ErrUnsafeSignal, and neither may reach syscall.Kill.
+func TestSignalPIDRefusesTheUnsafePids(t *testing.T) {
+	for _, pid := range []int{-1, 0, 1} {
+		err := signalPID(pid, termSignal)
+		if !errors.Is(err, ErrUnsafeSignal) {
+			t.Errorf("signalPID(%d) = %v, want ErrUnsafeSignal", pid, err)
+		}
+	}
+	err := signalPID(os.Getpid(), termSignal)
+	if !errors.Is(err, ErrUnsafeSignal) || !strings.Contains(err.Error(), "itself") {
+		t.Errorf("signalPID(own pid) = %v, want ErrUnsafeSignal naming mabo-ctl itself", err)
+	}
+}
+
+// TestSignalPIDSignalsARealChild proves the happy path actually signals: a
+// helper this test spawned dies of SIGTERM through signalPID alone.
+func TestSignalPIDSignalsARealChild(t *testing.T) {
+	victim, dead := spawnForeign(t)
+	if err := signalPID(victim, termSignal); err != nil {
+		t.Fatalf("signalPID(%d): %v", victim, err)
+	}
+	if !awaitForeignDeath(dead) {
+		t.Fatalf("pid %d survived SIGTERM through signalPID", victim)
+	}
+
+	// And a pid that is already gone is an error, not silence.
+	if err := signalPID(victim, termSignal); err == nil {
+		t.Error("signalling a dead pid returned nil; the caller cannot distinguish that from success")
+	}
+}
+
+// TestResetWithoutForceSparesTheForeignHolder: the sweep finds a process
+// mabo-ctl did not start, refuses to touch it, and says so — three behaviours,
+// each of which protects something irreplaceable.
+func TestResetWithoutForceSparesTheForeignHolder(t *testing.T) {
+	foreign, foreignDead := spawnForeign(t)
+
+	inst := service.Instance{Name: "svc", Port: 7913, Cmd: helperCmd(), Env: helperEnvFor("sleep")}
+	sup, st := fixture(t, inst)
+	defer func() { _ = sup.Stop(context.Background(), nil, nil); sup.Wait() }()
+	sup.holderLookup = func(int) Holder { return Holder{PID: foreign, Command: "stray-server"} }
+
+	events, collect := drain(t)
+	if err := sup.Reset(context.Background(), false, events); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+
+	if foreignDead() {
+		t.Fatal("reset WITHOUT force killed the foreign holder; only --force may do that")
+	}
+	var named bool
+	for _, e := range collect() {
+		if strings.Contains(e.Msg, "left alone") && strings.Contains(e.Msg, "--force") {
+			named = true
+		}
+	}
+	if !named {
+		t.Errorf("the spare was not announced with the remedy; events = %v", msgs(collect()))
+	}
+	_ = st
+}
+
+// TestResetWithForceKillsTheForeignHolder is the other half: --force is the
+// operator saying kill it, and the sweep must then actually reap the orphan —
+// signalling THE PID, which is exactly what signalPID exists to gate.
+func TestResetWithForceKillsTheForeignHolder(t *testing.T) {
+	foreign, foreignDead := spawnForeign(t)
+
+	inst := service.Instance{Name: "svc", Port: 7914, Cmd: helperCmd(), Env: helperEnvFor("sleep")}
+	sup, _ := fixture(t, inst)
+	defer func() { _ = sup.Stop(context.Background(), nil, nil); sup.Wait() }()
+	sup.holderLookup = func(int) Holder { return Holder{PID: foreign, Command: "stray-server"} }
+
+	events, collect := drain(t)
+	if err := sup.Reset(context.Background(), true, events); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+
+	if !awaitForeignDeath(foreignDead) {
+		t.Fatalf("reset WITH force left pid %d holding the port", foreign)
+	}
+	var announced bool
+	for _, e := range collect() {
+		if strings.Contains(e.Msg, fmt.Sprintf("killing pid %d", foreign)) {
+			announced = true
+		}
+	}
+	if !announced {
+		t.Errorf("the kill was not announced by name; events = %v", msgs(collect()))
+	}
+}
+
+// TestRestartReplacesTheProcess covers Restart end to end on real processes:
+// the old process is gone, the new one is ours, and the pid file agrees with
+// reality — the whole point of the verb.
+func TestRestartReplacesTheProcess(t *testing.T) {
+	sup, st := fixture(t, service.Instance{
+		Name: "svc",
+		Cmd:  helperCmd(),
+		Env:  helperEnvFor("sleep"),
+	})
+	defer func() { _ = sup.Stop(context.Background(), nil, nil); sup.Wait() }()
+
+	if err := sup.Start(context.Background(), []string{"svc"}, nil); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	oldPID, _ := st.ReadPID("svc")
+	if oldPID <= 0 || !state.Alive(oldPID) {
+		t.Fatalf("first start produced pid %d, not alive", oldPID)
+	}
+
+	if err := sup.Restart(context.Background(), []string{"svc"}, nil); err != nil {
+		t.Fatalf("Restart: %v", err)
+	}
+	newPID, _ := st.ReadPID("svc")
+	if newPID <= 0 || !state.Alive(newPID) {
+		t.Fatalf("after Restart the recorded pid %d is not a live process", newPID)
+	}
+	if newPID == oldPID {
+		t.Fatal("Restart left the SAME pid; nothing was restarted")
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for state.Alive(oldPID) && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if state.Alive(oldPID) {
+		t.Fatalf("the previous process %d outlived its restart — an orphan", oldPID)
+	}
+}
+
+// TestStatusRunningNotReadyForALivePortlessService pins the honest answer for a
+// service with no probe: alive means RUNNING, never ready — claiming ready
+// would assert something mabo-ctl never checked.
+func TestStatusRunningNotReadyForALivePortlessService(t *testing.T) {
+	sup, _ := fixture(t, service.Instance{
+		Name: "worker",
+		Cmd:  helperCmd(),
+		Env:  helperEnvFor("sleep"),
+	})
+	defer func() { _ = sup.Stop(context.Background(), nil, nil); sup.Wait() }()
+
+	if err := sup.Start(context.Background(), nil, nil); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	sts := sup.Status(context.Background())
+	if len(sts) != 1 || sts[0].Phase != PhaseRunning {
+		t.Fatalf("status = %+v, want phase running for a live probeless service", sts)
+	}
+	if sts[0].HTTP != 0 {
+		t.Errorf("HTTP = %d, want 0: no probe ever answered", sts[0].HTTP)
+	}
+}
+
+// TestStatusSurfacesAMalformedPidFile: a corrupt byte in .dev/pids must be
+// named in Detail rather than silently reading as stopped.
+func TestStatusSurfacesAMalformedPidFile(t *testing.T) {
+	sup, st := fixture(t, service.Instance{
+		Name: "svc",
+		Cmd:  helperCmd(),
+		Env:  helperEnvFor("sleep"),
+	})
+	defer func() { _ = sup.Stop(context.Background(), nil, nil); sup.Wait() }()
+
+	if err := os.WriteFile(st.PIDPath("svc"), []byte("not a pid at all\n"), 0o600); err != nil {
+		t.Fatalf("write corrupt pid file: %v", err)
+	}
+	sts := sup.Status(context.Background())
+	if len(sts) != 1 {
+		t.Fatalf("got %d statuses, want 1", len(sts))
+	}
+	if !strings.Contains(sts[0].Detail, "malformed") && !strings.Contains(sts[0].Detail, "pid file") {
+		t.Errorf("Detail = %q, want it to name the malformed pid file", sts[0].Detail)
+	}
+}
+
+// cross-process double-spawn lock
+
+// TestStartRefusesWhenAnotherMaboCtlHoldsTheClaim: two mabo-ctl processes
+// racing one service is the race the per-service mutex cannot see. A fresh
+// claim by a live foreign process must block the start — not spawn a second
+// copy — and the refusal must name what happened.
+func TestStartRefusesWhenAnotherMaboCtlHoldsTheClaim(t *testing.T) {
+	foreign, dead := spawnForeign(t)
+
+	sup, st := fixture(t, service.Instance{
+		Name: "worker",
+		Cmd:  helperCmd(),
+		Env:  helperEnvFor("sleep"),
+	})
+	defer func() { _ = sup.Stop(context.Background(), nil, nil); sup.Wait() }()
+
+	if err := st.ClaimPID("worker", foreign, time.Now()); err != nil {
+		t.Fatalf("seed claim: %v", err)
+	}
+
+	events, collect := drain(t)
+	err := sup.Start(context.Background(), []string{"worker"}, events)
+	if !errors.Is(err, ErrNotStarted) {
+		t.Fatalf("Start = %v, want ErrNotStarted for a claimed service", err)
+	}
+	if pid, _ := st.ReadPID("worker"); pid > 0 {
+		t.Fatalf("a second copy was spawned anyway (pid %d) while %d held the claim", pid, foreign)
+	}
+	if dead() {
+		t.Fatal("the claim holder died during the test; the staleness path fired instead of the refusal")
+	}
+	var said bool
+	for _, e := range collect() {
+		if strings.Contains(e.Msg, "being started by another mabo-ctl") {
+			said = true
+		}
+	}
+	if !said {
+		t.Errorf("the refusal did not explain the claim")
+	}
+
+	// Once released, the same start succeeds and leaves no claim behind.
+	if err := st.ReleaseClaim("worker"); err != nil {
+		t.Fatalf("ReleaseClaim: %v", err)
+	}
+	if err := sup.Start(context.Background(), []string{"worker"}, nil); err != nil {
+		t.Fatalf("Start after release: %v", err)
+	}
+	if _, err := os.Stat(st.PIDClaimPath("worker")); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("claim file survived a successful start: %v", err)
 	}
 }
