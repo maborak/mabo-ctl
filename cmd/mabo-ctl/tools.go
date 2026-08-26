@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"net/url"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -33,18 +35,27 @@ func (a *app) preflightCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "preflight",
 		Short: "Run the checks declared in mabo-ctl.yaml",
-		Long: `Preflight runs the checks: block of mabo-ctl.yaml, in parallel.
+		Long: `Preflight checks whether this machine can run what mabo-ctl.yaml declares,
+before anyone asks it to. Two blocks:
 
-Each check sets exactly one of:
+MACHINE — do the file's own declarations resolve here? Per service:
+can the runtime be resolved, is cmd[0] executable at its resolved path,
+is node_modules present under a node: runtime (advisory), does .nvmrc
+agree with the pinned version (advisory always). It diagnoses and
+hints — it never installs, never fixes.
 
-  tcp:      host:port — the check passes when the address accepts a connection
-  command:  argv      — the check passes when the command exits 0
+CHECKS — the checks: block, in parallel. Each check sets exactly one of:
+
+  tcp:      host:port — passes when the address accepts a connection,
+                       or — with expect: free — when it refuses one; a
+                       "free" failure names whoever holds the port
+  command:  argv      — passes when the command exits 0
 
 mabo-ctl knows nothing about what is being checked. A database, a cache, a message
 broker: they belong to the supervised application, are declared in its
 mabo-ctl.yaml, and mabo-ctl only dials or runs what that file says.
 
-Exit code 1 means at least one check failed.`,
+Exit code 1 when any MACHINE finding or any check fails.`,
 		Args:          cobra.NoArgs,
 		SilenceUsage:  true,
 		SilenceErrors: true,
@@ -60,36 +71,64 @@ type checkResult struct {
 	elapsed time.Duration
 }
 
-// runPreflight runs every declared check concurrently and reports them in
-// declaration order.
+// runPreflight runs the machine-readiness pass first — can THIS machine run
+// what mabo-ctl.yaml declares? — and then every declared check concurrently.
+// Both blocks report in declaration order; either failing exits 1.
 //
-// It starts one goroutine per check, each bounded by checkTimeout and by ctx,
-// and returns only after all of them have finished.
+// The machine pass is read-only diagnosis (detect, never fix): a missing
+// node_modules prints the command that would install it rather than running
+// one. Declared checks are the application's dependencies; the machine pass is
+// mabo-ctl.yaml's own declarations resolving here. The split keeps preflight's
+// "knows nothing about what is being checked" framing honest.
 func (a *app) runPreflight(cmd *cobra.Command, _ []string) error {
 	cfg, err := a.config()
 	if err != nil {
 		return err
 	}
-	if len(cfg.Checks) == 0 {
-		fmt.Fprintf(a.env.Stderr, "%s declares no checks:\n", cfg.Path)
-		return nil
-	}
 
 	ctx, cancel := interruptible(cmd.Context())
 	defer cancel()
 
-	results := make([]checkResult, len(cfg.Checks))
-	var wg sync.WaitGroup
-	for i, ck := range cfg.Checks {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			results[i] = runCheck(ctx, cfg, ck)
-		}()
+	_, insts, err := a.supervisor()
+	if err != nil {
+		return err
 	}
-	wg.Wait()
+	machine := make([]diagFinding, len(insts))
+	var mwg sync.WaitGroup
+	for i := range insts {
+		mwg.Add(1)
+		go func(i int) {
+			defer mwg.Done()
+			machine[i] = diagnoseMachineReadiness(insts[i])
+		}(i)
+	}
+	mwg.Wait()
 
-	fmt.Fprintln(a.env.Stdout, renderChecks(results))
+	r := a.renderer()
+	fmt.Fprintln(a.env.Stdout, "MACHINE — do this repo's own declarations resolve here?")
+	for _, f := range machine {
+		fmt.Fprintln(a.env.Stdout, r.DoctorLine(f.status, f.name, f.detail))
+	}
+
+	var results []checkResult
+	if len(cfg.Checks) == 0 {
+		fmt.Fprintf(a.env.Stderr, "%s declares no checks:\n", cfg.Path)
+	} else {
+		results = make([]checkResult, len(cfg.Checks))
+		var wg sync.WaitGroup
+		for i, ck := range cfg.Checks {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				results[i] = runCheck(ctx, cfg, ck)
+			}()
+		}
+		wg.Wait()
+
+		fmt.Fprintln(a.env.Stdout)
+		fmt.Fprintln(a.env.Stdout, "CHECKS — the dependencies this file declares")
+		fmt.Fprintln(a.env.Stdout, renderChecks(results))
+	}
 
 	var failed []string
 	for _, r := range results {
@@ -97,10 +136,100 @@ func (a *app) runPreflight(cmd *cobra.Command, _ []string) error {
 			failed = append(failed, r.name)
 		}
 	}
-	if len(failed) > 0 {
-		return fmt.Errorf("preflight: %s failed", joinAnd(failed))
+	failedMachine := failedNames(machine)
+	if len(failedMachine) > 0 || len(failed) > 0 {
+		return fmt.Errorf("preflight: %s failed", joinAnd(append(failedMachine, failed...)))
 	}
 	return nil
+}
+
+// diagnoseMachineReadiness answers "could THIS service start on this machine,
+// today?" for one service, before anyone asks it to. Every check is something
+// start would trip over minutes from now, moved to the front of the story:
+// a deferred runtime failure, a cmd[0] that is not executable at its resolved
+// path, node_modules missing under a node: runtime (advisory — install is the
+// developer's call), and an .nvmrc disagreement with the pinned version
+// (advisory always: CI may legitimately pin differently).
+func diagnoseMachineReadiness(in service.Instance) diagFinding {
+	f := diagFinding{name: in.Name}
+
+	if in.CmdErr != nil {
+		f.status = ui.DoctorFail
+		f.detail = joinDetail(f.detail, "cannot start: "+in.CmdErr.Error())
+	} else if len(in.Cmd) > 0 {
+		if err := executableFile(in.Cmd[0]); err != nil {
+			f.status = ui.DoctorFail
+			f.detail = joinDetail(f.detail, fmt.Sprintf("cmd[0] %q cannot be executed: %v — check the runtime: line", in.Cmd[0], err))
+		}
+	}
+
+	if strings.HasPrefix(in.Runtime, "node:") {
+		modules := filepath.Join(in.Dir, "node_modules")
+		if _, err := os.Stat(modules); errors.Is(err, fs.ErrNotExist) {
+			f.status = worst(f.status, ui.DoctorWarn)
+			f.detail = joinDetail(f.detail, fmt.Sprintf("node_modules missing — run: mabo-ctl exec %s npm install", in.Name))
+		} else if err != nil {
+			f.status = worst(f.status, ui.DoctorWarn)
+			f.detail = joinDetail(f.detail, "cannot inspect node_modules: "+err.Error())
+		}
+	}
+
+	// Advisory only, on purpose. Read dir/.nvmrc when one exists next to the
+	// service's working directory or at the repo root's config directory — the
+	// service's dir is where node runs, so that is where the file matters.
+	ver := strings.TrimPrefix(strings.TrimSpace(afterColon(in.Runtime)), "v")
+	if ver == "" {
+		ver = nvmrcMajor(filepath.Join(in.Dir, ".nvmrc"))
+		if ver != "" {
+			f.status = worst(f.status, ui.DoctorWarn)
+			f.detail = joinDetail(f.detail,
+				fmt.Sprintf(".nvmrc pins v%s but no runtime: version is declared — the interpreter will not come from it", ver))
+		}
+		return f
+	}
+	pinned := nvmrcMajor(filepath.Join(in.Dir, ".nvmrc"))
+	if pinned == "" {
+		return f
+	}
+	got := ver
+	if i := strings.IndexByte(got, '.'); i >= 0 {
+		got = got[:i]
+	}
+	if got != "" && pinned != got {
+		f.status = worst(f.status, ui.DoctorWarn)
+		f.detail = joinDetail(f.detail,
+			fmt.Sprintf("runtime pins node %s but .nvmrc pins v%s — both are installed; make sure this is intentional", ver, pinned))
+	}
+	return f
+}
+
+// afterColon returns the part after the first colon, trimmed ("conda:x"→"x").
+func afterColon(s string) string {
+	if _, rest, ok := strings.Cut(s, ":"); ok {
+		return strings.TrimSpace(rest)
+	}
+	return s
+}
+
+// nvmrcMajor reads major-version prefix of an .nvmrc ("v24.4.0" → "24"),
+// returning "" when absent or unreadable. Advisory input never hard-fails.
+func nvmrcMajor(path string) string {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	s := strings.TrimPrefix(strings.TrimSpace(string(b)), "v")
+	if s == "" {
+		return ""
+	}
+	// LTS names ("lts/iron") carry no number; ignore them rather than guess.
+	if c := s[0]; c < '0' || c > '9' {
+		return ""
+	}
+	if i := strings.IndexByte(s, '.'); i >= 0 {
+		s = s[:i]
+	}
+	return s
 }
 
 // runCheck performs one check. A TCP check dials host:port; a command check
@@ -116,13 +245,32 @@ func runCheck(ctx context.Context, cfg *config.Config, ck config.Check) checkRes
 	case ck.TCP != "":
 		var d net.Dialer
 		conn, err := d.DialContext(ctx, "tcp", ck.TCP)
+		wantFree := ck.Expect == "free"
 		if err != nil {
+			if wantFree {
+				return checkResult{name: ck.Name, ok: true,
+					detail:  ck.TCP + " is free (" + firstLine(err.Error()) + ")",
+					elapsed: time.Since(start)}
+			}
 			return checkResult{name: ck.Name, detail: err.Error(), elapsed: time.Since(start)}
 		}
-		res := checkResult{name: ck.Name, ok: true, detail: ck.TCP + " accepted a connection", elapsed: time.Since(start)}
-		if err := conn.Close(); err != nil {
-			res.detail += fmt.Sprintf(" (close failed: %v)", err)
+		_ = conn.Close()
+		if wantFree {
+			// The port the operator wanted free is occupied — say by WHOM, the
+			// same sentence every other held-port message uses. A bare "should
+			// be free but connected" would send them hunting with lsof by hand.
+			detail := ck.TCP + " should be free but is listening"
+			if _, portStr, perr := net.SplitHostPort(ck.TCP); perr == nil {
+				if port, aerr := strconv.Atoi(portStr); aerr == nil {
+					if h := supervisor.PortHolder(port); h.PID > 0 {
+						detail += fmt.Sprintf(" — held by pid %d (%s); inspect with: %s",
+							h.PID, h.Command, supervisor.LsofCommand(port))
+					}
+				}
+			}
+			return checkResult{name: ck.Name, ok: false, detail: detail, elapsed: time.Since(start)}
 		}
+		res := checkResult{name: ck.Name, ok: true, detail: ck.TCP + " accepted a connection", elapsed: time.Since(start)}
 		return res
 
 	case len(ck.Command) > 0:

@@ -520,6 +520,15 @@ func (s *Supervisor) status(ctx context.Context, withHolders bool) []Status {
 			continue
 		}
 		if rec.PID == 0 {
+			// Not running. When it also could not run on this machine — the
+			// runtime never resolved — bare "stopped" would be byte-identical
+			// to one nobody tried, which is exactly the lie preflight's
+			// machine pass exists to front-run. Say so; still a read.
+			if in.CmdErr != nil {
+				st.Detail = "cannot start: " + in.CmdErr.Error()
+				out[i] = st
+				continue
+			}
 			s.describeExit(&st)
 			out[i] = st
 			if withHolders && wantsHolder(st, in.Port) {

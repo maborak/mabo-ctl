@@ -50,7 +50,8 @@ func Schema() ([]byte, error) {
 					"properties": map[string]any{
 						"name":    stringSchema("Check name, shown in preflight output."),
 						"command": argvSchema("Run this argv; exit 0 passes. Exactly one of command/tcp."),
-						"tcp":     stringSchema("Dial host:port; connecting passes. Exactly one of command/tcp."),
+						"tcp":     stringSchema("Dial host:port. Exactly one of command/tcp. What counts as passing is set by expect:."),
+						"expect":  stringSchema(`What the tcp: target should look like when the check passes: "listening" (default — a connection succeeds) or "free" (the connection is refused). Meaningless with command:. When "free" fails, preflight names whoever holds the port.`),
 					},
 				},
 			},

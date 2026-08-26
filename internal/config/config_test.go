@@ -1522,3 +1522,39 @@ func slicesEqual(a, b []string) bool {
 	}
 	return true
 }
+
+// expect: on preflight checks
+
+func TestCheckExpectRoundTripsAndValidates(t *testing.T) {
+	ok := `services:
+  - name: api
+    cmd: [echo, hi]
+checks:
+  - name: port-free
+    tcp: localhost:7100
+    expect: free
+  - name: db
+    tcp: localhost:5432
+`
+	if _, err := Load(write(t, t.TempDir(), ok)); err != nil {
+		t.Fatalf("expect: free / default listening failed to load: %v", err)
+	}
+
+	bad := []struct{ name, body, want string }{
+		{"nonsense value", ok + "  - name: x\n    command: [true]\n    expect: closed\n", `must be "listening"`},
+		{"on a command check", `services:
+  - name: api
+    cmd: [echo, hi]
+checks:
+  - name: builds
+    command: [true]
+    expect: free
+`, "only applies to a tcp:"},
+	}
+	for _, tc := range bad {
+		_, err := Load(write(t, t.TempDir(), tc.body))
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: err = %v, want containing %q", tc.name, err, tc.want)
+		}
+	}
+}

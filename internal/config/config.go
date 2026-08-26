@@ -125,6 +125,10 @@ type Check struct {
 	Name    string   `yaml:"name"`
 	Command []string `yaml:"command"`
 	TCP     string   `yaml:"tcp"` // "host:port"
+	// Expect is what the tcp: target should look like on a passing check:
+	// "listening" (the default — the dial succeeds) or "free" (the dial is
+	// refused). Only meaningful with tcp:; command checks always mean exit 0.
+	Expect string `yaml:"expect"`
 }
 
 // Shell is a named interactive command, e.g. a DB shell.

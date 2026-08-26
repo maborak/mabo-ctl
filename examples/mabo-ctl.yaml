@@ -191,6 +191,10 @@ checks:
 
   - name: redis
     command: [redis-cli, -h, localhost, -p, "6379", ping]
+#   expect: free  (tcp checks) flip the dial: pass when NOTHING listens —
+#                 the guard for "this port must be open BEFORE I start"; a
+#                 failure names whoever holds it, pid and lsof line included.
+
 
 # ---------------------------------------------------------------------------
 # shells — `mabo-ctl shell <name>`

@@ -560,6 +560,15 @@ func (v *validator) checkChecks() {
 		case hasTCP:
 			v.checkTCPAddr(id, ck.TCP)
 		}
+
+		switch ck.Expect {
+		case "", "listening", "free":
+		default:
+			v.addf("%s: expect %q must be \"listening\" (the default) or \"free\"", id, ck.Expect)
+		}
+		if ck.Expect != "" && !hasTCP {
+			v.addf("%s: expect only applies to a tcp: check", id)
+		}
 	}
 }
 

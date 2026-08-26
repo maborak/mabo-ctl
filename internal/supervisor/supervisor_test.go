@@ -2352,3 +2352,31 @@ func TestStartRefusesWhenAnotherMaboCtlHoldsTheClaim(t *testing.T) {
 		t.Errorf("claim file survived a successful start: %v", err)
 	}
 }
+
+// TestStatusNamesAnUnrunnableService: a service whose runtime never resolved
+// must not render as bare "stopped" — byte-identical to one nobody tried —
+// with the same cannot-start message preflight's machine pass front-runs.
+func TestStatusNamesAnUnrunnableService(t *testing.T) {
+	sup, _ := fixture(t, service.Instance{
+		Name:   "ghosted",
+		Cmd:    []string{"/nonexistent/interpreter", "serve"},
+		CmdErr: errors.New(`conda env "nosuchenv" was not found`),
+	})
+
+	got := sup.Status(context.Background())
+	if len(got) != 1 {
+		t.Fatalf("got %d statuses, want 1", len(got))
+	}
+	if got[0].Phase != PhaseStopped {
+		t.Errorf("phase = %q, want stopped (it is not running)", got[0].Phase)
+	}
+	if !strings.Contains(got[0].Detail, "cannot start") || !strings.Contains(got[0].Detail, "nosuchenv") {
+		t.Errorf("Detail = %q, want the cannot-start reason naming the runtime problem", got[0].Detail)
+	}
+
+	// A plain unstarted service keeps its empty DETAIL: nothing is wrong.
+	clean, _ := fixture(t, service.Instance{Name: "idle"})
+	if d := clean.Status(context.Background())[0].Detail; d != "" {
+		t.Errorf("unstarted service grew detail %q; want none", d)
+	}
+}

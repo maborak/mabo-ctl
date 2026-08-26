@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -1592,5 +1593,107 @@ func TestNotifyFlagIsWiredToStartAndServe(t *testing.T) {
 	h.run()
 	if !strings.Contains(h.stdout.String(), "--notify") && !strings.Contains(h.stderr.String(), "--notify") {
 		t.Errorf("start help does not mention --notify")
+	}
+}
+
+// preflight's machine-readiness pass (#9) and expect: on tcp checks
+
+// TestPreflightMachinePassFailsWhenTheRuntimeIsMissing: a service whose
+// interpreter cannot resolve on this machine is a FAIL before any declared
+// check runs, with the same message start would have produced.
+func TestPreflightMachinePassFailsWhenTheRuntimeIsMissing(t *testing.T) {
+	h := newHarnessWithConfig(t, `
+services:
+  - name: ghosted
+    runtime: node:18.99.9-not-installed
+    cmd: [node, server.js]
+checks:
+  - name: always-green
+    command: [true]
+`, "preflight")
+	if code := h.run(); code != exitFailure {
+		t.Fatalf("exit = %d, want %d; stderr:\n%s", code, exitFailure, h.stderr.String())
+	}
+	out := h.stdout.String()
+	if !strings.Contains(out, "MACHINE") || !strings.Contains(out, "cannot start") {
+		t.Fatalf("machine pass missing from output:\n%s", out)
+	}
+	if !strings.Contains(out, "always-green") || !strings.Contains(out, "passed") {
+		t.Fatalf("declared checks must still run beside the machine pass:\n%s", out)
+	}
+	if want := "ghosted"; !strings.Contains(out, want) {
+		t.Fatalf("the failing service must be named:\n%s", out)
+	}
+}
+
+// TestPreflightMachinePassAdvisesOnNvmrcWithoutRuntimeVersion: an .nvmrc in a
+// service directory with no runtime: version pinned is a WARN with a hint —
+// advisory, never an exit-1 failure.
+func TestPreflightMachinePassAdvisesOnNvmrcWithoutRuntimeVersion(t *testing.T) {
+	root := t.TempDir()
+	svc := filepath.Join(root, "frontend")
+	if err := os.MkdirAll(svc, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(svc, ".nvmrc"), "v24.4.0\n")
+	writeFile(t, filepath.Join(root, "mabo-ctl.yaml"), fmt.Sprintf(`
+services:
+  - name: frontend
+    dir: frontend
+    cmd: [echo, up]
+`))
+
+	h := newHarnessAt(t, root, "preflight")
+	if code := h.run(); code != exitOK {
+		t.Fatalf("an advisory warning must not fail preflight; exit %d, stderr:\n%s", code, h.stderr.String())
+	}
+	out := h.stdout.String()
+	if !strings.Contains(out, ".nvmrc pins v24") || !strings.Contains(out, "warn") {
+		t.Fatalf("advisory line missing:\n%s", out)
+	}
+}
+
+// TestPreflightExpectFreeNamesAListenerHoldingThePort: expect: free flips the
+// dial around — connecting becomes the failure, and the failure names WHO holds it.
+func TestPreflightExpectFreeNamesAListenerHoldingThePort(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	addr := l.Addr().String()
+
+	bad := newHarnessWithConfig(t, fmt.Sprintf(`
+services:
+  - name: api
+    cmd: [echo, hi]
+checks:
+  - name: api-port-free
+    tcp: %s
+    expect: free
+`, addr), "preflight")
+	if code := bad.run(); code != exitFailure {
+		t.Fatalf("occupied port should fail expect: free; exit %d", code)
+	}
+	out := bad.stdout.String()
+	if !strings.Contains(out, "should be free but is listening") {
+		t.Fatalf("failure does not say the port should be free:\n%s", out)
+	}
+
+	l.Close() // now free: the same check passes
+	good := newHarnessWithConfig(t, fmt.Sprintf(`
+services:
+  - name: api
+    cmd: [echo, hi]
+checks:
+  - name: api-port-free
+    tcp: %s
+    expect: free
+`, addr), "preflight")
+	if code := good.run(); code != exitOK {
+		t.Fatalf("a refused dial should pass expect: free; exit %d, stderr:\n%s", code, good.stderr.String())
+	}
+	if !strings.Contains(good.stdout.String(), "is free") {
+		t.Fatalf("passing detail does not say the port is free:\n%s", good.stdout.String())
 	}
 }
