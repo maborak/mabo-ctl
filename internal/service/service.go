@@ -34,8 +34,38 @@ import (
 	"time"
 
 	"github.com/maborak/mabo-ctl/internal/config"
+	"github.com/maborak/mabo-ctl/internal/redact"
 	"github.com/maborak/mabo-ctl/internal/state"
 )
+
+// Probe kinds, aliased from config so callers downstream of Resolve never need
+// to import config for them.
+const (
+	// ProbeNone means no readiness check.
+	ProbeNone = config.HealthNone
+	// ProbeHTTP polls an absolute http(s) URL; any response is ready.
+	ProbeHTTP = config.HealthHTTP
+	// ProbeTCP dials host:port; a connected socket is ready.
+	ProbeTCP = config.HealthTCP
+	// ProbeExec runs an argv vector once per attempt; exit 0 is ready.
+	ProbeExec = config.HealthExec
+)
+
+// Probe is one resolved readiness check. It is what remains after config's raw
+// declaration has been template-expanded: the supervisor runs exactly what is
+// recorded here and never re-reads mabo-ctl.yaml.
+type Probe struct {
+	// Kind selects the family: ProbeHTTP, ProbeTCP or ProbeExec. The empty
+	// kind means no probe, which [Instance.Readiness] also infers from a
+	// non-empty Health display string on instances built by hand.
+	Kind string
+	// URL is the probed address when Kind is ProbeHTTP.
+	URL string
+	// Addr is "host:port" when Kind is ProbeTCP.
+	Addr string
+	// Argv is the command run when Kind is ProbeExec, already expanded.
+	Argv []string
+}
 
 // environ reads the current process environment. It is a variable so a test can
 // substitute a fixed environment; production code never reassigns it.
@@ -51,8 +81,14 @@ type Instance struct {
 	Dir string
 	// Port is the resolved port, or 0 for a portless service.
 	Port int
-	// Health is the expanded readiness URL, or "" for no probe.
+	// Health is the DISPLAY form of the readiness probe — the expanded URL, or
+	// "tcp:host:port", or the exec argv with credentials redacted. It is what
+	// status output quotes and what every render site has always shown; "" means
+	// no probe. The machine-runnable form is Probe.
 	Health string
+	// Probe is the resolved readiness check to actually run; see [Readiness]
+	// for why callers should go through it rather than reading this directly.
+	Probe Probe
 	// Cmd is the expanded argv. Cmd[0] is an absolute path to the executable
 	// chosen by Runtime, never a bare name left to the child's PATH.
 	Cmd []string
@@ -229,7 +265,7 @@ func build(cfg *config.Config, s config.Spec, port int, exp *expander, base []st
 		return Instance{}, err
 	}
 
-	health, err := exp.expand(s.Name, "health", s.Health)
+	probe, display, err := expandProbe(s.Name, s.Health, exp)
 	if err != nil {
 		return Instance{}, err
 	}
@@ -296,7 +332,8 @@ func build(cfg *config.Config, s config.Spec, port int, exp *expander, base []st
 		Name:         s.Name,
 		Dir:          dir,
 		Port:         port,
-		Health:       health,
+		Health:       display,
+		Probe:        probe,
 		Cmd:          cmd,
 		Env:          buildEnv(base, exp.names, exp.ports, specEnv, rt, port),
 		Color:        s.Color,
@@ -306,6 +343,51 @@ func build(cfg *config.Config, s config.Spec, port int, exp *expander, base []st
 		NoAutostart:  !s.Autostarts(),
 		CmdErr:       cmdErr,
 	}, nil
+}
+
+// expandProbe turns a raw declared Health into the resolved Probe and its
+// display form. Every part is template-expanded like Cmd and Env are, so
+// `tcp: localhost:{{.Port}}` and an exec argv may reference any service's port.
+//
+// The display form for an exec probe runs the argv through redact.Args at the
+// source: the command is half of what status and config exist to show, and
+// arguments carry tokens exactly as often as environment values do.
+func expandProbe(name string, h config.Health, exp *expander) (Probe, string, error) {
+	if h.Zero() {
+		return Probe{}, "", nil
+	}
+	switch h.Kind {
+	case config.HealthHTTP:
+		u, err := exp.expand(name, "health", h.HTTP)
+		if err != nil {
+			return Probe{}, "", err
+		}
+		return Probe{Kind: ProbeHTTP, URL: u}, u, nil
+
+	case config.HealthTCP:
+		addr, err := exp.expand(name, "health tcp", h.Addr)
+		if err != nil {
+			return Probe{}, "", err
+		}
+		return Probe{Kind: ProbeTCP, Addr: addr}, "tcp:" + addr, nil
+
+	case config.HealthExec:
+		argv := make([]string, 0, len(h.Argv))
+		display := make([]string, 0, len(h.Argv))
+		for i, arg := range h.Argv {
+			expanded, err := exp.expand(name, fmt.Sprintf("health exec[%d]", i), arg)
+			if err != nil {
+				return Probe{}, "", err
+			}
+			argv = append(argv, expanded)
+			display = append(display, expanded)
+		}
+		shown := strings.Join(redact.Args(display), " ")
+		return Probe{Kind: ProbeExec, Argv: argv}, "exec: [" + shown + "]", nil
+
+	default:
+		return Probe{}, "", fmt.Errorf("service %q: unknown health kind %q", name, h.Kind)
+	}
 }
 
 // resolveDir returns the absolute working directory for s, verified to exist,
@@ -450,6 +532,24 @@ func prependPath(bin, path string) string {
 // either fail obscurely or, worse, find a DIFFERENT program of the same name on
 // an ambient PATH — the exact substitution the runtime field exists to prevent.
 func (in Instance) Runnable() error { return in.CmdErr }
+
+// Readiness returns the probe to run for this instance.
+//
+// It exists because a Probe field added after Health would silently change
+// every instance built by hand — every test, and any caller composing an
+// Instance directly: such instances carry only Health, and Health has always
+// meant an HTTP URL. Readiness treats those as HTTP probes and defers to Probe
+// when one was actually resolved, so both shapes answer the same question and
+// no caller branches on which shape it was handed.
+func (in Instance) Readiness() Probe {
+	if in.Probe.Kind != "" {
+		return in.Probe
+	}
+	if in.Health != "" {
+		return Probe{Kind: ProbeHTTP, URL: in.Health}
+	}
+	return Probe{}
+}
 
 // Autostarts reports whether a bare `mabo-ctl start` should include this service.
 // The default — a zero-valued Instance, and a mabo-ctl.yaml that never mentions

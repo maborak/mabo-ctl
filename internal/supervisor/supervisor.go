@@ -566,9 +566,9 @@ func (s *Supervisor) status(ctx context.Context, withHolders bool) []Status {
 		out[i] = st
 
 		wg.Add(1)
-		go func(idx int, url string) {
+		go func(idx int, in service.Instance) {
 			defer wg.Done()
-			res := health.Probe(ctx, url)
+			res := probeOnce(ctx, in)
 			out[idx].Elapsed = res.Elapsed
 			if res.OK {
 				out[idx].Phase = PhaseReady
@@ -579,7 +579,7 @@ func (s *Supervisor) status(ctx context.Context, withHolders bool) []Status {
 			// used to be worth running separately; it belongs on the one path
 			// that derives a phase, not on a second one beside it.
 			out[idx].Detail = probeFailure(res)
-		}(i, in.Health)
+		}(i, in)
 	}
 
 	wg.Wait()
@@ -631,6 +631,50 @@ func probeFailure(res health.Result) string {
 		return res.Err.Error()
 	}
 	return "no response"
+}
+
+// probeOnce runs one readiness attempt for in, whichever probe family it
+// declares. An instance whose Probe field was never filled — every test, any
+// caller composing an Instance by hand — is an HTTP probe through
+// [service.Instance.Readiness], exactly as it has always been.
+func probeOnce(ctx context.Context, in service.Instance) health.Result {
+	p := in.Readiness()
+	switch p.Kind {
+	case service.ProbeTCP:
+		return health.ProbeTCP(ctx, p.Addr)
+	case service.ProbeExec:
+		return health.ProbeExec(ctx, in.Dir, in.Env, p.Argv)
+	default:
+		return health.Probe(ctx, p.URL)
+	}
+}
+
+// waitProbe polls readiness for in until it answers, the process dies or the
+// caller's deadline expires; see [probeOnce] for the family dispatch.
+func waitProbe(ctx context.Context, in service.Instance, alive func() bool) health.Result {
+	p := in.Readiness()
+	switch p.Kind {
+	case service.ProbeTCP:
+		return health.WaitTCP(ctx, in.Health, p.Addr, alive)
+	case service.ProbeExec:
+		return health.WaitExec(ctx, in.Health, in.Dir, in.Env, p.Argv, alive)
+	default:
+		return health.Wait(ctx, p.URL, alive)
+	}
+}
+
+// probeKindNote builds the parenthetical suffix of a ready event: what kind of
+// probe answered, and for HTTP the status that answered. The HTTP form is
+// byte-for-byte what this message has always been.
+func probeKindNote(p service.Probe, status int) string {
+	switch p.Kind {
+	case service.ProbeTCP:
+		return ", tcp"
+	case service.ProbeExec:
+		return ", exec"
+	default:
+		return fmt.Sprintf(", HTTP %d", status)
+	}
 }
 
 // describeExit explains a service with no live process: it either died, or it
@@ -996,13 +1040,13 @@ func (s *Supervisor) startOne(ctx context.Context, in service.Instance, ev chan<
 
 	waitCtx, cancel := context.WithTimeout(ctx, s.readyTimeoutFor(in))
 	defer cancel()
-	res := health.Wait(waitCtx, in.Health, func() bool { return state.Alive(pid) })
+	res := waitProbe(waitCtx, in, func() bool { return state.Alive(pid) })
 
 	switch {
 	case res.OK:
 		emit(ev, Event{Service: in.Name, Phase: PhaseReady,
-			Msg: fmt.Sprintf("ready in %s (pid %d, HTTP %d)",
-				res.Elapsed.Round(time.Millisecond), pid, res.Status)})
+			Msg: fmt.Sprintf("ready in %s (pid %d%s)",
+				res.Elapsed.Round(time.Millisecond), pid, probeKindNote(in.Readiness(), res.Status))})
 		return PhaseReady, nil
 
 	case !state.Alive(pid):

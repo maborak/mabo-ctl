@@ -156,9 +156,17 @@ to the log and stdin from `/dev/null` → write the pid → poll health.
 Spawn must survive the parent exiting: the shell version uses a subshell with
 `trap '' HUP INT` plus `disown`. In Go, `SysProcAttr{Setsid: true}`.
 
-**Readiness:** poll the health URL until it answers, the process dies, or the
+**Readiness:** poll the health probe until it answers, the process dies, or the
 timeout expires. Three outcomes, all distinct in the output: `ready`, `slow`
 (still starting), `failed` (process died — print the log tail).
+
+The probe is one of three families, chosen by how `health:` is written: an
+http(s) URL (HEAD then GET on 405/501; any response is answering), a TCP dial
+(`{tcp: host:port}` — connected is ready, nothing is written to the socket), or
+an exec probe (`{exec: [argv]}` — run in the service's dir/env under a hard
+timeout, exit 0 is ready). The non-HTTP families are what make readiness — and
+therefore `slow` vs `degraded` vs `failed` — honest for portless services: queue
+consumers, gRPC daemons, databases.
 
 **Stop:** SIGTERM, wait `STOP_GRACE`, then SIGKILL. Kill the process *group*,
 not the pid — `npm run dev` spawns a child that survives a bare pid kill and

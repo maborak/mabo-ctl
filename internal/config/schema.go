@@ -87,7 +87,7 @@ var serviceSchema = map[string]any{
 		},
 		"dir":    stringSchema("Working directory relative to this file; must exist and stay inside the repo root. Defaults to the repo root."),
 		"port":   map[string]any{"type": "integer", "minimum": 0, "maximum": 65535, "description": "0 (the default) = no port and no port guard."},
-		"health": stringSchema("Readiness URL; {{.Port}} and {{.Port \"name\"}} templates allowed. Empty = no readiness probe."),
+		"health": healthSchema,
 		"cmd":    argvSchema("The argv to run — never a shell string. cmd[0] is resolved through runtime:."),
 		"env": map[string]any{
 			"type":                 "object",
@@ -100,6 +100,27 @@ var serviceSchema = map[string]any{
 		"depends_on":    map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Services that start first. Orders STARTS only — stop never expands dependencies."},
 		"autostart":     map[string]any{"type": "boolean", "description": "false opts out of a bare `mabo-ctl start` only; naming the service always starts it. Default true."},
 		"color":         stringSchema("Terminal colour for this service's label: a name (green, blue, bright-cyan, …), a 0-255 palette number, or #rrggbb."),
+	},
+}
+
+// healthSchema describes a service's readiness probe: the classic scalar URL
+// (read as http) or a mapping carrying exactly one of http/tcp/exec.
+var healthSchema = map[string]any{
+	"description": "Readiness probe. A string is an http(s) URL ({{.Port}} and {{.Port \"name\"}} templates allowed); " +
+		"a mapping sets exactly one of http/tcp/exec. Empty = no readiness probe.",
+	"oneOf": []any{
+		map[string]any{"type": "string"},
+		map[string]any{
+			"type":                 "object",
+			"additionalProperties": false,
+			"minProperties":        1,
+			"maxProperties":        1,
+			"properties": map[string]any{
+				"http": stringSchema("Absolute http(s) URL; any response counts as ready."),
+				"tcp":  stringSchema("Dial host:port; a connected socket is ready, e.g. localhost:5432."),
+				"exec": argvSchema("Run this argv in the service's dir and environment; exit 0 is ready."),
+			},
+		},
 	},
 }
 

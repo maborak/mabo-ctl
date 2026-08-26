@@ -125,6 +125,14 @@ services:
     ready_timeout: 5s      # this service's own window; the global stays 30s
     depends_on: [backend]
 
+  - name: consumer         # a portless service can still be readiness-checked:
+    dir: backend           # exec runs in the service's dir/env under a hard
+    runtime: conda:app-dev # timeout, and exit 0 means ready. tcp: host:port is
+    cmd: [python, cli.py, consume]   # the third form — connected is ready.
+    health:
+      exec: [redis-cli, ping]
+    depends_on: [backend]
+
   - name: seed             # autostart: false — kept out of a bare `mabo-ctl start`
     dir: backend
     autostart: false
@@ -167,13 +175,19 @@ Three things about that file are worth stating outright:
   everything, is an instruction rather than a default. `depends_on` still pulls
   it in when something selected needs it, and `stop`, `status`, `logs` and
   `exec` treat it like any other service.
+- **`health:` accepts three probe families.** A string stays an http(s) URL —
+  any response counts as ready, exactly as before. A mapping selects `tcp:` (a
+  connected socket is ready; nothing is written to it) or `exec:` (the argv runs
+  once per poll in the service's dir and env under a hard timeout; exit 0 is
+  ready). This is what makes `slow`/`degraded` honest for queues, gRPC daemons,
+  databases and every other service without an HTTP endpoint.  joins against the service's origin, an absolute http(s) URL opens as-is.
 - **`runtime:` resolves the interpreter explicitly.** `conda:<env>` and
   `node:<version>` produce an absolute path and fail loudly naming the path they
   looked for, rather than inheriting whatever `PATH` your shell happens to have.
   mabo-ctl does not care whether it was invoked from a login shell.
 
 `{{.Port}}` is this service's resolved port and `{{.Port "backend"}}` is another
-service's. Templates are expanded in `cmd`, `env` values, `env_file` values and
+service's. Templates are expanded in `cmd`, `env` values, `env_file` values,
 `health`, *after* every port has resolved.
 
 **`env_file:`** points at a file of `KEY=VALUE` lines (blank lines and `#`
@@ -199,7 +213,7 @@ Leave the key out to inherit the global.
 | `mabo-ctl stop [svc...]` | SIGTERM the process **group**, wait `stop_grace`, then SIGKILL. |
 | `mabo-ctl restart [svc...] [-f]` | Stop, then start. |
 | `mabo-ctl status [--json]` | One line per service. `--json` is the stable machine contract. Always exits 0: a service being down is information. |
-| `mabo-ctl health` | The same phases `status` reports, with an exit code: 4 when any declared health URL did not answer. |
+| `mabo-ctl health` | The same phases `status` reports, with an exit code: 4 when any declared probe (http, tcp or exec) did not answer. |
 | `mabo-ctl config [svc] [--json] [--raw]` | Where `mabo-ctl.yaml` was loaded from and what it resolved to: the port **and which of the four precedence levels produced it**, the absolute command, the runtime, the expanded health URL, the declared env. `--raw` prints the file verbatim. |
 | `mabo-ctl logs [svc\|all] [--tail=N] [-f]` | Tail a log, or interleave every log with per-service labels. `tailf` is an alias. |
 | `mabo-ctl reset [--force]` | Stop everything and delete `.dev/`. `--force` also kills whatever still holds a declared port. |
@@ -207,8 +221,9 @@ Leave the key out to inherit the global.
 | `mabo-ctl doctor` | Read-only stack exam: unresolvable runtimes, stale or recycled pids, foreign port holders, unsurfaced crashes, loose `.dev/` permissions. Warn → 0, FAIL → 1. |
 | `mabo-ctl exec <svc> <cmd>...` | Run a command in the service's exact environment and directory; forwards the child's exit code. |
 | `mabo-ctl shell <name>` | Run a declared `shells:` entry, or open `$SHELL` in a service's environment. |
-| `mabo-ctl open` | Hand each running service's URL to `open` (macOS) or `xdg-open` (Linux). |
-| `mabo-ctl serve [--addr] [--open] [--i-know-this-is-dangerous]` | Serve the web console on `127.0.0.1:7999` until interrupted. It can start and stop services — see [Web console](#web-console). |
+| `mabo-ctl open` | Hand each running service's URL — its `open:` target when declared, else the derived origin — to `open` (macOS) or `xdg-open` (Linux). |
+| `mabo-ctl serve [--addr] [--open] [--notify] [--i-know-this-is-dangerous]` | Serve the web console on `127.0.0.1:7999` until interrupted; `--notify` announces dying services on the desktop. It can start and stop services — see [Web console](#web-console). |
+| `mabo-ctl init` | Scaffold a fully commented-out `mabo-ctl.yaml` from what the repo looks like (`package.json` + `.nvmrc`, `manage.py`, `pyproject.toml`, `Cargo.toml`). Refuses to overwrite; adds `.dev/` to `.gitignore`; runs nothing it finds. |
 | `mabo-ctl completion <bash\|zsh\|fish\|powershell>` | Print a completion script. |
 | `mabo-ctl upgrade [--force]` | Replace this binary with the latest GitHub release — see [Upgrading](#upgrading). |
 
@@ -245,6 +260,12 @@ wrong for a person who is about to watch it. Three flags make it stay:
 | `-a`, `--attach` | The full-screen console, over the services that were just started — see [Interactive console](#interactive-console). |
 | `-i`, `--interactive` | The resident prompt — see [The prompt](#the-prompt). |
 | `--web-console` | The web console, bound to a free loopback port, its URL printed with its token on a line of its own, held open at the prompt — see [Web console](#web-console). |
+
+Add `--notify` to any of them: while mabo-ctl is resident, a service that dies
+announces itself through the desktop notification system (`osascript` on macOS,
+`notify-send` on Linux) with the service name and a truncated log line. Off by
+default — a supervisor that pops dialogs uninvited is worse than one that stays
+quiet.
 
 ```sh
 $ mabo-ctl start --web-console
@@ -344,10 +365,11 @@ Highest first. This is the heart of the tool.
 
 | # | Source | Notes |
 |---|---|---|
-| 1 | `--ports=A,B,C,D` | Positional. Slot *i* is the *i*-th service that declares a port, in declaration order. An **empty slot keeps the declared default**, so `--ports=,,7999` overrides only the third. |
-| 2 | `<NAME>_PORT` in the caller's environment | e.g. `BACKEND_PORT=7999`. A `-` in a service name becomes `_`. |
-| 3 | `.dev/run.env` | Persisted by the previous `start` or `restart`. |
-| 4 | `port:` in `mabo-ctl.yaml` | The declared default. |
+| 1 | `--port SERVICE=PORT` | Named, repeatable: `--port backend=7999 --port web=3000`. Cannot be combined with `--ports`. |
+| 2 | `--ports=A,B,C,D` | Positional. Slot *i* is the *i*-th service that declares a port, in declaration order. An **empty slot keeps the declared default**, so `--ports=,,7999` overrides only the third. |
+| 3 | `<NAME>_PORT` in the caller's environment | e.g. `BACKEND_PORT=7999`. A `-` in a service name becomes `_`. |
+| 4 | `.dev/run.env` | Persisted by the previous `start` or `restart`. |
+| 5 | `port:` in `mabo-ctl.yaml` | The declared default. |
 
 Two rules are not optional:
 
@@ -356,7 +378,9 @@ Two rules are not optional:
   child inherits, so a service whose port resolved to something else would still
   bind the caller's value, and the supervisor would probe a port nobody is
   listening on. mabo-ctl re-injects the authoritative `<NAME>_PORT` for every
-  service into each child's environment.
+  service into each child's environment — **plus a bare `PORT`** (the Procfile /
+  Heroku convention) for any service that declares one, so `process.env.PORT`
+  works without configuration.
 - **A persisted port that outranks a changed default is announced — and can be
   adopted.** Changing a default port in `mabo-ctl.yaml` appearing to do nothing,
   because `.dev/run.env` silently won, cost a real debugging round. mabo-ctl
@@ -409,6 +433,10 @@ Everything mabo-ctl remembers lives in `.dev/`, next to `mabo-ctl.yaml`. Add it 
 ├── exits/<service>.json  the last observed death: exit code or signal, when it
 │                         ran, a short log tail, and whether it died before it
 │                         ever came up — which is `failed` rather than `exited`
+├── pids/<service>.pid.claim   a start IN PROGRESS, held only while another
+│                              mabo-ctl may be mid-spawn; released as soon as the
+│                              real pid record lands. A claim left by a dead
+│                              creator is cleared automatically.
 └── run.env               persisted resolved ports (PORT_<SERVICE>=<n>)
 ```
 

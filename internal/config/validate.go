@@ -169,12 +169,13 @@ func (v *validator) checkServices() {
 
 		// Rule 6: a health template may only reference its own {{.Port}} when
 		// the service actually declares one. {{.Port "other"}} is fine.
-		if s.Health != "" && s.Port == 0 && ownPortRE.MatchString(s.Health) {
+		if !s.Health.Zero() && s.Port == 0 && ownPortRE.MatchString(s.Health.Raw()) {
 			v.addf("%s: health %q references {{.Port}} but the service declares no port; "+
-				"give it a port, or probe another service with {{.Port \"name\"}}", id, s.Health)
+				"give it a port, or probe another service with {{.Port \"name\"}}", id, s.Health.String())
 		}
 
 		v.checkRuntime(id, s.Runtime)
+		v.checkHealth(id, s)
 		v.checkTemplates(id, s)
 		v.checkEnvKeys(id, s)
 		v.checkEnvFile(id, s)
@@ -274,9 +275,54 @@ func (v *validator) checkRuntime(id, runtime string) {
 	}
 }
 
-// checkTemplates rejects a Cmd, Env value or Health that is not parseable as a
-// text/template, so a broken action is a load-time error rather than a failure
-// at spawn time. It does not execute anything.
+// checkHealth holds a declared probe to the shape of its kind. The decoder
+// already guarantees exactly one of http/tcp/exec; this re-checks it for any
+// Health built programmatically and applies the per-kind rules that decoding
+// cannot: a tcp target must be host:port with a port in range, and an exec
+// argv must have a program to run.
+//
+// The http URL is deliberately NOT parsed here. Templates are raw at load
+// time — `http://localhost:{{.Port}}/healthz` is not yet a URL, and parsing
+// what is still a template would reject configs that resolve perfectly.
+func (v *validator) checkHealth(id string, s Spec) {
+	h := s.Health
+	if h.Zero() {
+		return
+	}
+	switch h.Kind {
+	case HealthHTTP:
+		if strings.TrimSpace(h.HTTP) == "" {
+			v.addf("%s: health http is empty", id)
+		}
+	case HealthTCP:
+		// Unlike the checks: block, a tcp probe may carry {{.Port}} templates,
+		// exactly as an http URL may — so the port is range-checked only when
+		// it is already literal.
+		host, port, ok := cutTCPAddr(h.Addr)
+		switch {
+		case !ok || host == "" || port == "":
+			v.addf("%s: tcp %q must be host:port, e.g. localhost:5432", id, h.Addr)
+		case !strings.Contains(port, "{{"):
+			if n, err := strconv.Atoi(port); err != nil || n < 1 || n > 65535 {
+				v.addf("%s: tcp %q has an invalid port %q; expected 1..65535", id, h.Addr, port)
+			}
+		}
+	case HealthExec:
+		if len(h.Argv) == 0 {
+			v.addf("%s: health exec is empty; declare the command to run", id)
+			return
+		}
+		if strings.TrimSpace(h.Argv[0]) == "" {
+			v.addf("%s: health exec[0] is empty; the first element must be the program to run", id)
+		}
+	default:
+		v.addf("%s: invalid health kind %q; want %q, %q or %q", id, h.Kind, HealthHTTP, HealthTCP, HealthExec)
+	}
+}
+
+// checkTemplates rejects a Cmd, Env value or Health part that is not parseable
+// as a text/template, so a broken action is a load-time error rather than a
+// failure at spawn time. It does not execute anything.
 func (v *validator) checkTemplates(id string, s Spec) {
 	check := func(what, text string) {
 		if !strings.Contains(text, "{{") {
@@ -286,7 +332,7 @@ func (v *validator) checkTemplates(id string, s Spec) {
 			v.addf("%s: %s is not a valid template: %v", id, what, err)
 		}
 	}
-	check(fmt.Sprintf("health %q", s.Health), s.Health)
+	check(fmt.Sprintf("health %q", s.Health.String()), s.Health.Raw())
 	for i, a := range s.Cmd {
 		check(fmt.Sprintf("cmd[%d] %q", i, a), a)
 	}
@@ -518,13 +564,7 @@ func (v *validator) checkChecks() {
 
 // checkTCPAddr validates a "host:port" preflight target without resolving it.
 func (v *validator) checkTCPAddr(id, addr string) {
-	host, port, ok := strings.Cut(addr, ":")
-	// An IPv6 literal must be bracketed; take the text after the last colon.
-	if strings.HasPrefix(addr, "[") {
-		if end := strings.LastIndex(addr, "]:"); end >= 0 {
-			host, port, ok = addr[1:end], addr[end+2:], true
-		}
-	}
+	host, port, ok := cutTCPAddr(addr)
 	if !ok || host == "" || port == "" {
 		v.addf("%s: tcp %q must be host:port, e.g. localhost:5432", id, addr)
 		return
@@ -533,6 +573,19 @@ func (v *validator) checkTCPAddr(id, addr string) {
 	if err != nil || n < 1 || n > 65535 {
 		v.addf("%s: tcp %q has an invalid port %q; expected 1..65535", id, addr, port)
 	}
+}
+
+// cutTCPAddr splits "host:port" the same way for every caller of
+// checkTCPAddr-like rules, bracketed IPv6 literals included.
+func cutTCPAddr(addr string) (host, port string, ok bool) {
+	host, port, ok = strings.Cut(addr, ":")
+	// An IPv6 literal must be bracketed; take the text after the last colon.
+	if strings.HasPrefix(addr, "[") {
+		if end := strings.LastIndex(addr, "]:"); end >= 0 {
+			host, port, ok = addr[1:end], addr[end+2:], true
+		}
+	}
+	return host, port, ok
 }
 
 // checkShells validates the shells block: a named command, optionally bound to

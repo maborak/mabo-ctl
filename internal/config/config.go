@@ -63,13 +63,14 @@ type Config struct {
 	ReadyTimeout time.Duration // default 30s
 }
 
-// Spec is a service exactly as declared. Cmd/Env/Health hold RAW templates;
-// they are expanded later by service.Resolve once every port is known.
+// Spec is a service exactly as declared. Cmd/Env and the parts of Health hold
+// RAW templates; they are expanded later by service.Resolve once every port is
+// known.
 type Spec struct {
 	Name      string            `yaml:"name"`
 	Dir       string            `yaml:"dir"`
-	Port      int               `yaml:"port"`   // 0 = no port, no health
-	Health    string            `yaml:"health"` // "" = no readiness probe
+	Port      int               `yaml:"port"` // 0 = no port, no health
+	Health    Health            `yaml:"health"`
 	Cmd       []string          `yaml:"cmd"`
 	Env       map[string]string `yaml:"env"`
 	EnvFile   string            `yaml:"env_file"` // KEY=VALUE file; env: overrides it
@@ -409,6 +410,9 @@ func (s Spec) clone() Spec {
 	if s.DependsOn != nil {
 		out.DependsOn = append([]string(nil), s.DependsOn...)
 	}
+	if s.Health.Argv != nil {
+		out.Health.Argv = append([]string(nil), s.Health.Argv...)
+	}
 	if s.Env != nil {
 		out.Env = make(map[string]string, len(s.Env))
 		for k, v := range s.Env {
@@ -438,7 +442,7 @@ type specDoc struct {
 	Name      string                 `yaml:"name"`
 	Dir       string                 `yaml:"dir"`
 	Port      int                    `yaml:"port"`
-	Health    string                 `yaml:"health"`
+	Health    Health                 `yaml:"health"`
 	Cmd       []string               `yaml:"cmd"`
 	Env       map[string]scalarValue `yaml:"env"`
 	EnvFile   string                 `yaml:"env_file"`

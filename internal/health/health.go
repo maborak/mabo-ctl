@@ -1,4 +1,5 @@
-// Package health implements mabo-ctl's HTTP readiness probe.
+// Package health implements mabo-ctl's readiness probes: HTTP, TCP dial and
+// exec, selected by how the service declares its health check.
 //
 // The package is small on purpose, but every rule in it is a fix for a
 // diagnosed failure of the shell predecessor. None of them is incidental and
@@ -16,9 +17,14 @@
 //  4. The address family is never forced and the host is never rewritten. A
 //     dev server that binds localhost to ::1 only is unreachable on
 //     127.0.0.1; see [newClient] for why this must stay as it is.
+//  5. A TCP probe is a DIAL, nothing more: connected is ready, the socket is
+//     closed immediately, and nothing is written to it. An exec probe runs an
+//     argv once under a hard timeout and reads its exit code; its output is
+//     captured only as a truncated diagnostic for a failure.
 //
 // The package depends only on the standard library and performs no filesystem
-// or process side effects.
+// side effects of its own; an exec probe runs exactly the command it was given,
+// in the working directory and environment its caller chose.
 package health
 
 import (
@@ -149,26 +155,36 @@ func Probe(ctx context.Context, rawURL string) Result {
 // can be abandoned; every such goroutine is bounded by [ProbeTimeout] and is
 // cancelled when Wait returns.
 func Wait(ctx context.Context, rawURL string, alive func() bool) Result {
-	start := time.Now()
+	// Rejected before any polling starts, exactly as before: a URL that cannot
+	// ever work must fail in microseconds, not after a readiness timeout.
 	if err := checkURL(rawURL); err != nil {
-		return Result{Elapsed: time.Since(start), Err: err}
+		return Result{Err: err}
 	}
+	return wait(ctx, rawURL, func(c context.Context) Result { return Probe(c, rawURL) }, alive)
+}
+
+// wait is the polling loop every probe family shares: run one attempt, stop on
+// success, a dead process or an expired context, otherwise sleep and repeat.
+// describe names the target in error messages exactly as the caller declared
+// it, so the failure text quotes the config rather than a derived form of it.
+func wait(ctx context.Context, describe string, probe func(context.Context) Result, alive func() bool) Result {
+	start := time.Now()
 
 	var last Result
 	for {
 		if !isAlive(alive) {
-			return deadResult(start, last, rawURL)
+			return deadResult(start, last, describe)
 		}
 		if ctx.Err() != nil {
-			return expiredResult(ctx, start, last, rawURL)
+			return expiredResult(ctx, start, last, describe)
 		}
 
-		res, stop := runProbe(ctx, rawURL, alive)
+		res, stop := runProbe(ctx, probe, alive)
 		switch stop {
 		case stopDead:
-			return deadResult(start, last, rawURL)
+			return deadResult(start, last, describe)
 		case stopCtx:
-			return expiredResult(ctx, start, last, rawURL)
+			return expiredResult(ctx, start, last, describe)
 		}
 		if res.OK {
 			res.Elapsed = time.Since(start)
@@ -178,9 +194,9 @@ func Wait(ctx context.Context, rawURL string, alive func() bool) Result {
 
 		switch waitFor(ctx, PollInterval, alive) {
 		case stopDead:
-			return deadResult(start, last, rawURL)
+			return deadResult(start, last, describe)
 		case stopCtx:
-			return expiredResult(ctx, start, last, rawURL)
+			return expiredResult(ctx, start, last, describe)
 		}
 	}
 }
@@ -260,16 +276,16 @@ const (
 	stopCtx                    // ctx expired or was cancelled
 )
 
-// runProbe runs one [Probe] in its own goroutine so that a dead process or an
+// runProbe runs one attempt in its own goroutine so that a dead process or an
 // expired context can abandon an in-flight request instead of waiting out
 // [ProbeTimeout]. The goroutine writes to a buffered channel and therefore
 // never leaks, even when its result is abandoned.
-func runProbe(ctx context.Context, rawURL string, alive func() bool) (Result, stopReason) {
+func runProbe(ctx context.Context, probe func(context.Context) Result, alive func() bool) (Result, stopReason) {
 	probeCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
 	done := make(chan Result, 1)
-	go func() { done <- Probe(probeCtx, rawURL) }()
+	go func() { done <- probe(probeCtx) }()
 
 	ticker := time.NewTicker(aliveInterval)
 	defer ticker.Stop()
@@ -318,25 +334,25 @@ func isAlive(alive func() bool) bool {
 // deadResult builds the Result for a process that died before answering,
 // keeping the last probe's error so the caller can say what the last attempt
 // actually saw.
-func deadResult(start time.Time, last Result, rawURL string) Result {
+func deadResult(start time.Time, last Result, describe string) Result {
 	res := Result{Status: last.Status, Elapsed: time.Since(start)}
 	if last.Err != nil {
-		res.Err = fmt.Errorf("health: %s never answered (last probe: %w): %w", rawURL, last.Err, ErrProcessGone)
+		res.Err = fmt.Errorf("health: %s never answered (last probe: %w): %w", describe, last.Err, ErrProcessGone)
 	} else {
-		res.Err = fmt.Errorf("health: %s never answered: %w", rawURL, ErrProcessGone)
+		res.Err = fmt.Errorf("health: %s never answered: %w", describe, ErrProcessGone)
 	}
 	return res
 }
 
 // expiredResult builds the Result for a readiness timeout, preserving both the
 // last probe's error and ctx.Err() so errors.Is finds either.
-func expiredResult(ctx context.Context, start time.Time, last Result, rawURL string) Result {
+func expiredResult(ctx context.Context, start time.Time, last Result, describe string) Result {
 	elapsed := time.Since(start)
 	res := Result{Status: last.Status, Elapsed: elapsed}
 	if last.Err != nil {
-		res.Err = fmt.Errorf("health: %s not ready after %s (last probe: %w): %w", rawURL, elapsed.Round(time.Millisecond), last.Err, ctx.Err())
+		res.Err = fmt.Errorf("health: %s not ready after %s (last probe: %w): %w", describe, elapsed.Round(time.Millisecond), last.Err, ctx.Err())
 	} else {
-		res.Err = fmt.Errorf("health: %s not ready after %s: %w", rawURL, elapsed.Round(time.Millisecond), ctx.Err())
+		res.Err = fmt.Errorf("health: %s not ready after %s: %w", describe, elapsed.Round(time.Millisecond), ctx.Err())
 	}
 	return res
 }

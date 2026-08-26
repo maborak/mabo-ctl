@@ -8,6 +8,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -620,4 +622,136 @@ func equalStrings(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// tcp and exec probes
+
+// freePort asks the kernel for a listening TCP port, for tests that must own
+// the exact socket they probe.
+func freePort(t *testing.T) (string, net.Listener) {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	t.Cleanup(func() { l.Close() })
+	return l.Addr().String(), l
+}
+
+func TestProbeTCPConnectsAndCloses(t *testing.T) {
+	addr, l := freePort(t)
+
+	res := ProbeTCP(context.Background(), addr)
+	if !res.OK {
+		t.Fatalf("OK = false, err = %v; want a successful dial against a live listener", res.Err)
+	}
+	if res.Status != 0 {
+		t.Errorf("Status = %d, want 0: a dial has no HTTP status", res.Status)
+	}
+
+	// A refused port is the negative case.
+	l.Close() //nolint:errcheck — nothing depends on this listener surviving
+	if res2 := ProbeTCP(context.Background(), "127.0.0.1:1"); res2.OK {
+		t.Error("dialing a refused port reported OK")
+	}
+}
+
+func TestProbeTCPEmptyAddr(t *testing.T) {
+	if res := ProbeTCP(context.Background(), ""); res.OK || res.Err == nil {
+		t.Errorf("empty address: OK = %v, err = %v; want a rejection", res.OK, res.Err)
+	}
+}
+
+func TestWaitTCPReadyThenReportsAliveDeath(t *testing.T) {
+	addr, _ := freePort(t)
+	done := make(chan Result, 1)
+	go func() { done <- WaitTCP(context.Background(), "tcp:"+addr, addr, nil) }()
+
+	select {
+	case res := <-done:
+		if !res.OK {
+			t.Fatalf("OK = false, err = %v", res.Err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("WaitTCP never returned against an open port")
+	}
+}
+
+func TestExecProbeExitCodes(t *testing.T) {
+	dir := t.TempDir()
+
+	ok := ProbeExec(context.Background(), dir, nil, []string{"true"})
+	if !ok.OK {
+		t.Errorf("`true`: OK = false, err = %v", ok.Err)
+	}
+
+	fail := ProbeExec(context.Background(), dir, nil, []string{"false"})
+	if fail.OK {
+		t.Error("`false` reported OK")
+	}
+	if fail.Err == nil || !strings.Contains(fail.Err.Error(), "exit status 1") {
+		t.Errorf("`false` err = %v, want exit status 1", fail.Err)
+	}
+
+	missing := ProbeExec(context.Background(), dir, nil, []string{"mabo-ctl-no-such-binary-xyz"})
+	if missing.OK || missing.Err == nil {
+		t.Error("a binary that cannot start must report not-ready with an error")
+	}
+}
+
+func TestExecProbeCapturesTruncatedOutputOnFailure(t *testing.T) {
+	dir := t.TempDir()
+	script := filepath.Join(dir, "fail.sh")
+	body := "#!/bin/sh\necho before-failure-marker\nexit 3\n"
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	res := ProbeExec(context.Background(), dir, nil, []string{script})
+	if res.OK {
+		t.Fatal("an exiting-3 script reported OK")
+	}
+	if !strings.Contains(res.Err.Error(), "before-failure-marker") {
+		t.Errorf("err = %v, want the captured diagnostic line", res.Err)
+	}
+}
+
+func TestExecProbeHardTimeout(t *testing.T) {
+	if testing.Short() {
+		t.Skip("sleeps for the full probe timeout")
+	}
+	dir := t.TempDir()
+	start := time.Now()
+	res := ProbeExec(context.Background(), dir, nil, []string{"sleep", "60"})
+	if elapsed := time.Since(start); elapsed > 10*time.Second {
+		t.Fatalf("exec probe took %s; the hard timeout did not hold", elapsed)
+	}
+	if res.OK {
+		t.Error("a sleeping probe reported OK")
+	}
+}
+
+func TestExecProbeRejectsEmptyArgv(t *testing.T) {
+	if res := ProbeExec(context.Background(), t.TempDir(), nil, nil); res.OK || res.Err == nil {
+		t.Errorf("empty argv: OK = %v, err = %v; want a rejection", res.OK, res.Err)
+	}
+}
+
+func TestWaitExecRunsInTheGivenDirAndEnv(t *testing.T) {
+	dir := t.TempDir()
+	probeFile := filepath.Join(dir, "seen-by-probe")
+	script := filepath.Join(dir, "touch.sh")
+	body := "#!/bin/sh\n[ -n \"$MABO_PROBE_VAR\" ] && touch seen-by-probe\n"
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	env := []string{"PATH=" + os.Getenv("PATH"), "MABO_PROBE_VAR=1"}
+	res := WaitExec(context.Background(), "exec: "+script, dir, env, []string{script}, nil)
+	if !res.OK {
+		t.Fatalf("OK = false, err = %v — the probe must run in dir with env", res.Err)
+	}
+	if _, err := os.Stat(probeFile); err != nil {
+		t.Errorf("the probe's side effect is missing: %v — wrong dir or env", err)
+	}
 }

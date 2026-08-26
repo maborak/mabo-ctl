@@ -51,8 +51,8 @@ cmd/mabo-ctl/         main, flag wiring, cobra command tree
 internal/config/      mabo-ctl.yaml load, template expansion, validation, discovery
 internal/service/     service model + registry, port precedence
 internal/supervisor/  lifecycle: spawn, signals, process groups, pid files
-internal/health/      readiness probes
-internal/state/       .dev/ dir, pid files, run.env, exit records
+internal/health/      readiness probes: http, tcp dial, exec
+internal/state/       .dev/ dir: logs, pid files, start claims, run.env, exit records
 internal/console/     full-screen TUI (bubbletea)
 internal/repl/        interactive prompt + session
 internal/ui/          colour, fixed-width labels, table + status rendering

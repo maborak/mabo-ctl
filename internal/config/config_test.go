@@ -670,8 +670,8 @@ services:
 	if got.Port != 7102 || got.Runtime != "conda:app-dev" || got.Color != "blue" {
 		t.Errorf("unexpected spec: %+v", got)
 	}
-	if got.Health != "http://localhost:{{.Port}}/health" {
-		t.Errorf("Health must stay RAW, got %q", got.Health)
+	if got.Health.Kind != "http" || got.Health.HTTP != "http://localhost:{{.Port}}/health" {
+		t.Errorf("Health must stay RAW and decode a scalar as http, got %+v", got.Health)
 	}
 	if len(got.Cmd) != 4 || got.Cmd[0] != "uvicorn" || got.Cmd[3] != "{{.Port}}" {
 		t.Errorf("Cmd must stay RAW, got %#v", got.Cmd)
@@ -1376,4 +1376,149 @@ services:
 			t.Errorf("ReadyTimeout = %s, want 45s", got)
 		}
 	})
+}
+
+// health
+
+func TestHealthMappingForms(t *testing.T) {
+	t.Run("tcp", func(t *testing.T) {
+		path := write(t, t.TempDir(), `
+services:
+  - name: backend
+    cmd: [echo, hi]
+    port: 7102
+    health:
+      tcp: localhost:{{.Port}}
+`)
+		cfg, err := Load(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		h := cfg.Services[0].Health
+		if h.Kind != "tcp" || h.Addr != "localhost:{{.Port}}" || h.HTTP != "" || len(h.Argv) != 0 {
+			t.Errorf("Health = %+v, want kind tcp with the RAW addr", h)
+		}
+	})
+	t.Run("exec", func(t *testing.T) {
+		path := write(t, t.TempDir(), `
+services:
+  - name: db
+    cmd: [postgres]
+    port: 5432
+    health:
+      exec: [pg_isready, -h, localhost, "-p", "{{.Port}}"]
+`)
+		cfg, err := Load(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		h := cfg.Services[0].Health
+		if h.Kind != "exec" {
+			t.Fatalf("Kind = %q, want exec", h.Kind)
+		}
+		want := []string{"pg_isready", "-h", "localhost", "-p", "{{.Port}}"}
+		if !slicesEqual(h.Argv, want) {
+			t.Errorf("Argv = %#v, want %#v (raw, unexpanded)", h.Argv, want)
+		}
+	})
+	t.Run("explicit http key equals the scalar form", func(t *testing.T) {
+		a, err := Load(write(t, t.TempDir(), okService+"\n    health: http://x/healthz\n"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, err := Load(write(t, t.TempDir(), okService+"\n    health:\n      http: http://x/healthz\n"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if a.Services[0].Health.Kind != b.Services[0].Health.Kind ||
+			a.Services[0].Health.HTTP != b.Services[0].Health.HTTP {
+			t.Errorf("scalar %+v and mapping %+v must decode identically", a.Services[0].Health, b.Services[0].Health)
+		}
+	})
+}
+
+func TestHealthMappingErrors(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want string
+	}{
+		{"two kinds", okService + "\n    health:\n      http: http://x/\n      tcp: localhost:5432\n",
+			"exactly one"},
+		{"unknown key", okService + "\n    health:\n      grpc: localhost:9000\n", "unknown health key"},
+		{"empty mapping", okService + "\n    health: {}\n", "exactly one"},
+		{"sequence", okService + "\n    health: [http://x/]\n", "must be a URL or a mapping"},
+		{"exec not a list", okService + "\n    health:\n      exec: pg_isready\n", "argv list"},
+		{"exec empty list", okService + "\n    health:\n      exec: []\n", "declare the command"},
+		{"tcp empty", okService + "\n    health:\n      tcp: \"\"\n", "non-empty string"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Load(write(t, t.TempDir(), tc.body))
+			if err == nil {
+				t.Fatal("expected a load error, got nil")
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("error %q does not mention %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestHealthValidationRules(t *testing.T) {
+	t.Run("bad tcp address is a load-time problem", func(t *testing.T) {
+		_, err := Load(write(t, t.TempDir(), okService+"\n    health:\n      tcp: localhost:nope\n"))
+		got := validationProblems(t, err)
+		if len(got) == 0 || !strings.Contains(got[0], "invalid port") {
+			t.Errorf("problems = %v, want an invalid-port message", got)
+		}
+	})
+	t.Run("own-port rule reaches tcp and exec parts", func(t *testing.T) {
+		_, err := Load(write(t, t.TempDir(), `
+services:
+  - name: worker
+    cmd: [run]
+    health:
+      exec: [check, "--port", "{{.Port}}"]
+`))
+		got := validationProblems(t, err)
+		found := false
+		for _, p := range got {
+			if strings.Contains(p, "declares no port") {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("problems = %v, want the own-{{.Port}} rule for the exec argv", got)
+		}
+	})
+	t.Run("another service's port in exec is fine", func(t *testing.T) {
+		body := `
+services:
+  - name: worker
+    cmd: [run]
+    health:
+      exec: [check, "--port", "{{.Port \"backend\"}}"]
+  - name: backend
+    cmd: [serve]
+    port: 7102
+`
+		if _, err := Load(write(t, t.TempDir(), body)); err != nil {
+			t.Errorf("a cross-service {{.Port}} reference must be legal in exec: %v", err)
+		}
+	})
+}
+
+// slicesEqual is a tiny local helper so this file does not import slices for
+// one call.
+func slicesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }

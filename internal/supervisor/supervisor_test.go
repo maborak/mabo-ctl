@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -1947,5 +1948,123 @@ func TestPerServiceReadyTimeoutOverridesTheGlobal(t *testing.T) {
 	}
 	if got := statusOf(t, sup, "svc"); got.Phase != PhaseDegraded {
 		t.Fatalf("phase past the service's own 5s window = %q, want %q", got.Phase, PhaseDegraded)
+	}
+}
+
+// tcp and exec readiness probes through the supervisor
+
+// TestStatusDerivesReadyFromATCPProbe proves the tcp probe family reaches the
+// same single derivation point as http: one listener, one status call, and the
+// phase is ready with no HTTP status attached to it.
+func TestStatusDerivesReadyFromATCPProbe(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer l.Close()
+
+	sup, _ := fixture(t, service.Instance{
+		Name:   "db",
+		Cmd:    helperCmd(),
+		Env:    helperEnvFor("sleep"),
+		Health: "tcp:" + l.Addr().String(),
+		Probe:  service.Probe{Kind: service.ProbeTCP, Addr: l.Addr().String()},
+	})
+	defer func() { _ = sup.Stop(context.Background(), nil, nil); sup.Wait() }()
+
+	if err := sup.Start(context.Background(), nil, nil); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	sts := sup.Status(context.Background())
+	if len(sts) != 1 || sts[0].Phase != PhaseReady {
+		t.Fatalf("status = %+v, want a ready service behind a tcp probe", sts)
+	}
+	if sts[0].HTTP != 0 {
+		t.Errorf("HTTP = %d, want 0 — a connected socket has no HTTP status", sts[0].HTTP)
+	}
+}
+
+// TestStartReportsReadyThroughAnExecProbe covers the exec family end to end:
+// the probe runs in the instance's dir, exit 0 is ready, and the event says so.
+func TestStartReportsReadyThroughAnExecProbe(t *testing.T) {
+	dir := t.TempDir()
+	script := filepath.Join(dir, "probe.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	secret := "sk-live-exec-probe-secret"
+	leaky := filepath.Join(dir, "leaky.sh")
+	if err := os.WriteFile(leaky, []byte("#!/bin/sh\necho "+secret+"\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	sup, _ := fixture(t, service.Instance{
+		Name:   "worker",
+		Cmd:    helperCmd(),
+		Env:    helperEnvFor("sleep"),
+		Dir:    dir,
+		Health: "exec: [" + script + "]",
+		Probe:  service.Probe{Kind: service.ProbeExec, Argv: []string{script}},
+	})
+	defer func() { _ = sup.Stop(context.Background(), nil, nil); sup.Wait() }()
+
+	ev := make(chan Event, 16)
+	err := sup.Start(context.Background(), []string{"worker"}, ev)
+	close(ev)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	var sawReady bool
+	for e := range ev {
+		if strings.Contains(e.Msg, secret) {
+			t.Errorf("event %q leaked probe output; exec diagnostics belong to failures only", e.Msg)
+		}
+		if e.Phase == PhaseReady && strings.Contains(e.Msg, "exec") {
+			sawReady = true
+		}
+	}
+	if !sawReady {
+		t.Error("no ready event naming the exec probe was emitted")
+	}
+}
+
+// TestExecProbeFailureIsNotReady: an exec probe exiting non-zero must leave the
+// service slow (inside its window), never ready — and the failure detail must
+// quote the probe's diagnostic.
+func TestExecProbeFailureIsNotReady(t *testing.T) {
+	dir := t.TempDir()
+	script := filepath.Join(dir, "fail.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\necho boom-marker\nexit 7\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	sup, _ := fixture(t, service.Instance{
+		Name:         "worker",
+		Cmd:          helperCmd(),
+		Env:          helperEnvFor("sleep"),
+		Dir:          dir,
+		Health:       "exec: [" + script + "]",
+		Probe:        service.Probe{Kind: service.ProbeExec, Argv: []string{script}},
+		ReadyTimeout: time.Second,
+	})
+	defer func() { _ = sup.Stop(context.Background(), nil, nil); sup.Wait() }()
+
+	// A probe that never answers leaves the service SLOW, not failed: the
+	// process is alive inside its startup window. That is not a Start error —
+	// exactly as an http probe that never answers is not.
+	if err := sup.Start(context.Background(), nil, nil); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	sts := sup.Status(context.Background())
+	st := sts[0]
+	switch st.Phase {
+	case PhaseSlow, PhaseDegraded:
+	default:
+		t.Fatalf("phase = %s, want slow or degraded for a failing probe against a live process", st.Phase)
+	}
+	if !strings.Contains(st.Detail, "boom-marker") || !strings.Contains(st.Detail, "exit status 7") {
+		t.Errorf("detail = %q, want the captured diagnostic with the exit code", st.Detail)
 	}
 }

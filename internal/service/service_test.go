@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -670,7 +671,7 @@ func TestTemplateExpansion(t *testing.T) {
 		config.Spec{
 			Name:   "website",
 			Port:   7100,
-			Health: "http://localhost:{{.Port}}/robots.txt",
+			Health: config.Health{Kind: "http", HTTP: "http://localhost:{{.Port}}/robots.txt"},
 			Cmd:    []string{"runme", "--port", "{{.Port}}"},
 			Env:    map[string]string{"PUBLIC_API_BASE": `http://localhost:{{.Port "backend"}}`},
 		},
@@ -737,7 +738,7 @@ func TestTemplateMissingKeyIsAnError(t *testing.T) {
 func TestTemplateBrokenSyntax(t *testing.T) {
 	root, _ := testRepo(t)
 	cfg := testConfig(t, root,
-		config.Spec{Name: "website", Port: 7100, Health: "http://x/{{.Port", Cmd: []string{"runme"}},
+		config.Spec{Name: "website", Port: 7100, Health: config.Health{Kind: "http", HTTP: "http://x/{{.Port"}, Cmd: []string{"runme"}},
 	)
 
 	_, _, err := Resolve(cfg, testState(t, root, nil), Options{})
@@ -1710,6 +1711,85 @@ func TestEnvFileBrokenAtResolveIsAnError(t *testing.T) {
 	cfg := testConfig(t, root, config.Spec{Name: "backend", Cmd: []string{"runme"}, EnvFile: "gone.env"})
 	if _, _, err := Resolve(cfg, nil, Options{}); err == nil || !strings.Contains(err.Error(), "backend") {
 		t.Fatalf("err = %v, want a failure naming the service", err)
+	}
+}
+
+// tcp and exec probes
+
+// TestProbeExpansionCoversEveryKind: each probe family is template-expanded
+// like Cmd and Env are, and the display form is what status output will quote.
+func TestProbeExpansionCoversEveryKind(t *testing.T) {
+	root := t.TempDir()
+	cfg := testConfig(t, root,
+		config.Spec{Name: "backend", Cmd: []string{"serve"}, Port: 7102},
+		config.Spec{
+			Name:   "worker",
+			Cmd:    []string{"run"},
+			Health: config.Health{Kind: config.HealthTCP, Addr: "localhost:{{.Port \"backend\"}}"},
+		},
+		config.Spec{
+			Name:   "checker",
+			Cmd:    []string{"run"},
+			Health: config.Health{Kind: config.HealthExec, Argv: []string{"/bin/echo", "{{.Port}}"}},
+		},
+	)
+	// checker declares its own port so {{.Port}} is legal in the argv.
+	cfg.Services[2].Port = 7999
+
+	insts, _, err := Resolve(cfg, nil, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	byName := map[string]Instance{}
+	for _, in := range insts {
+		byName[in.Name] = in
+	}
+
+	if p := byName["worker"].Readiness(); p.Kind != ProbeTCP || p.Addr != "localhost:7102" {
+		t.Errorf("tcp probe = %+v, want addr expanded to localhost:7102", p)
+	} else if byName["worker"].Health != "tcp:localhost:7102" {
+		t.Errorf("tcp display = %q, want tcp:localhost:7102", byName["worker"].Health)
+	}
+
+	p := byName["checker"].Readiness()
+	if p.Kind != ProbeExec || !slices.Equal(p.Argv, []string{"/bin/echo", "7999"}) {
+		t.Errorf("exec probe = %+v, want argv expanded to [/bin/echo 7999]", p)
+	}
+	if !strings.HasPrefix(byName["checker"].Health, "exec: [") {
+		t.Errorf("exec display = %q, want the exec: [...] form", byName["checker"].Health)
+	}
+}
+
+// TestReadinessTreatsAHandBuiltHealthAsHTTP: instances composed directly carry
+// only Health, and Health has always meant an HTTP URL.
+func TestReadinessTreatsAHandBuiltHealthAsHTTP(t *testing.T) {
+	in := Instance{Name: "a", Health: "http://x/healthz"}
+	p := in.Readiness()
+	if p.Kind != ProbeHTTP || p.URL != "http://x/healthz" {
+		t.Errorf("Readiness = %+v, want the http probe from Health", p)
+	}
+	if (Instance{Name: "b"}).Readiness().Kind != ProbeNone {
+		t.Error("an instance with no health must have no readiness")
+	}
+}
+
+// TestExecDisplayRedactsSecretLookingArgs: the exec display reaches every
+// output channel, so it is redacted at the source.
+func TestExecDisplayRedactsSecretLookingArgs(t *testing.T) {
+	root := t.TempDir()
+	cfg := testConfig(t, root, config.Spec{
+		Name:   "db",
+		Cmd:    []string{"postgres"},
+		Port:   5432,
+		Env:    map[string]string{"API_KEY": "sk-live-whatever"},
+		Health: config.Health{Kind: config.HealthExec, Argv: []string{"psql", "--password=hunter2", "postgres://user:hunter2@localhost/db"}},
+	})
+	insts, _, err := Resolve(cfg, nil, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(insts[0].Health, "hunter2") {
+		t.Errorf("display %q leaked the credential; redact.Args must run before display", insts[0].Health)
 	}
 }
 
