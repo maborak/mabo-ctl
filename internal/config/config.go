@@ -287,11 +287,13 @@ func DiscoverPath(start string) (path string, viaLegacy bool, err error) {
 		return "", false, fmt.Errorf(
 			"%w: searched %s and every parent up to %s, which is %s, without finding a %s "+
 				"(or its legacy spelling %s); mabo-ctl does not look outside it, because a config "+
-				"further up belongs to something else — pass --config to use one anyway",
+				"further up belongs to something else — pass --config to use one anyway, "+
+				"or run 'mabo-ctl init' in the starting directory to create one",
 			ErrNotFound, from, stoppedAt, boundary, FileName, LegacyFileName)
 	}
 	return "", false, fmt.Errorf("%w: searched %s and every parent directory up to %s "+
-		"without finding a %s (or its legacy spelling %s)",
+		"without finding a %s (or its legacy spelling %s); pass --config to use one anyway, "+
+		"or run 'mabo-ctl init' in the starting directory to create one",
 		ErrNotFound, from, stoppedAt, FileName, LegacyFileName)
 }
 

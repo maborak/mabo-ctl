@@ -155,6 +155,7 @@ func (a *app) rootCmd() *cobra.Command {
 		a.upgradeCmd(),
 		a.schemaCmd(),
 		a.doctorCmd(),
+		a.initCmd(),
 	)
 	return root
 }

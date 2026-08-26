@@ -1411,3 +1411,106 @@ func TestNamedPortsFlagAccumulates(t *testing.T) {
 		}
 	}
 }
+
+// mabo-ctl init
+
+// TestInitScaffoldsFromDetection: package.json + .nvmrc, manage.py and
+// Cargo.toml are each recognised; EVERY service line stays commented so nothing
+// can run until a human intervenes.
+func TestInitScaffoldsFromDetection(t *testing.T) {
+	h := newHarnessAt(t, t.TempDir(), "init")
+	// frontend: node with a dev script and an .nvmrc
+	fe := filepath.Join(h.root, "frontend")
+	if err := os.MkdirAll(fe, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(fe, "package.json"), `{"scripts": {"dev": "vite"}}`)
+	writeFile(t, filepath.Join(fe, ".nvmrc"), "v24.4.0\n")
+	// backend: Django
+	be := filepath.Join(h.root, "backend")
+	if err := os.MkdirAll(be, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(be, "manage.py"), "")
+	// api: Rust — must be ignored for the run: it is a guess, not a command
+	if err := os.MkdirAll(filepath.Join(h.root, ".hidden"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	code := h.run()
+	if code != 0 {
+		t.Fatalf("init exited %d, stderr: %s", code, h.stderr.String())
+	}
+
+	body, err := os.ReadFile(filepath.Join(h.root, "mabo-ctl.yaml"))
+	if err != nil {
+		t.Fatalf("no scaffolded config: %v", err)
+	}
+	text := string(body)
+
+	for _, want := range []string{
+		"#   cmd: [npm, run, dev]",
+		"#   runtime: node:24.4.0",
+		"# - name: backend",
+		"#   cmd: [python, manage.py, runserver]",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("scaffold does not contain %q:\n%s", want, text)
+		}
+	}
+	// The generated file itself must PARSE cleanly but declare no runnable
+	// service yet: an untouched scaffold refuses to start anything, and the
+	// refusal tells the reader exactly what is missing.
+	cfg, err := config.Load(filepath.Join(h.root, "mabo-ctl.yaml"))
+	if err == nil {
+		t.Fatalf("an untouched scaffold loaded as %+v; nothing may run before a human edits it", cfg)
+	}
+	var ve *config.ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("scaffold error = %v, want a *ValidationError", err)
+	}
+}
+
+// TestInitRefusesToOverwrite: both spellings of the config are protected.
+func TestInitRefusesToOverwrite(t *testing.T) {
+	h := newHarnessAt(t, t.TempDir(), "init")
+	writeFile(t, filepath.Join(h.root, "mabo-ctl.yaml"), "services: []\n")
+	if code := h.run(); code == 0 {
+		t.Fatal("init over an existing config exited 0")
+	}
+
+	h2 := newHarnessAt(t, t.TempDir(), "init")
+	writeFile(t, filepath.Join(h2.root, config.LegacyFileName), "services: []\n")
+	out := h2.run()
+	if out == 0 {
+		t.Fatal("init over a legacy-named config exited 0")
+	}
+	if !strings.Contains(h2.stderr.String(), "rename") {
+		t.Errorf("legacy refusal should say rename; stderr = %s", h2.stderr.String())
+	}
+}
+
+// TestInitAddsDevToGitIgnore once, not twice.
+func TestInitAddsDevToGitIgnore(t *testing.T) {
+	h := newHarnessAt(t, t.TempDir(), "init")
+	writeFile(t, filepath.Join(h.root, ".gitignore"), "node_modules/\n")
+	if code := h.run(); code != 0 {
+		t.Fatalf("init exited %d", code)
+	}
+	body, _ := os.ReadFile(filepath.Join(h.root, ".gitignore"))
+	if !strings.Contains(string(body), ".dev/") {
+		t.Errorf(".gitignore = %q, want .dev/ appended", body)
+	}
+
+	// Second run on a tree whose gitignore already carries it says nothing new,
+	// and the file is not duplicated.
+	h2 := newHarnessAt(t, t.TempDir(), "init")
+	writeFile(t, filepath.Join(h2.root, ".gitignore"), ".dev/\n")
+	if code := h2.run(); code != 0 {
+		t.Fatalf("second init exited %d", code)
+	}
+	body2, _ := os.ReadFile(filepath.Join(h2.root, ".gitignore"))
+	if strings.Count(string(body2), ".dev/") != 1 {
+		t.Errorf(".gitignore = %q, want exactly one .dev/", body2)
+	}
+}
