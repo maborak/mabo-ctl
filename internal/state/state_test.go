@@ -2,11 +2,14 @@ package state
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // newDir builds a state directory under a throwaway root. Nothing in this
@@ -464,4 +467,82 @@ func readLog(t *testing.T, path string) string {
 		t.Fatalf("read %s: %v", path, err)
 	}
 	return string(b)
+}
+
+// start claims — the cross-process double-spawn lock
+
+// TestClaimPIDExclusiveCreate: one claim wins, the second is ErrClaimed, and
+// the file on disk is 0600 like everything else under .dev.
+func TestClaimPIDExclusiveCreate(t *testing.T) {
+	d := newDir(t)
+	now := time.Now()
+
+	if err := d.ClaimPID("svc", os.Getpid(), now); err != nil {
+		t.Fatalf("first claim: %v", err)
+	}
+	err := d.ClaimPID("svc", os.Getpid(), now.Add(time.Second))
+	if !errors.Is(err, ErrClaimed) {
+		t.Fatalf("second claim = %v, want ErrClaimed", err)
+	}
+	fi, statErr := os.Stat(d.PIDClaimPath("svc"))
+	if statErr != nil {
+		t.Fatal(statErr)
+	}
+	if fi.Mode().Perm() != 0o600 {
+		t.Errorf("claim mode = %o, want 600", fi.Mode().Perm())
+	}
+}
+
+// TestClaimPIDStalenessRules: a claim by a DEAD owner, an ancient claim and an
+// UNPARSEABLE claim are wreckage to be replaced; only a live, fresh, readable
+// claim is somebody else's work in progress.
+func TestClaimPIDStalenessRules(t *testing.T) {
+	d := newDir(t)
+
+	dead := deadPID(t)
+	if err := d.ClaimPID("svc", dead, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.ClaimPID("svc", os.Getpid(), time.Now()); err != nil {
+		t.Errorf("a dead owner's claim blocked a new one: %v", err)
+	}
+
+	if err := os.WriteFile(d.PIDClaimPath("ancient"), []byte(
+		fmt.Sprintf(`{"pid":%d,"at":"2006-01-02T15:04:05Z"}`, os.Getpid())), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.ClaimPID("ancient", os.Getpid(), time.Now()); err != nil {
+		t.Errorf("an ancient claim blocked a new one: %v", err)
+	}
+
+	if err := os.WriteFile(d.PIDClaimPath("garbage"), []byte("}{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.ClaimPID("garbage", os.Getpid(), time.Now()); err != nil {
+		t.Errorf("an unparseable claim must be stale, not fatal: %v", err)
+	}
+}
+
+// TestReleaseClaimIsIdempotent: releasing twice, or releasing what was never
+// claimed, is fine — callers race each other here by design.
+func TestReleaseClaimIsIdempotent(t *testing.T) {
+	d := newDir(t)
+	for i := 0; i < 2; i++ {
+		if err := d.ReleaseClaim("svc"); err != nil {
+			t.Fatalf("release #%d: %v", i+1, err)
+		}
+	}
+}
+
+// deadPID returns a pid that provably does not exist, so tests never depend on
+// a hardcoded number being free.
+func deadPID(t *testing.T) int {
+	t.Helper()
+	cmd := exec.Command("true")
+	if err := cmd.Start(); err != nil {
+		t.Skipf("cannot spawn a process to reap a real dead pid from: %v", err)
+	}
+	pid := cmd.Process.Pid
+	_ = cmd.Wait() // zombie reaped; the pid is now genuinely unallocated
+	return pid
 }

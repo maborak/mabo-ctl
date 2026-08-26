@@ -47,6 +47,16 @@ var ErrInvalidService = errors.New("invalid service name")
 // means signalling an unrelated process.
 var ErrMalformedPID = errors.New("malformed pid file")
 
+// ErrClaimed reports that another mabo-ctl process holds this service's start
+// claim: it is mid-start RIGHT NOW, and a second spawn would race it onto the
+// same log file, the same declared port and the same pid path. Test for it
+// with errors.Is.
+//
+// Unlike every other condition under `.dev/`, a fresh claim is not stale state
+// to be cleaned up — it is somebody else's work in progress. Only the
+// staleness rules in [Dir.ClaimPID] may break one.
+var ErrClaimed = errors.New("service is being started by another mabo-ctl")
+
 // Dir is the `.dev/` state directory for one repository. Root is the repository
 // root; the state itself lives at Root/.dev. The zero value is not usable —
 // construct a Dir with New.
@@ -242,6 +252,138 @@ func (d *Dir) RemovePID(svc string) error {
 		return fmt.Errorf("state: remove pid file %s: %w", p, err)
 	}
 	return nil
+}
+
+// claimMaxAge is how old a start claim may get before it is treated as the
+// wreckage of a crashed mabo-ctl rather than a start in progress. It has to
+// exceed every legitimate start, however slow the operator's ready_timeout —
+// ten minutes covers any dev stack that will ever tolerate mabo-ctl at all.
+const claimMaxAge = 10 * time.Minute
+
+// PIDClaimPath returns the path of svc's start claim:
+// Root/.dev/pids/<svc>.pid.claim.
+func (d *Dir) PIDClaimPath(svc string) string {
+	return d.PIDPath(svc) + ".claim"
+}
+
+// claimRecord is what a claim file holds: who is starting this service, and
+// since when. The owner pid is what makes a crashed creator recognisable
+// without waiting out [claimMaxAge].
+type claimRecord struct {
+	PID int       `json:"pid"`
+	At  time.Time `json:"at"`
+}
+
+// ClaimPID takes svc's cross-process START CLAIM with an exclusive create.
+//
+// The in-process per-service mutex serialises lifecycle operations inside one
+// mabo-ctl; nothing here did the same for TWO of them racing one `.dev/`
+// directory, and for a portless service nothing else caught the second spawn
+// either — two shells started two workers while the pid file recorded only the
+// later one, and the survivor was unreachable by every command mabo-ctl has.
+// An O_EXCL create is the one primitive both processes agree on.
+//
+// It is a separate file rather than the pid record itself because the child's
+// pid does not exist until after spawn: the claim says "a start of svc BEGAN",
+// and [Dir.WritePIDAt] supersedes it with the real record on success. The
+// claim is released by [Dir.ReleaseClaim] on every other path.
+//
+// A claim found on arrival is stale — and replaced — when its owner process no
+// longer exists (a mabo-ctl that died mid-start), when it is older than
+// [claimMaxAge], or when it cannot be parsed at all. Freshness of the OWNER is
+// answered with the same liveness test used for services; an unparseable claim
+// is treated as wreckage, never as fatal, because one corrupt byte must not
+// wedge the service permanently.
+//
+// It returns an error wrapping ErrClaimed when a fresh claim survives the
+// staleness check, ErrInvalidService for an unsafe name, and errors wrapping
+// owner-pid or filesystem problems otherwise.
+func (d *Dir) ClaimPID(svc string, owner int, now time.Time) error {
+	if err := validService(svc); err != nil {
+		return err
+	}
+	if owner <= 0 {
+		return fmt.Errorf("state: claim %q: owner pid %d is not positive", svc, owner)
+	}
+	p := d.PIDClaimPath(svc)
+
+	for attempt := 0; attempt < 2; attempt++ {
+		err := d.createClaim(p, claimRecord{PID: owner, At: now})
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, fs.ErrExist) {
+			return fmt.Errorf("state: create claim %s: %w", p, err)
+		}
+		if attempt > 0 {
+			break // we just cleared a stale claim and lost the re-race: report it below
+		}
+
+		rec, recErr := d.readClaim(p)
+		switch {
+		case recErr != nil:
+			// Unparseable or unreadable: wreckage, not authority. Remove and retry.
+		case now.Sub(rec.At) > claimMaxAge:
+			// Old beyond any legitimate start.
+		case !Alive(rec.PID):
+			// Its creator is gone; the claim outlived the process that would
+			// have released it.
+		default:
+			return fmt.Errorf("state: %w: %s claims pid %d has been starting it since %s",
+				ErrClaimed, svc, rec.PID, rec.At.Format(time.RFC3339))
+		}
+		if err := os.Remove(p); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("state: clear stale claim %s: %w", p, err)
+		}
+	}
+	return fmt.Errorf("state: %w: another mabo-ctl claimed %s first", ErrClaimed, svc)
+}
+
+// ReleaseClaim removes svc's start claim. An absent claim is not an error: it
+// is the normal state after WritePIDAt superseded it, after another caller
+// released it first, and after a `reset` removed the whole tree.
+func (d *Dir) ReleaseClaim(svc string) error {
+	if err := validService(svc); err != nil {
+		return err
+	}
+	p := d.PIDClaimPath(svc)
+	if err := os.Remove(p); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("state: release claim %s: %w", p, err)
+	}
+	return nil
+}
+
+// createClaim performs the exclusive create itself: O_EXCL so exactly one of
+// any number of concurrent callers wins, mode 0600 like everything under
+// `.dev/`. The wrapped error carries fs.ErrExist when the claim already stands,
+// which is the caller's signal to run the staleness rules.
+func (d *Dir) createClaim(p string, rec claimRecord) error {
+	b, err := json.Marshal(rec)
+	if err != nil {
+		return err
+	}
+	f, err := os.OpenFile(p, os.O_CREATE|os.O_EXCL|os.O_WRONLY, filePerm)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if _, err := f.Write(append(b, '\n')); err != nil {
+		return err
+	}
+	return f.Close()
+}
+
+// readClaim parses an existing claim file.
+func (d *Dir) readClaim(p string) (claimRecord, error) {
+	var rec claimRecord
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return rec, err
+	}
+	if err := json.Unmarshal(b, &rec); err != nil {
+		return rec, fmt.Errorf("state: parse claim %s: %w", p, err)
+	}
+	return rec, nil
 }
 
 // TruncateLog rotates svc's previous log to `<log>.1` — overwriting the

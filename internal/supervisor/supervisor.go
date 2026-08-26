@@ -217,9 +217,10 @@ type Supervisor struct {
 	// web console can: two browser tabs, two Start clicks. The per-card busy
 	// flag is per-page state and does not exist across tabs.
 	//
-	// This closes the race WITHIN one mabo-ctl process. Two mabo-ctl processes
-	// racing the same .dev/ directory would still interleave; that needs an
-	// O_EXCL pid-file create in package state and is recorded as a known gap.
+	// This closes the race WITHIN one mabo-ctl process. The one ACROSS
+	// processes — two mabo-ctls racing one .dev/ directory — is closed by the
+	// start claim taken in startOne step 1c: an O_EXCL create in package state,
+	// superseded by the pid record once the child exists.
 	opsMu sync.Mutex
 	ops   map[string]*sync.Mutex
 
@@ -873,6 +874,24 @@ func (s *Supervisor) startOne(ctx context.Context, in service.Instance, ev chan<
 		emit(ev, Event{Service: in.Name, Phase: PhaseFailed, Err: err, Msg: err.Error()})
 		return PhaseFailed, err
 	}
+
+	// 1c. Take the cross-process START CLAIM. The per-service mutex above
+	//     serialises this process only; a second mabo-ctl in another terminal
+	//     racing the same .dev/ would sail past it, pass the same already-
+	//     running check (no pid file yet), and spawn a second copy. For a
+	//     portless service nothing else catches that — two workers, one pid
+	//     file, and a survivor no command can reach. The claim is the one
+	//     primitive both processes agree on.
+	//
+	//     It is taken BEFORE the port check so the check-then-spawn window is
+	//     covered end to end, and released on every path below — including the
+	//     success path, where WritePIDAt supersedes it with the real record.
+	if err := s.st.ClaimPID(in.Name, os.Getpid(), time.Now()); err != nil {
+		emit(ev, Event{Service: in.Name, Phase: PhaseFailed, Err: err,
+			Msg: fmt.Sprintf("not starting: %v", err)})
+		return PhaseFailed, err
+	}
+	defer func() { _ = s.st.ReleaseClaim(in.Name) }()
 
 	// 2. Port held by someone else? Refuse, and show the user who and how to
 	//    look for themselves. Starting anyway produces a service that binds
