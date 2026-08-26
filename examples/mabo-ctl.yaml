@@ -42,10 +42,20 @@ ready_timeout: 30s
 #               directory, and must stay inside the repo root. Defaults to the
 #               directory containing mabo-ctl.yaml.
 #   port        1..65535, or omitted/0 for a service that listens on nothing.
-#   health      Readiness URL. Omit for no probe. The probe sends HEAD (falling
-#               back to GET on 405/501) and treats ANY response — including 4xx
-#               and 5xx — as "the server is answering". Point it at something
-#               cheap and small.
+#   health      Readiness probe. A string is an http(s) URL; a mapping picks
+#               exactly one of http/tcp/exec:
+#                 health: http://localhost:{{.Port}}/healthz
+#                 health: {tcp: localhost:5432}
+#                 health: {exec: [pg_isready, -h, localhost]}
+#               HTTP sends HEAD (falling back to GET on 405/501) and treats ANY
+#               response — including 4xx and 5xx — as "the server is answering".
+#               TCP connects and closes the socket immediately; connected is
+#               ready, nothing is written to it. EXEC runs the argv once per
+#               poll in this service's dir/env under a hard timeout; exit 0 is
+#               ready, output is captured only as a truncated failure
+#               diagnostic. Point any of them at something cheap and small.
+#   open        What `mabo-ctl open` prefers: "/docs" joins against the
+#               service's origin; an absolute http(s) URL opens as-is.
 #   cmd         REQUIRED. argv as a list, never a shell string: there is no
 #               shell, so no quoting rules and no word splitting.
 #   env         Extra environment for the child, merged over the caller's.
@@ -81,11 +91,14 @@ ready_timeout: 30s
 # Inside a [flow, list] the braces must be quoted, as below.
 #
 # Port precedence, highest first:
-#   1. --ports=A,B,C,D            (positional; an empty slot keeps the default)
-#   2. <NAME>_PORT in the caller's environment (captured AND unset, so a child
+#   1. --port backend=7999        (named; repeatable; --ports and --port cannot combine)
+#   2. --ports=A,B,C,D            (positional; an empty slot keeps the default)
+#   3. <NAME>_PORT in the caller's environment (captured AND unset, so a child
 #      never inherits a value the supervisor overrode)
-#   3. .dev/run.env               (persisted from the last run)
-#   4. the port declared here
+#   4. .dev/run.env               (persisted from the last run)
+#   5. the port declared here
+# A ported service also gets its port injected as a bare PORT (the Procfile
+# convention); a service that declares no port gets no PORT at all.
 # When a persisted port overrides a changed default, mabo-ctl prints a line
 # saying so — stale state never wins silently.
 
@@ -141,6 +154,23 @@ services:
     env:
       API_BASE: http://localhost:{{.Port "backend"}}
     color: yellow
+
+  # A portless service CAN be readiness-checked — with a non-HTTP probe. This
+  # is what makes slow/degraded/failed honest for queues, gRPC daemons and
+  # anything else without an HTTP endpoint.
+  #
+  #   - name: consumer
+  #     dir: backend
+  #     runtime: conda:app-dev
+  #     cmd: [python, cli.py, consume]
+  #     health:
+  #       exec: [redis-cli, ping]        # exit 0 is ready
+  #     depends_on: [backend]
+  #
+  # And a database service probes TCP, not HTTP:
+  #
+  #   - name: postgres
+  #     health: {tcp: localhost:5432}    # connected is ready; nothing is written
 
 # ---------------------------------------------------------------------------
 # checks — `mabo-ctl preflight`
