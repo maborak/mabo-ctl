@@ -106,6 +106,14 @@ stable, everything else may still move.
 - **Parallel start** — independent services start level by level rather than
   serially (11.0s → 3.96s on a five-service stack).
 
+### Changed
+
+- **The web console keeps declaration order.** Rows used to re-sort by phase —
+  a failing service jumped to the top, a ready one sank to the bottom — which
+  made the list impossible to read by position across a start/stop. Rows now
+  stay exactly where mabo-ctl.yaml declares them; attention is carried by the
+  glyph, the colour and the summary tiles, as it always was elsewhere.
+
 ### Fixed
 
 - **Two mabo-ctl processes could start the same service.** The per-service

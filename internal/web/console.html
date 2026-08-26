@@ -1089,7 +1089,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
         <span><kbd>r</kbd> restart</span>
         <span><kbd>/</kbd> filter</span>
         <span><kbd>c</kbd> config</span>
-        <span id="sort-note">failed first</span>
+        <span id="sort-note">declaration order</span>
       </div>
     </section>
 
@@ -1202,28 +1202,26 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
   // phase added on the server without a row here fails the build rather than
   // reaching a reader as "?".
   //
-  // `rank` is the sort order: whatever needs a human sorts to the top, so the
-  // one failed service in a five-service stack is never buried fourth. The
-  // three states that mean "go and look" — failed, exited, degraded — all sort
-  // above every healthy one, and above `slow`, which resolves on its own.
   // `alive` is whether a PROCESS is there, which is the only question the
   // action buttons need answered. It mirrors the supervisor exactly: slow and
   // degraded are alive but not answering their probe, while failed and exited
   // describe a process that is gone. Deriving it here rather than at each
-  // button is what stops the four render sites from drifting.
+  // button is what stops the four render sites from drifting. Nothing here
+  // orders the list: rows stay in declaration order, and attention is carried
+  // by the glyph, the colour and the summary tiles instead of by position.
   var PHASES = {
-    failed:   { glyph: "✕", word: "failed",   cls: "p-failed",   rank: 0, alive: false },
-    exited:   { glyph: "⊘", word: "exited",   cls: "p-exited",   rank: 1, alive: false },
-    degraded: { glyph: "⚠", word: "degraded", cls: "p-degraded", rank: 2, alive: true  },
-    slow:     { glyph: "◐", word: "slow",     cls: "p-slow",     rank: 3, alive: true  },
-    stopped:  { glyph: "○", word: "stopped",  cls: "p-stopped",  rank: 5, alive: false },
-    running:  { glyph: "◆", word: "running",  cls: "p-running",  rank: 6, alive: true  },
-    ready:    { glyph: "●", word: "ready",    cls: "p-ready",    rank: 7, alive: true  }
+    failed:   { glyph: "✕", word: "failed",   cls: "p-failed",   alive: false },
+    exited:   { glyph: "⊘", word: "exited",   cls: "p-exited",   alive: false },
+    degraded: { glyph: "⚠", word: "degraded", cls: "p-degraded", alive: true  },
+    slow:     { glyph: "◐", word: "slow",     cls: "p-slow",     alive: true  },
+    stopped:  { glyph: "○", word: "stopped",  cls: "p-stopped",  alive: false },
+    running:  { glyph: "◆", word: "running",  cls: "p-running",  alive: true  },
+    ready:    { glyph: "●", word: "ready",    cls: "p-ready",    alive: true  }
   };
   // An unknown phase is treated as NOT alive, so both buttons stay live and the
   // operator can act. Guessing "alive" would grey out the stop button on the one
   // state mabo-ctl could not describe.
-  var UNKNOWN = { glyph: "?", word: "unknown", cls: "p-unknown", rank: 4, alive: false };
+  var UNKNOWN = { glyph: "?", word: "unknown", cls: "p-unknown", alive: false };
 
   // The order the summary tiles are shown in, most-alarming first.
   var TILE_ORDER = ["failed", "exited", "degraded", "slow", "stopped", "running", "ready"];
@@ -1236,7 +1234,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
   function phaseLabel(p) {
     if (typeof p === "string" && owns.call(PHASES, p)) { return PHASES[p]; }
     if (!p) { return UNKNOWN; }
-    return { glyph: "?", word: String(p), cls: "p-unknown", rank: UNKNOWN.rank };
+    return { glyph: "?", word: String(p), cls: "p-unknown" };
   }
 
   /* =======================================================================
@@ -2170,10 +2168,6 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     this.upCell.title = "at least this long: measured since this console first saw pid " + u.pid;
   };
 
-  Row.prototype.rank = function () {
-    return phaseLabel(this.phase).rank;
-  };
-
   // The readiness probe as a word or a code — never a bare colour, and never a
   // sparkline: what the operator needs is "did the last probe answer".
   function probeLabel(st) {
@@ -2527,11 +2521,14 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
   }
 
   /* =======================================================================
-     List: filter, sort, paint
+     List: filter, paint
      ---------------------------------------------------------------------
-     Sort is failed, slow, unknown, stopped, running, ready, and ties break on
-     declaration order — so the order is a pure function of the phases and rows
-     move only when a phase actually changed, not on every two-second refresh.
+     The list is in DECLARATION order and stays there: a service that fails or
+     comes ready keeps its row exactly where mabo-ctl.yaml put it. Position was
+     never a good attention signal — the glyph, the colour and the summary
+     tiles already carry it — while rows that jump on every start/stop make the
+     list impossible to read with muscle memory. The painted order only changes
+     when the declared services themselves change.
      ======================================================================= */
 
   var listEl   = document.getElementById("svc-list");
@@ -2562,15 +2559,13 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
   }
 
   function paintList() {
+    // services is already in declaration order; rows are painted in that
+    // order and never re-sorted. A phase change repaints the row IN PLACE.
     var list = [];
     for (var i = 0; i < services.length; i++) {
       var r = rows[services[i].name];
       if (r) { list.push(r); }
     }
-    list.sort(function (a, b) {
-      var d = a.rank() - b.rank();
-      return d !== 0 ? d : a.idx - b.idx;
-    });
 
     order = [];
     for (var j = 0; j < list.length; j++) { order.push(list[j].svc.name); }
@@ -3648,10 +3643,11 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
       lastOrder = order.join("|");
       paintList();
 
-      // Open on the TOP row rather than the first declared service: the list is
-      // sorted so whatever needs attention is first, and the detail pane should
-      // be looking at it. Only the OPENING selection is chosen this way — a
-      // refresh never moves the selection out from under the reader.
+      // Open on the first VISIBLE row — the first declared service, or the
+      // first the filter leaves behind. Only the OPENING selection is chosen
+      // this way; a refresh never moves the selection out from under the
+      // reader, and a service in trouble stays where it was declared, signalled
+      // by its glyph, colour and the summary tiles.
       var first = visibleNames();
       select(first.length ? first[0] : services[0].name, false);
 

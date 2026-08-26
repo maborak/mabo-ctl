@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"runtime"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -1799,58 +1798,29 @@ func TestConsolePageKnowsEveryPhase(t *testing.T) {
 // TestConsolePageSortsTheAlarmingPhasesFirst checks the rank the page sorts by.
 // A five-service stack with one dead service must not bury it fourth, and the
 // three phases that mean "go and look" must outrank every healthy one.
-func TestConsolePageSortsTheAlarmingPhasesFirst(t *testing.T) {
+func TestConsolePageKeepsDeclarationOrder(t *testing.T) {
 	t.Parallel()
-	// Read the PHASES table itself. The CSS above it declares --ph-failed and
-	// friends, so a bare search for "failed:" finds a colour, not a rank.
-	from := strings.Index(consoleHTML, "var PHASES = {")
+	// The list is painted in declaration order and never re-sorted: a service
+	// that fails or comes ready keeps its row where mabo-ctl.yaml put it.
+	// Rows that jumped on every start/stop made the list unreadable by muscle
+	// memory, and position was always a redundant attention signal — the glyph,
+	// the colour and the summary tiles carry it. This pins the decision
+	// structurally: no phase ranks exist to sort by, and paintList pushes rows
+	// straight off the services array with no comparator.
+	if strings.Contains(consoleHTML, "rank: ") || strings.Contains(consoleHTML, ".rank()") {
+		t.Fatal("console.html still carries a phase rank; the list must not be sortable by phase")
+	}
+	from := strings.Index(consoleHTML, "function paintList()")
 	if from < 0 {
-		t.Fatal("console.html no longer declares a PHASES table")
+		t.Fatal("console.html no longer declares paintList")
 	}
-	table := consoleHTML[from:]
-	table = table[:strings.Index(table, "};")]
-
-	ranks := make(map[supervisor.Phase]int, len(supervisor.Phases()))
-	for _, phase := range supervisor.Phases() {
-		at := strings.Index(table, string(phase)+":")
-		if at < 0 {
-			t.Fatalf("console.html has no PHASES entry for %q", phase)
-		}
-		row := table[at:]
-		row = row[:strings.Index(row, "\n")]
-		key := "rank: "
-		k := strings.Index(row, key)
-		if k < 0 {
-			t.Fatalf("the PHASES entry for %q has no rank: %s", phase, row)
-		}
-		// Read the number and stop at whatever follows it. Trimming trailing
-		// punctuation was enough while rank was the last field on the line, and
-		// broke the moment another one was added after it — a parser that
-		// depends on field order in a table it does not own.
-		digits := strings.TrimSpace(row[k+len(key):])
-		if cut := strings.IndexFunc(digits, func(r rune) bool { return r < '0' || r > '9' }); cut >= 0 {
-			digits = digits[:cut]
-		}
-		n, err := strconv.Atoi(digits)
-		if err != nil {
-			t.Fatalf("cannot read the rank of %q from %q: %v", phase, row, err)
-		}
-		ranks[phase] = n
+	body := consoleHTML[from:]
+	body = body[:strings.Index(body, "\n  }\n")]
+	if strings.Contains(body, ".sort(") {
+		t.Fatalf("paintList re-sorts its rows:\n%s", body)
 	}
-
-	wantsAHuman := []supervisor.Phase{
-		supervisor.PhaseFailed, supervisor.PhaseExited, supervisor.PhaseDegraded,
-	}
-	healthy := []supervisor.Phase{
-		supervisor.PhaseReady, supervisor.PhaseRunning, supervisor.PhaseStopped, supervisor.PhaseSlow,
-	}
-	for _, bad := range wantsAHuman {
-		for _, ok := range healthy {
-			if ranks[bad] >= ranks[ok] {
-				t.Errorf("%q sorts at %d and %q at %d; the one that needs a human must come first",
-					bad, ranks[bad], ok, ranks[ok])
-			}
-		}
+	if !strings.Contains(body, "for (var i = 0; i < services.length; i++)") {
+		t.Fatalf("paintList no longer walks the services array in declaration order:\n%s", body)
 	}
 }
 
