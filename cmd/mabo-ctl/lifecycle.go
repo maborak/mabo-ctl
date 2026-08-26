@@ -153,6 +153,7 @@ func addStartFlags(cmd *cobra.Command) {
 	f.BoolP("follow", "f", false, "after starting, follow the logs of the started services until interrupted")
 	f.Bool("all", false, "start EVERY declared service, including any with autostart: false; naming nothing starts only the autostart ones")
 	f.Var(&portsFlag{}, "ports", "positional port overrides, e.g. --ports=,,7999; an empty slot keeps the declared default")
+	f.Var(&namedPortsFlag{}, "port", "named port override SERVICE=PORT, e.g. --port backend=7999; repeatable. Cannot be combined with --ports")
 	f.BoolP("attach", "a", false,
 		"after starting, hand off to the full-screen console instead of exiting; needs a terminal, and is ignored without one")
 	f.BoolP("interactive", "i", false,
@@ -173,7 +174,7 @@ func addStartFlags(cmd *cobra.Command) {
 // the default action. Every flag [addStartFlags] registers belongs here: one
 // that did not would be accepted and then silently ignored.
 var startFlagNames = []string{
-	"follow", "all", "ports",
+	"follow", "all", "ports", "port",
 	"attach", "interactive", "web-console", "web-addr", "i-know-this-is-dangerous",
 	"allow-origin",
 }
@@ -189,18 +190,32 @@ func startFlagsChanged(cmd *cobra.Command) bool {
 	return false
 }
 
-// adoptPorts copies the executing command's --ports value onto the app, so
-// resolution sees it whether it arrived on `start` or on the root shorthand.
+// adoptPorts copies the executing command's --ports and --port values onto the
+// app, so resolution sees them whether they arrived on `start` or on the root
+// shorthand. The two spellings are mutually exclusive: positional slots and
+// named overrides both winning would be resolved by accident, and a silent
+// last-wins between two explicit requests is exactly the untruth this tool
+// refuses to print.
 func (a *app) adoptPorts(cmd *cobra.Command) error {
-	f := cmd.Flags().Lookup("ports")
-	if f == nil {
-		return nil
+	positional := cmd.Flags().Lookup("ports")
+	named := cmd.Flags().Lookup("port")
+	if positional != nil && named != nil && positional.Changed && named.Changed {
+		return usageErrorf("--ports and --port cannot be combined: name the services (--port svc=PORT) or the positions (--ports=A,B,C), not both")
 	}
-	pf, ok := f.Value.(*portsFlag)
-	if !ok {
-		return fmt.Errorf("mabo-ctl: --ports has unexpected type %T", f.Value)
+	if f := positional; f != nil {
+		pf, ok := f.Value.(*portsFlag)
+		if !ok {
+			return fmt.Errorf("mabo-ctl: --ports has unexpected type %T", f.Value)
+		}
+		a.ports = *pf
 	}
-	a.ports = *pf
+	if f := named; f != nil {
+		nf, ok := f.Value.(*namedPortsFlag)
+		if !ok {
+			return fmt.Errorf("mabo-ctl: --port has unexpected type %T", f.Value)
+		}
+		a.portOverrides = nf.values
+	}
 	return nil
 }
 

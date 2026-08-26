@@ -1357,3 +1357,28 @@ services:
 		t.Errorf("bare start selected %v, want the default selection (nil)", got[0])
 	}
 }
+
+// TestNamedPortsFlagAccumulates: repeatable --port SERVICE=PORT, duplicates
+// rejected rather than resolved by order of appearance.
+func TestNamedPortsFlagAccumulates(t *testing.T) {
+	t.Parallel()
+	var f namedPortsFlag
+	if err := f.Set("backend=7999"); err != nil {
+		t.Fatalf("Set backend: %v", err)
+	}
+	if err := f.Set("web = 7100 "); err != nil {
+		t.Fatalf("Set web (with spaces): %v", err)
+	}
+	if f.values["backend"] != 7999 || f.values["web"] != 7100 {
+		t.Fatalf("values = %v, want both overrides kept", f.values)
+	}
+	if err := f.Set("backend=8000"); err == nil || !strings.Contains(err.Error(), "more than once") {
+		t.Fatalf("duplicate backend: err = %v, want a more-than-once error", err)
+	}
+	for _, bad := range []string{"backend", "=7999", "backend=", "backend=nope", "backend=99999"} {
+		var g namedPortsFlag
+		if err := g.Set(bad); err == nil {
+			t.Errorf("Set(%q) accepted a malformed override", bad)
+		}
+	}
+}

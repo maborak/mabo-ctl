@@ -63,6 +63,7 @@ func (a *app) configCmd() *cobra.Command {
 	cmd.Flags().Bool("json", false, "emit the resolved view as JSON")
 	cmd.Flags().Bool("raw", false, "print mabo-ctl.yaml verbatim and nothing else; the file is NOT redacted")
 	cmd.Flags().Var(&portsFlag{}, "ports", "resolve as if start had been given these port overrides, to preview what they would do")
+	cmd.Flags().Var(&namedPortsFlag{}, "port", "named port override SERVICE=PORT, e.g. --port backend=7999; repeatable. Cannot be combined with --ports")
 	return cmd
 }
 

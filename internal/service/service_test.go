@@ -1713,6 +1713,40 @@ func TestEnvFileBrokenAtResolveIsAnError(t *testing.T) {
 	}
 }
 
+// named port overrides and bare PORT injection
+
+// TestPortOverrideIsTheTopLevel: --port svc=N beats every other level, and a
+// name that cannot apply is an error rather than silence.
+func TestPortOverrideIsTheTopLevel(t *testing.T) {
+	root := t.TempDir()
+	cfg := testConfig(t, root,
+		config.Spec{Name: "backend", Cmd: []string{"run"}, Port: 7100},
+		config.Spec{Name: "worker", Cmd: []string{"run"}},
+	)
+
+	st := testState(t, root, map[string]int{"backend": 7999})
+
+	insts, origins, err := Resolve(cfg, st, Options{PortOverrides: map[string]int{"backend": 8123}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if insts[0].Port != 8123 {
+		t.Errorf("Port = %d, want the override 8123 beating even run.env's 7999", insts[0].Port)
+	}
+	if origins[0].Source != FromFlag {
+		t.Errorf("Source = %q, want flag: an override arrives as a flag", origins[0].Source)
+	}
+
+	if _, _, err := Resolve(cfg, nil, Options{PortOverrides: map[string]int{"ghost": 1}}); err == nil ||
+		!strings.Contains(err.Error(), "undeclared") {
+		t.Errorf("override for an undeclared service: err = %v, want a naming error", err)
+	}
+	if _, _, err := Resolve(cfg, nil, Options{PortOverrides: map[string]int{"worker": 5000}}); err == nil ||
+		!strings.Contains(err.Error(), "declares no port") {
+		t.Errorf("override for a portless service: err = %v, want a cannot-apply error", err)
+	}
+}
+
 // TestBuildEnvInjectsBarePORT: a service that declares a port gets it again as
 // a bare PORT, the Procfile convention, and its declared env still wins.
 func TestBuildEnvInjectsBarePORT(t *testing.T) {

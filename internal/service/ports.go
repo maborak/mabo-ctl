@@ -109,6 +109,18 @@ func resolvePorts(cfg *config.Config, st *state.Dir, opt Options) ([]Origin, err
 	if err != nil {
 		return nil, err
 	}
+	// Named overrides outrank everything, --ports included: they name what
+	// they mean, and a positional slot cannot. checkOverrides first, so a bad
+	// override is an error rather than a silent merge into the slots.
+	if err := checkOverrides(cfg, opt.PortOverrides); err != nil {
+		return nil, err
+	}
+	for n, p := range opt.PortOverrides {
+		if slots == nil {
+			slots = make(map[string]int, len(opt.PortOverrides))
+		}
+		slots[n] = p
+	}
 
 	var persisted *state.RunEnv
 	if st != nil && !opt.IgnoreRunEnv {
@@ -160,6 +172,40 @@ func resolvePorts(cfg *config.Config, st *state.Dir, opt Options) ([]Origin, err
 		origins = append(origins, o)
 	}
 	return origins, nil
+}
+
+// checkOverrides holds the named --port overrides to the config they were
+// aimed at: every name must be declared, and must declare a port. Unlike a
+// stray <NAME>_PORT in the environment — ignored, because nobody aimed it at
+// this invocation — an override on the command line that would silently do
+// nothing is a usage error: the operator asked for something specific and is
+// owed the news that it cannot happen.
+func checkOverrides(cfg *config.Config, overrides map[string]int) error {
+	if len(overrides) == 0 {
+		return nil
+	}
+	declared := make(map[string]bool, len(cfg.Services))
+	for _, s := range cfg.Services {
+		declared[s.Name] = true
+	}
+	names := make([]string, 0, len(overrides))
+	for n := range overrides {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	for _, n := range names {
+		if !declared[n] {
+			return fmt.Errorf("service: --port %s=%d names an undeclared service; declared services are: %s",
+				n, overrides[n], strings.Join(cfg.Names(), ", "))
+		}
+	}
+	for _, s := range cfg.Services {
+		if p, ok := overrides[s.Name]; ok && s.Port <= 0 {
+			return fmt.Errorf("service %q declares no port, so --port %s=%d cannot apply; "+
+				"give it a port: in mabo-ctl.yaml or drop the override", s.Name, s.Name, p)
+		}
+	}
+	return nil
 }
 
 // callerPort reads the <NAME>_PORT value the caller captured. A missing or

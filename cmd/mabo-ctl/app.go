@@ -80,6 +80,11 @@ type app struct {
 	// ports holds the parsed --ports slots of the executing command.
 	ports portsFlag
 
+	// portOverrides holds the parsed --port SERVICE=PORT overrides, when any
+	// were given. They outrank every other level; --ports and --port are
+	// rejected together in adoptPorts.
+	portOverrides map[string]int
+
 	// refreshPorts records the global --refresh-ports flag: re-resolve every
 	// port from the declared defaults, ignoring the persisted .dev/run.env
 	// level, and rewrite the file so later invocations agree. It is the
@@ -339,9 +344,10 @@ func (a *app) resolve() ([]service.Instance, error) {
 	}
 
 	insts, origins, err := service.Resolve(cfg, st, service.Options{
-		Ports:        a.ports.values,
-		EnvVars:      a.captured,
-		IgnoreRunEnv: a.refreshPorts,
+		Ports:         a.ports.values,
+		PortOverrides: a.portOverrides,
+		EnvVars:       a.captured,
+		IgnoreRunEnv:  a.refreshPorts,
 	})
 	if err != nil {
 		return nil, err
@@ -554,6 +560,45 @@ func notReady(sts []supervisor.Status) []string {
 		}
 	}
 	return bad
+}
+
+// namedPortsFlag is the --port <service>=<number> flag, repeatable, so an
+// override can name what it means instead of counting empty slots.
+type namedPortsFlag struct {
+	values map[string]int
+	raw    []string
+}
+
+// String returns the flag as last written, for help output.
+func (p *namedPortsFlag) String() string { return strings.Join(p.raw, ", ") }
+
+// Type names the flag's value in help output.
+func (p *namedPortsFlag) Type() string { return "SERVICE=PORT" }
+
+// Set parses one occurrence. Occurrences ACCUMULATE — that is the point of
+// naming services — and a service named twice is rejected rather than resolved
+// by order of appearance, because two overrides for one port is a typo either
+// way.
+func (p *namedPortsFlag) Set(s string) error {
+	name, num, ok := strings.Cut(s, "=")
+	name = strings.TrimSpace(name)
+	num = strings.TrimSpace(num)
+	if !ok || name == "" || num == "" {
+		return fmt.Errorf("--port must be SERVICE=PORT, got %q", s)
+	}
+	n, err := strconv.Atoi(num)
+	if err != nil || n < 1 || n > 65535 {
+		return fmt.Errorf("--port %s: %q is not a port; use a number in 1..65535", name, num)
+	}
+	if p.values == nil {
+		p.values = make(map[string]int)
+	}
+	if _, dup := p.values[name]; dup {
+		return fmt.Errorf("--port names %q more than once", name)
+	}
+	p.values[name] = n
+	p.raw = append(p.raw, s)
+	return nil
 }
 
 // portsFlag is the --ports=A,B,C,D flag: positional port overrides, one slot

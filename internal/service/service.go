@@ -143,6 +143,13 @@ type Options struct {
 	// service names. Resolve deliberately does not read the process environment
 	// for ports itself: capture must happen once, early, before any spawn.
 	EnvVars map[string]string
+	// PortOverrides holds named per-service ports (--port backend=7999),
+	// repeatable. It outranks every other level, including --ports; the CLI
+	// rejects a command that carries both. A name that declares no service, or
+	// a service that declares no port, is an error here — unlike a stray
+	// <NAME>_PORT variable, which is ignored, this came from a flag aimed at
+	// THIS config and silently doing nothing with it would be a lie.
+	PortOverrides map[string]int
 	// IgnoreRunEnv drops the persisted .dev/run.env level from the precedence
 	// chain, so a service falls through to its declared default unless --ports
 	// or a caller variable speaks first. It exists so the CLI can offer to
