@@ -25,6 +25,7 @@ Three front ends over ONE supervisor:
 
 1. **One-shot CLI** — `start`, `stop`, `restart`, `status [--json]`, `health`,
    `config`, `logs`/`tailf`, `open`, `reset`, `preflight`, `doctor`, `init`,
+   `attach`,
    `exec`, `shell`, `serve`, `completion`, `schema [--commands]`, `upgrade`.
    `ui.StatusJSON` is the stable machine contract, `--version` prints the full
    build report, and `schema --commands` is the machine-readable catalogue of
@@ -86,6 +87,12 @@ internal/web/         web console: embedded page, JSON/SSE API, HTTP guards
   create superseded by the pid record), before the port guard. A fresh claim
   held by another live mabo-ctl refuses the start with `ErrClaimed`; stale
   wreckage (dead owner, past ten minutes, unparseable) is cleared, never fatal.
+- **Preflight is two blocks**: MACHINE (this repo's declarations resolving HERE;
+  detect-and-hint) then the declared checks. A service whose runtime cannot
+  resolve must never render as bare `stopped` anywhere.
+- **internal/surface's drift gate owns three inventories** (cli, config, json):
+  adding any command, flag, schema field or --json key without running
+  `go run ./tools/surfacemap` fails the suite. Regenerate, review, commit.
 - **The probe set is closed** — http URL, tcp dial, exec argv — chosen by how
   `health:` is written. A scalar value stays an http probe byte-for-byte, so
   pre-existing configs parse unchanged.

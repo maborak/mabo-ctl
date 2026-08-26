@@ -11,6 +11,24 @@ stable, everything else may still move.
 
 ### Added
 
+- **`tty: true` makes a service attachable** — the child runs on a pty owned
+  by a detached broker that tees its output into the normal log, and
+  `mabo-ctl attach <name>` connects your terminal to it: Ctrl-Q detaches,
+  one session at a time, detachment never surrendered. Linux ships full pty
+  support; darwin declines honestly at start for now.
+- **Preflight machine-readiness** — `preflight` front-runs "can THIS machine
+  run what mabo-ctl.yaml declares?" per service (runtime resolution,
+  cmd[0] executability, node_modules presence under node:, .nvmrc agreement —
+  the last two advisory), diagnose-and-hint, never fix. Status surfaces the
+  same signal so an unrunnable service stops reading as bare `stopped`.
+- **`expect: free|listening` on tcp checks** — flip the dial to demand an
+  empty port before start; failures name whoever holds it.
+- **`logs --timestamps`** — opt-in HH:MM:SS.mmm stamps on follows, stamped at
+  READ time and honest about it: historical tails refuse the flag.
+- **The surface drift gate** — `tools/surfacemap` enumerates every CLI
+  command+flag, config schema field and status --json key from the built
+  binary into a committed map, and a package test fails on either direction of
+  drift until it is regenerated. 148 surfaces mapped today.
 - **Readiness probes beyond HTTP** — `health:` now also accepts a mapping:
   `{tcp: host:port}` (a dial; connected is ready, nothing is ever written to
   the socket) or `{exec: [argv]}` (run once per poll in the service's working
