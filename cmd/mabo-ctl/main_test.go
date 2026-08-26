@@ -1114,6 +1114,35 @@ func TestBrowseURL(t *testing.T) {
 			in:      service.Instance{Name: "a", Health: "file:///etc/passwd"},
 			wantErr: "only http and https",
 		},
+		{
+			name: "an absolute open: URL wins over the derived origin",
+			in:   service.Instance{Name: "api", Health: "http://localhost:7100/health", Port: 7100, Open: "http://localhost:7100/docs"},
+			want: "http://localhost:7100/docs",
+		},
+		{
+			name: "a relative open: path joins the port origin",
+			in:   service.Instance{Name: "api", Port: 7100, Open: "/docs"},
+			want: "http://localhost:7100/docs",
+		},
+		{
+			name: "a relative open: path joins a tcp-probed service's port origin",
+			in: service.Instance{
+				Name: "pg", Port: 5432, Health: "tcp:localhost:5432",
+				Probe: service.Probe{Kind: service.ProbeTCP, Addr: "localhost:5432"},
+				Open:  "/admin",
+			},
+			want: "http://localhost:5432/admin",
+		},
+		{
+			name:    "open: with a foreign scheme is refused even with an origin",
+			in:      service.Instance{Name: "api", Port: 7100, Open: "javascript:alert(1)"},
+			wantErr: "only http and https",
+		},
+		{
+			name:    "a path open: on a portless service cannot be joined",
+			in:      service.Instance{Name: "worker", Open: "/docs"},
+			wantErr: "no origin to join it against",
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

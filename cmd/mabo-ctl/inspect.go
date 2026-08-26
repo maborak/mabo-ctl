@@ -321,27 +321,60 @@ func (a *app) runOpen(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
-// browseURL derives the URL to hand the platform opener for one instance: the
-// origin of its health URL when it declares one, and http://localhost:<port>
-// otherwise. A service with neither returns "" and is skipped.
+// browseURL derives the URL to hand the platform opener for one instance.
 //
-// It returns an error for a health URL whose scheme is not http or https. That
-// value is attacker-influenced in the sense that whoever writes mabo-ctl.yaml
-// controls it, and the platform opener will happily launch a handler for any
-// scheme at all.
+// An explicit `open:` wins: an absolute http(s) URL is used as-is, and a path
+// such as "/docs" is joined against the service's derived origin — that origin
+// being the health URL's, or http://localhost:<port>, exactly what open would
+// have used before the field existed. A tcp or exec probe is not a page anyone
+// can open, so such a service falls back to its port's origin.
+//
+// It returns an error for an open target or health URL whose scheme is not
+// http or https. Those values are attacker-influenced in the sense that
+// whoever writes mabo-ctl.yaml controls them, and the platform opener will
+// happily launch a handler for any scheme at all.
 func browseURL(in service.Instance) (string, error) {
-	if in.Health != "" {
-		u, err := parseHTTPURL(in.Health)
-		if err != nil {
-			return "", fmt.Errorf("service %q: health URL %q cannot be opened: %w", in.Name, in.Health, err)
+	origin := ""
+	switch in.Readiness().Kind {
+	case service.ProbeNone, service.ProbeHTTP:
+		if in.Health != "" {
+			u, err := parseHTTPURL(in.Health)
+			if err != nil {
+				return "", fmt.Errorf("service %q: health URL %q cannot be opened: %w", in.Name, in.Health, err)
+			}
+			u.Path, u.RawQuery, u.Fragment = "/", "", ""
+			origin = u.String()
 		}
-		u.Path, u.RawQuery, u.Fragment = "/", "", ""
+	}
+	if origin == "" {
+		origin = openPortOrigin(in)
+	}
+
+	if in.Open != "" {
+		if strings.HasPrefix(in.Open, "/") {
+			if origin == "" {
+				return "", fmt.Errorf("service %q: open %q is a path but the service has no origin to join it against; "+
+					"use a full http(s) URL or give it a port", in.Name, in.Open)
+			}
+			return strings.TrimRight(origin, "/") + in.Open, nil
+		}
+		u, err := parseHTTPURL(in.Open)
+		if err != nil {
+			return "", fmt.Errorf("service %q: open %q must be a path starting with / or an absolute http(s) URL: %w",
+				in.Name, in.Open, err)
+		}
 		return u.String(), nil
 	}
+	return origin, nil
+}
+
+// openPortOrigin is browseURL's fallback: the service's own port as a loopback
+// origin, or "" when it declares no port.
+func openPortOrigin(in service.Instance) string {
 	if in.Port > 0 {
-		return fmt.Sprintf("http://localhost:%d/", in.Port), nil
+		return fmt.Sprintf("http://localhost:%d/", in.Port)
 	}
-	return "", nil
+	return ""
 }
 
 // checkNames is a small helper used by the shell command to list what a user

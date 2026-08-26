@@ -77,6 +77,10 @@ type Spec struct {
 	Runtime   string            `yaml:"runtime"`  // "", "system", "conda:<env>", "node:<ver>"
 	DependsOn []string          `yaml:"depends_on"`
 	Color     string            `yaml:"color"`
+	// Open is the URL or path `mabo-ctl open` prefers over the derived
+	// origin: "/docs" joins against the service's origin,
+	// "http://host/page" is used as-is. RAW template; expanded by Resolve.
+	Open string `yaml:"open"`
 
 	// Autostart reports whether a bare `mabo-ctl start` includes this service.
 	//
@@ -449,6 +453,7 @@ type specDoc struct {
 	Runtime   string                 `yaml:"runtime"`
 	DependsOn []string               `yaml:"depends_on"`
 	Color     string                 `yaml:"color"`
+	Open      string                 `yaml:"open"`
 	Autostart *bool                  `yaml:"autostart"`
 	// ReadyTimeout is a pointer so an absent key means "inherit the global".
 	ReadyTimeout *durationValue `yaml:"ready_timeout"`
@@ -465,6 +470,7 @@ func (d specDoc) spec() Spec {
 		Runtime:   d.Runtime,
 		DependsOn: d.DependsOn,
 		Color:     d.Color,
+		Open:      d.Open,
 		Autostart: d.Autostart,
 	}
 	if d.ReadyTimeout != nil {

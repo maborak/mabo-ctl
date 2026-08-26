@@ -107,6 +107,8 @@ type ConfigService struct {
 	// the global ready_timeout. Shown only when set, for the same reason the
 	// autostart row is.
 	ReadyTimeout time.Duration `json:"ready_timeout,omitempty"`
+	// Open is the expanded `open:` target, "" when the service declares none.
+	Open string `json:"open,omitempty"`
 	// DependsOn lists the services that start first.
 	DependsOn []string `json:"depends_on"`
 	// Color is the label colour declared in mabo-ctl.yaml, "" when none.
@@ -167,6 +169,7 @@ func BuildConfigView(in ConfigInput) ConfigView {
 			Cmd:       cmd,
 			CmdLine:   ShellLine(cmd),
 			Health:    redact.URL(inst.Health),
+			Open:      redact.URL(inst.Open),
 			Env:       []redact.Var{},
 			DependsOn: append([]string{}, inst.DependsOn...),
 			Color:     inst.Color,
@@ -310,6 +313,9 @@ func (r *Renderer) configService(s ConfigService) string {
 	}
 	if len(s.DependsOn) > 0 {
 		lines = append(lines, r.configField("depends", strings.Join(s.DependsOn, ", ")))
+	}
+	if s.Open != "" {
+		lines = append(lines, r.configField("open", s.Open))
 	}
 	if s.EnvFile != "" {
 		lines = append(lines, r.configField("env_file", s.EnvFile))

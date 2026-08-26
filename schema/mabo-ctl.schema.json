@@ -135,8 +135,12 @@
             ]
           },
           "name": {
-            "description": "Required. Must match the pattern: the name composes .dev/logs/<name>.log and .dev/pids/<name>.pid, so / or .. would write outside .dev/.",
+            "description": "Required. Must match the pattern: the name composes .dev/logs/\u003cname\u003e.log and .dev/pids/\u003cname\u003e.pid, so / or .. would write outside .dev/.",
             "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$",
+            "type": "string"
+          },
+          "open": {
+            "description": "URL or path `mabo-ctl open` prefers over the derived origin. A path such as /docs joins against http://localhost:\u003cport\u003e; an absolute http(s) URL is opened as-is. Templates allowed.",
             "type": "string"
           },
           "port": {
@@ -153,7 +157,7 @@
             ]
           },
           "runtime": {
-            "description": "\"\", \"system\", \"conda:<env>\" or \"node:<version>\". Resolves cmd[0] to an absolute interpreter path; never falls back to ambient PATH.",
+            "description": "\"\", \"system\", \"conda:\u003cenv\u003e\" or \"node:\u003cversion\u003e\". Resolves cmd[0] to an absolute interpreter path; never falls back to ambient PATH.",
             "type": "string"
           }
         },
@@ -179,7 +183,7 @@
             "type": "array"
           },
           "name": {
-            "description": "Shell name for `mabo-ctl shell <name>`.",
+            "description": "Shell name for `mabo-ctl shell \u003cname\u003e`.",
             "type": "string"
           },
           "service": {

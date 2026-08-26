@@ -339,6 +339,7 @@ func (v *validator) checkTemplates(id string, s Spec) {
 	for _, k := range sortedKeys(s.Env) {
 		check(fmt.Sprintf("env[%q] %q", k, s.Env[k]), s.Env[k])
 	}
+	check(fmt.Sprintf("open %q", s.Open), s.Open)
 }
 
 // checkEnvKeys rejects environment keys that cannot survive being encoded as

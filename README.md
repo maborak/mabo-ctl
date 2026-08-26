@@ -180,7 +180,9 @@ Three things about that file are worth stating outright:
   connected socket is ready; nothing is written to it) or `exec:` (the argv runs
   once per poll in the service's dir and env under a hard timeout; exit 0 is
   ready). This is what makes `slow`/`degraded` honest for queues, gRPC daemons,
-  databases and every other service without an HTTP endpoint.  joins against the service's origin, an absolute http(s) URL opens as-is.
+  databases and every other service without an HTTP endpoint.
+- **`open:` names the page `mabo-ctl open` should actually show** — `/docs`
+  joins against the service's origin, an absolute http(s) URL opens as-is.
 - **`runtime:` resolves the interpreter explicitly.** `conda:<env>` and
   `node:<version>` produce an absolute path and fail loudly naming the path they
   looked for, rather than inheriting whatever `PATH` your shell happens to have.
@@ -188,7 +190,7 @@ Three things about that file are worth stating outright:
 
 `{{.Port}}` is this service's resolved port and `{{.Port "backend"}}` is another
 service's. Templates are expanded in `cmd`, `env` values, `env_file` values,
-`health`, *after* every port has resolved.
+`open:` and every part of `health`, *after* every port has resolved.
 
 **`env_file:`** points at a file of `KEY=VALUE` lines (blank lines and `#`
 comments ignored), anchored at the repository root like `dir:`. It lays the

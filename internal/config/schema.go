@@ -100,6 +100,7 @@ var serviceSchema = map[string]any{
 		"depends_on":    map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Services that start first. Orders STARTS only — stop never expands dependencies."},
 		"autostart":     map[string]any{"type": "boolean", "description": "false opts out of a bare `mabo-ctl start` only; naming the service always starts it. Default true."},
 		"color":         stringSchema("Terminal colour for this service's label: a name (green, blue, bright-cyan, …), a 0-255 palette number, or #rrggbb."),
+		"open":          stringSchema("URL or path `mabo-ctl open` prefers over the derived origin. A path such as /docs joins against http://localhost:<port>; an absolute http(s) URL is opened as-is. Templates allowed."),
 	},
 }
 

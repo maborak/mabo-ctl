@@ -89,6 +89,10 @@ type Instance struct {
 	// Probe is the resolved readiness check to actually run; see [Readiness]
 	// for why callers should go through it rather than reading this directly.
 	Probe Probe
+	// Open is the expanded `open:` target: an absolute http(s) URL used as-is,
+	// or a path such as "/docs" joined against the service's origin by
+	// `mabo-ctl open`. "" means derive the origin as before.
+	Open string
 	// Cmd is the expanded argv. Cmd[0] is an absolute path to the executable
 	// chosen by Runtime, never a bare name left to the child's PATH.
 	Cmd []string
@@ -328,12 +332,18 @@ func build(cfg *config.Config, s config.Spec, port int, exp *expander, base []st
 		return Instance{}, rtErr
 	}
 
+	open, err := exp.expand(s.Name, "open", s.Open)
+	if err != nil {
+		return Instance{}, err
+	}
+
 	return Instance{
 		Name:         s.Name,
 		Dir:          dir,
 		Port:         port,
 		Health:       display,
 		Probe:        probe,
+		Open:         open,
 		Cmd:          cmd,
 		Env:          buildEnv(base, exp.names, exp.ports, specEnv, rt, port),
 		Color:        s.Color,
