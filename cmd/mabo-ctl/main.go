@@ -45,20 +45,6 @@ import (
 	"github.com/maborak/mabo-ctl/internal/ui"
 )
 
-// Build stamps, set with -ldflags at link time by the Makefile:
-//
-//	go build -ldflags '-X main.version=v1.2.3 -X main.commit=abc1234'
-//
-// They are plain vars rather than consts because the linker's -X can only
-// rewrite a variable. The defaults are what an unstamped `go build ./...`
-// produces, and saying "dev" is more honest than pretending to a version.
-var (
-	// version is the release the binary was built from.
-	version = "dev"
-	// commit is the git revision the binary was built from.
-	commit = "unknown"
-)
-
 // Exit codes. They are part of mabo-ctl's interface to scripts, are documented in
 // the root command's long help, and must stay stable.
 const (

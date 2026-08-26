@@ -79,13 +79,17 @@ and therefore your dev stack, to every machine that can route to the address.`
 // no arguments and no start flags it runs the default action: the console on a
 // terminal, the status block anywhere else.
 func (a *app) rootCmd() *cobra.Command {
+	b := theBuild()
 	root := &cobra.Command{
 		Use:   "mabo-ctl [service...]",
 		Short: "Supervise the local development processes declared in mabo-ctl.yaml",
-		Long:  rootLong,
+		Long: rootLong + "\n\n" +
+			fmt.Sprintf("Build: %s\n  mabo-ctl --version prints the complete build report.\n", b.Summary()),
 		// Setting Version gives --version for free. The stamps come from
-		// -ldflags at link time; an unstamped build reports "dev".
-		Version: fmt.Sprintf("%s (commit %s)", version, commit),
+		// -ldflags at link time; an unstamped build reports what its
+		// toolchain embedded (see internal buildinfo resolution), falling
+		// back to "dev (commit unknown)" only when neither source knows.
+		Version: b.Summary(),
 		// Arbitrary args, because a bare service name is the start shorthand and
 		// cobra's default would reject it as an unknown command before mabo-ctl
 		// could say which services actually exist.
@@ -108,6 +112,15 @@ func (a *app) rootCmd() *cobra.Command {
 		},
 	}
 
+	// `--version` is the machine-readable self-report — the block a bug
+	// report pastes (SECURITY.md asks for exactly this output). The summary
+	// in Version stays the template fallback for anything that renders it,
+	// while the template swaps in the complete report; VersionTemplate text
+	// itself is never a format argument here because the report could carry
+	// characters templates would try to execute.
+	root.SetVersionTemplate(`{{if index .Annotations "build-report"}}{{index .Annotations "build-report"}}{{else}}{{.Version}}
+{{end}}`)
+	root.Annotations = map[string]string{"build-report": b.Report()}
 	root.SetIn(a.env.Stdin)
 	root.SetOut(a.env.Stdout)
 	root.SetErr(a.env.Stderr)

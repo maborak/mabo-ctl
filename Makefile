@@ -9,10 +9,13 @@ PKG     := ./cmd/mabo-ctl
 GOBIN   := $(shell go env GOPATH)/bin
 
 # Stamped into the binary so `mabo-ctl` in the wild can be traced to a commit.
-# Both fall back gracefully outside a git checkout.
+# Both fall back gracefully outside a git checkout. BUILTAT is when the binary
+# was LINKED, not checked out; the toolchain's embedded vcs.time covers the
+# latter for unstamped builds.
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
-LDFLAGS := -s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT)
+BUILTAT ?= $(shell date -u '+%Y-%m-%dT%H:%M:%SZ')
+LDFLAGS := -s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.builtAt=$(BUILTAT)
 
 .DEFAULT_GOAL := build
 
