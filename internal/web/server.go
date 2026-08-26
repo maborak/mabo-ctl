@@ -400,8 +400,12 @@ func NewWith(ctrl Controller, opt Options) (*Server, error) {
 	return s, nil
 }
 
-// routes builds the mux. Every pattern names its method, which is what makes a
-// GET to a mutating path a 405 rather than a fallthrough.
+// routes builds the mux FROM [consoleRoutes], the table that is also what
+// `mabo-ctl schema --commands` documents. One list, two consumers: a route the
+// mux serves is exactly a route the catalogue names, and neither can drift.
+//
+// Every pattern names its method, which is what makes a GET to a mutating path
+// a 405 rather than a fallthrough.
 //
 // The page is registered at "/{$}" — the exact root — and NOT at "/". A "GET /"
 // pattern matches every path, so a GET to /api/backend/start would render the
@@ -420,33 +424,62 @@ func (s *Server) routes() *http.ServeMux {
 	get := func(pattern string, h http.HandlerFunc) {
 		mux.Handle(pattern, s.requireSession(h))
 	}
-	// NOT wrapped: handleIndex does its own session check so it can answer an
-	// unauthenticated person with a box to paste the token into rather than a
-	// bare 403. It still never puts the token in that response.
-	mux.HandleFunc("GET /{$}", s.handleIndex)
-	get("GET /api/services", s.handleServices)
-	get("GET /api/config", s.handleConfig)
-	get("GET /api/status", s.handleStatus)
-	get("GET /api/logs/{svc}", s.handleLogs)
-	// The merged stream is a LITERAL pattern, registered deliberately beside
-	// the parameterised one: Go's mux prefers the more specific pattern, so
-	// "all" reaches handleStreamAll and every other name reaches
-	// handleStream, which still rejects it as an unknown service.
-	get("GET /api/stream/all", s.handleStreamAll)
-	get("GET /api/stream/{svc}", s.handleStream)
-	get("GET /api/events", s.handleEvents)
-	get("GET /api/origins", s.handleGetOrigins)
+	// Mutations take the stricter guard, per [RouteMutate].
+	post := func(pattern string, h http.HandlerFunc) {
+		mux.Handle(pattern, s.requireToken(http.HandlerFunc(h)))
+	}
 
-	// Editing the trust list is a mutation and is guarded like one: POST only,
-	// session token in the header. A cross-origin page that could add its own
-	// origin would have promoted itself out of the check it was failing.
-	mux.Handle("POST /api/origins", s.requireToken(http.HandlerFunc(s.handleSetOrigins)))
+	// Keyed by method+path, because one path may legitimately serve two
+	// different handlers under two different guards: GET /api/origins reads the
+	// list, POST /api/origins replaces it.
+	handlers := map[string]http.HandlerFunc{
+		"GET /{$}":              s.handleIndex,
+		"GET /api/services":     s.handleServices,
+		"GET /api/config":       s.handleConfig,
+		"GET /api/status":       s.handleStatus,
+		"GET /api/logs/{svc}":   s.handleLogs,
+		"GET /api/stream/all":   s.handleStreamAll,
+		"GET /api/stream/{svc}": s.handleStream,
+		"GET /api/events":       s.handleEvents,
+		"GET /api/origins":      s.handleGetOrigins,
 
-	mux.Handle("POST /api/start-all", s.requireToken(http.HandlerFunc(s.handleStartAll)))
-	mux.Handle("POST /api/stop-all", s.requireToken(http.HandlerFunc(s.handleStopAll)))
-	mux.Handle("POST /api/{svc}/start", s.requireToken(http.HandlerFunc(s.handleStart)))
-	mux.Handle("POST /api/{svc}/stop", s.requireToken(http.HandlerFunc(s.handleStop)))
-	mux.Handle("POST /api/{svc}/restart", s.requireToken(http.HandlerFunc(s.handleRestart)))
+		"POST /api/origins":       s.handleSetOrigins,
+		"POST /api/start-all":     s.handleStartAll,
+		"POST /api/stop-all":      s.handleStopAll,
+		"POST /api/{svc}/start":   s.handleStart,
+		"POST /api/{svc}/stop":    s.handleStop,
+		"POST /api/{svc}/restart": s.handleRestart,
+	}
+
+	for _, r := range consoleRoutes {
+		// Editing the trust list is a mutation and is guarded like one: POST
+		// only, session token in the header. A cross-origin page that could add
+		// its own origin would have promoted itself out of the check it was
+		// failing — which is why GET and POST of /api/origins differ only in
+		// their guard level, not in their presence in this table.
+		var wrap func(pattern string, h http.HandlerFunc)
+		switch r.Kind {
+		case RouteIndex:
+			// NOT wrapped: handleIndex does its own session check so it can
+			// answer an unauthenticated person with a box to paste the token
+			// into rather than a bare 403. It still never puts the token in
+			// that response.
+			wrap = func(pattern string, h http.HandlerFunc) {
+				mux.HandleFunc(pattern, h)
+			}
+		case RouteRead:
+			wrap = get
+		case RouteMutate:
+			wrap = post
+		default:
+			panic("web: console route " + r.Method + " " + r.Path + " has unknown kind " + string(r.Kind))
+		}
+		h := handlers[r.Method+" "+r.Path]
+		if h == nil {
+			panic("web: console route " + r.Method + " " + r.Path + " has no handler")
+		}
+		wrap(r.Method+" "+r.Path, h)
+	}
 
 	return mux
 }

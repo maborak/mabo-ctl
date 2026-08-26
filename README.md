@@ -161,6 +161,14 @@ parser deliberately accepts a `$schema:` key it ignores. The schema is
 drift-guarded against the shipped example, so a field the parser accepts but
 the schema does not describe is a test failure.
 
+**For agents and scripts**: `mabo-ctl schema --commands` prints a catalogue of
+the binary itself as JSON — every command's flags and argument semantics, which
+ones mutate state, the exit-code table, which outputs are stable machine
+contracts (`status --json` above), and every web-console HTTP route with its
+authentication level. It is generated from the same command tree `--help`
+renders, so it cannot disagree with the prose help. A new subcommand without an
+entry in its metadata table is a runtime error, not a silent hole.
+
 Three things about that file are worth stating outright:
 
 - **Everything is validated at load time**, and every problem is reported at
