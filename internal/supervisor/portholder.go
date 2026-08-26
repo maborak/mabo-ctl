@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/maborak/mabo-ctl/internal/service"
 )
 
 // lsofTimeout bounds the port-holder lookup. lsof can block on a wedged mount
@@ -114,9 +116,16 @@ func LsofCommand(port int) string {
 // A user who saw "port already in use" and then a status block with an empty
 // DETAIL for that very service had been told, by the same command, both that
 // something was in the way and that nothing was.
-func portHeldError(port int, h Holder) error {
-	return fmt.Errorf("%w: port %d held by pid %d (%s) — inspect with: %s",
-		ErrPortHeld, port, h.PID, h.Command, LsofCommand(port))
+//
+// name is the service whose start was refused, so the error can end with the
+// REMEDY and not only the diagnosis: how to inspect the holder, then how to
+// move this service somewhere else without editing the file. The escape hatches
+// existed in the README; a failure message that does not carry them is where
+// discoverability goes to die.
+func portHeldError(name string, port int, h Holder) error {
+	return fmt.Errorf("%w: port %d held by pid %d (%s) — inspect with: %s; "+
+		"or start it elsewhere with %s=<port> mabo-ctl start %s",
+		ErrPortHeld, port, h.PID, h.Command, LsofCommand(port), service.PortEnvVar(name), name)
 }
 
 // heldBy is [PortHolder] with a short memory, for the read path.

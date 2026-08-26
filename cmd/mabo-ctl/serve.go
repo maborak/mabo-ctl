@@ -5,11 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strconv"
 	"strings"
+	"syscall"
 
 	"github.com/spf13/cobra"
 
 	"github.com/maborak/mabo-ctl/internal/service"
+	"github.com/maborak/mabo-ctl/internal/supervisor"
 	"github.com/maborak/mabo-ctl/internal/web"
 )
 
@@ -178,6 +181,22 @@ func (a *app) serve(ctx context.Context, opt serveOptions) error {
 		return err
 	}
 	if err := srv.Listen(); err != nil {
+		// Everywhere else in mabo-ctl a held port names its holder; a bare
+		// "bind: address already in use" would make serve the one command that
+		// does not. When the holder is another mabo-ctl serve, the useful
+		// remedy is the free-port form, not the lsof line.
+		if errors.Is(err, syscall.EADDRINUSE) {
+			msg := fmt.Sprintf("mabo-ctl serve: %s: %v", opt.Addr, err)
+			if _, portStr, perr := net.SplitHostPort(opt.Addr); perr == nil {
+				if port, aerr := strconv.Atoi(portStr); aerr == nil {
+					if h := supervisor.PortHolder(port); h.PID > 0 {
+						msg += fmt.Sprintf(" — held by pid %d (%s)", h.PID, h.Command)
+					}
+				}
+			}
+			msg += "; start it elsewhere with --addr 127.0.0.1:0"
+			return errors.New(msg)
+		}
 		return err
 	}
 

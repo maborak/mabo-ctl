@@ -538,7 +538,7 @@ func (s *Supervisor) status(ctx context.Context, withHolders bool) []Status {
 						return
 					}
 					if h := s.heldBy(port); h.PID > 0 {
-						out[idx].Detail = portHeldError(port, h).Error()
+						out[idx].Detail = portHeldError(in.Name, port, h).Error()
 					}
 				}(i, in.Port)
 			}
@@ -946,7 +946,7 @@ func (s *Supervisor) startOne(ctx context.Context, in service.Instance, ev chan<
 		//    built by the same portHeldError the status block uses. See
 		//    Supervisor.heldBy.
 		if h := s.lookupPortHolder(in.Port); h.PID > 0 {
-			err := portHeldError(in.Port, h)
+			err := portHeldError(in.Name, in.Port, h)
 			emit(ev, Event{Service: in.Name, Phase: PhaseFailed, Msg: err.Error(), Err: err})
 			return PhaseFailed, err
 		}

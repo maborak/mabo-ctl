@@ -1557,7 +1557,7 @@ func TestStoppedServiceNamesWhoHoldsItsPort(t *testing.T) {
 	}
 	// The identical sentence the refusal uses, from the identical builder. Two
 	// constructions of this line WILL drift; that is why there is only one.
-	if want := portHeldError(7411, Holder{PID: 5334, Command: "nc"}).Error(); got.Detail != want {
+	if want := portHeldError("web", 7411, Holder{PID: 5334, Command: "nc"}).Error(); got.Detail != want {
 		t.Errorf("Detail = %q, want the same string startOne refuses with: %q", got.Detail, want)
 	}
 }
