@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -148,6 +149,10 @@ With no argument, or with "all", it interleaves every service's log and prefixes
 each line with the service label so the streams stay distinguishable. Following
 stops on Ctrl-C.
 
+--timestamps (follow only) prefixes each line with the time it was READ. For a
+live follow that is honest to within a heartbeat; replayed against a historical
+tail it would be a lie, so historical tails refuse the flag.
+
 Logs are truncated when a service starts, so what is here belongs to the current
 run.`,
 		Args:          cobra.MaximumNArgs(1),
@@ -168,11 +173,22 @@ run.`,
 				}
 				names = args
 			}
-			return a.runTail(cmd, names, n, boolFlag(cmd, "follow"))
+			follow := boolFlag(cmd, "follow")
+			stamp := boolFlag(cmd, "timestamps")
+			if stamp && !follow {
+				// A read-time stamp on a HISTORICAL tail is the time the tailer
+				// read the line, which has nothing to do with when the service
+				// wrote it. Presenting that as a timestamp is a small lie, and
+				// small lies in a tool whose value is not lying compound.
+				return usageErrorf("--timestamps is follow-only (-f): stamps on a historical tail would be read times, not write times")
+			}
+			return a.runTail(cmd, names, n, follow, stamp)
 		},
 	}
 	cmd.Flags().Int("tail", defaultTailLines, "how many trailing lines to show before following")
 	cmd.Flags().BoolP("follow", "f", false, "keep streaming new lines until interrupted")
+	cmd.Flags().Bool("timestamps", false,
+		"prefix each followed line with the time it was read (requires -f); format HH:MM:SS.mmm")
 	return cmd
 }
 
@@ -185,8 +201,12 @@ run.`,
 // prefixed with that service's coloured, fixed-width label, because interleaved
 // logs with no attribution are worse than no logs.
 //
+// stamp (only reachable with follow, enforced at the flag) prefixes each line
+// with the moment THIS process read it — near-honest for a live follow,
+// meaningless for anything older, which is why the historical tail refuses it.
+//
 // It blocks until every stream ends, or until ctx is cancelled by Ctrl-C.
-func (a *app) runTail(cmd *cobra.Command, names []string, n int, follow bool) error {
+func (a *app) runTail(cmd *cobra.Command, names []string, n int, follow, stamp bool) error {
 	sup, insts, err := a.supervisor()
 	if err != nil {
 		return err
@@ -235,11 +255,15 @@ func (a *app) runTail(cmd *cobra.Command, names []string, n int, follow bool) er
 	prefix := len(names) > 1
 	r := a.renderer()
 	for l := range merged {
+		text := l.text
+		if stamp {
+			text = time.Now().Format("15:04:05.000") + " " + text
+		}
 		if prefix {
-			fmt.Fprintln(a.env.Stdout, r.ServiceLabel(l.svc)+"  "+l.text)
+			fmt.Fprintln(a.env.Stdout, r.ServiceLabel(l.svc)+"  "+text)
 			continue
 		}
-		fmt.Fprintln(a.env.Stdout, l.text)
+		fmt.Fprintln(a.env.Stdout, text)
 	}
 
 	// Safe to read errs: every writer finished before merged was closed.

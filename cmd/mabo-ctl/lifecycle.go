@@ -379,7 +379,7 @@ func (a *app) runStart(cmd *cobra.Command, args []string) error {
 		return outcome
 	}
 	if mode.follow {
-		return a.runTail(cmd, names, defaultTailLines, true)
+		return a.runTail(cmd, names, defaultTailLines, true, false)
 	}
 	return nil
 }
@@ -520,7 +520,7 @@ Exit code 4 means at least one service failed to become ready.`,
 				return restartErr
 			}
 			if boolFlag(cmd, "follow") {
-				return a.runTail(cmd, names, defaultTailLines, true)
+				return a.runTail(cmd, names, defaultTailLines, true, false)
 			}
 			return nil
 		},

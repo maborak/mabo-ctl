@@ -101,6 +101,11 @@ type Env struct {
 	// commands drive. Nil means the identity. It is a test seam: the console
 	// always receives the real *supervisor.Supervisor regardless.
 	NewSupervisor func(sup *supervisor.Supervisor) lifecycle
+	// Ctx is the context every command derives its lifetime from. Nil means
+	// context.Background(). It exists so an embedding process — and every test
+	// that runs a blocking command like `logs -f` — can end one deterministically
+	// rather than by signalling the process.
+	Ctx context.Context
 }
 
 // defaultEnv returns the Env of the real process.
@@ -146,6 +151,7 @@ func run(e *Env) int {
 	a.bootstrap()
 
 	root := a.rootCmd()
+	root.SetContext(e.Ctx)
 	cmd, err := root.ExecuteC()
 	if err == nil {
 		return exitOK
@@ -167,6 +173,9 @@ func normalize(e *Env) {
 		// cobra falls back to os.Args[1:] for a nil argument slice, which would
 		// make a caller that meant "no arguments" inherit the real command line.
 		e.Args = []string{}
+	}
+	if e.Ctx == nil {
+		e.Ctx = context.Background()
 	}
 	if e.Stdout == nil {
 		e.Stdout = io.Discard

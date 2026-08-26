@@ -139,6 +139,10 @@ type harness struct {
 	stdout  *bytes.Buffer
 	stderr  *bytes.Buffer
 	console int
+	// ctx/cancel drive blocking commands (logs -f) deterministically; cancel is
+	// registered via t.Cleanup so no test can leak a resident goroutine.
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
 // newHarness writes fixture into a fresh temp directory and wires an Env whose
@@ -162,14 +166,19 @@ func newHarnessWithConfig(t *testing.T, body string, args ...string) *harness {
 // may not hold a mabo-ctl.yaml.
 func newHarnessAt(t *testing.T, root string, args ...string) *harness {
 	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
 	h := &harness{
 		root:   root,
 		sup:    &fakeSup{statuses: readyStatuses()},
 		stdout: &bytes.Buffer{},
 		stderr: &bytes.Buffer{},
+		ctx:    ctx,
+		cancel: cancel,
 	}
 	h.env = &Env{
 		Args:     args,
+		Ctx:      ctx,
 		Stdout:   h.stdout,
 		Stderr:   h.stderr,
 		Wd:       root,
@@ -1695,5 +1704,59 @@ checks:
 	}
 	if !strings.Contains(good.stdout.String(), "is free") {
 		t.Fatalf("passing detail does not say the port is free:\n%s", good.stdout.String())
+	}
+}
+
+// logs --timestamps (#16): opt-in, follow-only, read-time stamps stated as
+// such. The stamps are applied in runTail over whatever the lifecycle feeds it,
+// so the tests drive fakeSup's canned lines; supervisor.Tail itself is covered
+// in its own package.
+
+// TestLogsTimestampsIsFollowOnly: the flag is refused on a historical tail —
+// a stamp there would be when the tailer read the line, not when it was written.
+func TestLogsTimestampsIsFollowOnly(t *testing.T) {
+	h := newHarnessWithConfig(t, fixture, "logs", "alpha", "--timestamps")
+	if code := h.run(); code != exitUsage {
+		t.Fatalf("exit = %d, want %d; stderr:\n%s", code, exitUsage, h.stderr.String())
+	}
+	if !strings.Contains(h.stderr.String(), "follow-only") {
+		t.Fatalf("refusal does not say why:\n%s", h.stderr.String())
+	}
+}
+
+// TestLogsTimestampsStampsEveryStreamedLine: with -f --timestamps each line the
+// lifecycle hands runTail carries an HH:MM:SS.mmm prefix — single service and
+// interleaved alike.
+func TestLogsTimestampsStampsEveryStreamedLine(t *testing.T) {
+	h := newHarnessWithConfig(t, fixture, "logs", "alpha", "-f", "--timestamps")
+	h.sup.lines = map[string][]string{"alpha": {"first", "second"}}
+
+	if code := h.run(); code != exitOK {
+		t.Fatalf("exit = %d, stderr:\n%s", code, h.stderr.String())
+	}
+	for _, want := range []string{"first", "second"} {
+		i := strings.Index(h.stdout.String(), want)
+		if i < 0 {
+			t.Fatalf("line %q missing:\n%s", want, h.stdout.String())
+		}
+		prefix := h.stdout.String()[max(0, i-13):i]
+		if len(prefix) < 12 || prefix[2] != ':' || prefix[5] != ':' || prefix[8] != '.' {
+			t.Fatalf("line %q lacks an HH:MM:SS.mmm stamp (prefix %q):\n%s", want, prefix, h.stdout.String())
+		}
+	}
+
+	interleaved := newHarnessWithConfig(t, fixture, "logs", "all", "-f", "--timestamps")
+	interleaved.sup.lines = map[string][]string{
+		"alpha": {"a-one"}, "beta": {"b-one"},
+	}
+	if code := interleaved.run(); code != exitOK {
+		t.Fatalf("interleaved exit = %d, stderr:\n%s", code, interleaved.stderr.String())
+	}
+	for _, want := range []string{"a-one", "b-one"} {
+		i := strings.Index(interleaved.stdout.String(), want)
+		prefix := interleaved.stdout.String()[max(0, i-13):i]
+		if len(prefix) < 12 || prefix[8] != '.' {
+			t.Fatalf("interleaved line %q not stamped (prefix %q):\n%s", want, prefix, interleaved.stdout.String())
+		}
 	}
 }
