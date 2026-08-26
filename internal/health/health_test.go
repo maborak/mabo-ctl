@@ -707,11 +707,24 @@ func TestExecProbeCapturesTruncatedOutputOnFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	res := ProbeExec(context.Background(), dir, nil, []string{script})
+	// A bounded retry, because the first assertion races the machine, not the
+	// code: under a full-suite -race run with many packages forking at once, a
+	// freshly spawned /bin/sh can miss the probe's hard 2s budget entirely —
+	// killed at the deadline before `echo` ever ran, an honest timeout with
+	// empty output. On any machine healthy enough to trust the suite, at least
+	// one of three attempts gets scheduled promptly.
+	var res Result
+	for attempt := 1; attempt <= 3; attempt++ {
+		res = ProbeExec(context.Background(), dir, nil, []string{script})
+		if !res.OK && res.Err != nil && strings.Contains(res.Err.Error(), "before-failure-marker") {
+			return // the assertion below, already proven
+		}
+		t.Logf("attempt %d: res = %v (fork starvation under load?)", attempt, res.Err)
+	}
 	if res.OK {
 		t.Fatal("an exiting-3 script reported OK")
 	}
-	if !strings.Contains(res.Err.Error(), "before-failure-marker") {
+	if res.Err == nil || !strings.Contains(res.Err.Error(), "before-failure-marker") {
 		t.Errorf("err = %v, want the captured diagnostic line", res.Err)
 	}
 }

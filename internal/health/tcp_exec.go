@@ -94,9 +94,23 @@ func ProbeExec(ctx context.Context, dir string, env []string, argv []string) Res
 	switch {
 	case err == nil:
 		return Result{OK: true, Elapsed: elapsed}
+
+	case cmd.ProcessState != nil && cmd.ProcessState.Exited():
+		// The child RAN TO COMPLETION — just slower than the budget. Its exit
+		// status and captured output are real observations; reporting them as
+		// "timed out" would throw away the one diagnostic this probe exists
+		// to deliver, exactly under the load where they matter most.
+		msg := fmt.Sprintf("exit status %d", cmd.ProcessState.ExitCode())
+		if out.Len() > 0 {
+			msg += " (output: " + out.String() + ")"
+		}
+		return Result{Elapsed: elapsed,
+			Err: fmt.Errorf("health: exec %s overran %s: %s", argv[0], ProbeTimeout, msg)}
+
 	case ctx.Err() != nil:
 		return Result{Elapsed: elapsed, Err: fmt.Errorf(
 			"health: exec %s timed out after %s (output: %s)", argv[0], ProbeTimeout, out.String())}
+
 	default:
 		msg := fmt.Sprintf("exit status %d", cmd.ProcessState.ExitCode())
 		if out.Len() > 0 {
