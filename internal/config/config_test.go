@@ -1558,3 +1558,28 @@ checks:
 		}
 	}
 }
+
+// tty: opt-in per service
+
+func TestTTYRoundTrips(t *testing.T) {
+	root := t.TempDir()
+	body := `services:
+  - name: repl
+    cmd: [python]
+    tty: true
+  - name: plain
+    cmd: [echo, hi]
+`
+	cfg, err := Load(write(t, root, body))
+	if err != nil {
+		t.Fatalf("tty: failed to load: %v", err)
+	}
+	repl, _ := cfg.Service("repl")
+	plain, _ := cfg.Service("plain")
+	if !repl.TTY {
+		t.Error("repl.TTY = false, want true")
+	}
+	if plain.TTY {
+		t.Error("plain.TTY = true for an undeclared field; want the default false")
+	}
+}

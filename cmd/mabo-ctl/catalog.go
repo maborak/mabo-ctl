@@ -122,6 +122,9 @@ var commandMetas = map[string]catalogMeta{
 	"doctor": {
 		SideEffects: []string{"inspects runtimes, pid files, port holders and .dev/ permissions; read-only plus lsof"},
 	},
+	"attach": {
+		SideEffects: []string{"opens a raw-mode terminal relay to the service's tty socket; one session at a time; nothing is signalled"},
+	},
 	"init": {
 		Mutates:     true,
 		SideEffects: []string{"writes a commented-out mabo-ctl.yaml scaffold into the current directory"},

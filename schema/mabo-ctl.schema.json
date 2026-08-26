@@ -78,6 +78,10 @@
             "description": "Terminal colour for this service's label: a name (green, blue, bright-cyan, …), a 0-255 palette number, or #rrggbb.",
             "type": "string"
           },
+          "tty": {
+            "description": "Run this service on a pty owned by mabo-ctl's terminal broker and enable `mabo-ctl attach <name>`. Default false: the default /dev/null stdin is what keeps consoles safe.",
+            "type": "boolean"
+          },
           "depends_on": {
             "description": "Services that start first. Orders STARTS only — stop never expands dependencies.",
             "items": {

@@ -193,6 +193,11 @@ Three things about that file are worth stating outright:
   databases and every other service without an HTTP endpoint.
 - **`open:` names the page `mabo-ctl open` should actually show** — `/docs`
   joins against the service's origin, an absolute http(s) URL opens as-is.
+- **`tty: true` makes a service attachable.** The child runs on a pty owned by
+  a detached mabo-ctl broker, teed into its normal log, and `mabo-ctl attach
+  <name>` connects your terminal to it — Ctrl-Q detaches, one session at a
+  time, detachment never surrendered. Off by default; refused outright where
+  the platform cannot allocate ptys from pure Go rather than half-working.
 - **`runtime:` resolves the interpreter explicitly.** `conda:<env>` and
   `node:<version>` produce an absolute path and fail loudly naming the path they
   looked for, rather than inheriting whatever `PATH` your shell happens to have.

@@ -102,6 +102,9 @@ type Instance struct {
 	// last. It is complete — a caller that appends os.Environ() to it would
 	// reintroduce the stale port variables CaptureEnv removed.
 	Env []string
+	// TTY is the declared tty: opt-in. When true the child runs on a pty via
+	// mabo-ctl's broker and `mabo-ctl attach <name>` can connect to it.
+	TTY bool
 	// Color is the label colour for status output.
 	Color string
 	// DependsOn lists the services that must start first.
@@ -346,6 +349,7 @@ func build(cfg *config.Config, s config.Spec, port int, exp *expander, base []st
 		Open:         open,
 		Cmd:          cmd,
 		Env:          buildEnv(base, exp.names, exp.ports, specEnv, rt, port),
+		TTY:          s.TTY,
 		Color:        s.Color,
 		DependsOn:    append([]string(nil), s.DependsOn...),
 		Runtime:      s.Runtime,

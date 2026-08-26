@@ -260,6 +260,12 @@ func (d *Dir) RemovePID(svc string) error {
 // ten minutes covers any dev stack that will ever tolerate mabo-ctl at all.
 const claimMaxAge = 10 * time.Minute
 
+// TTYSockPath returns the path of svc's terminal-relay socket:
+// Root/.dev/tty/<svc>.sock.
+func (d *Dir) TTYSockPath(svc string) string {
+	return filepath.Join(d.Path(), "tty", svc+".sock")
+}
+
 // PIDClaimPath returns the path of svc's start claim:
 // Root/.dev/pids/<svc>.pid.claim.
 func (d *Dir) PIDClaimPath(svc string) string {

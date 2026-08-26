@@ -77,6 +77,12 @@ type Spec struct {
 	Runtime   string            `yaml:"runtime"`  // "", "system", "conda:<env>", "node:<ver>"
 	DependsOn []string          `yaml:"depends_on"`
 	Color     string            `yaml:"color"`
+	// TTY opts this service into a terminal relay: the child runs on a pty
+	// owned by a detached broker mabo-ctl spawns beside it, and
+	// `mabo-ctl attach <name>` connects a terminal to it. Default false —
+	// the historic /dev/null stdin behaviour is what keeps the console safe,
+	// so this is strictly opt-in per service.
+	TTY bool `yaml:"tty"`
 	// Open is the URL or path `mabo-ctl open` prefers over the derived
 	// origin: "/docs" joins against the service's origin,
 	// "http://host/page" is used as-is. RAW template; expanded by Resolve.
@@ -459,6 +465,7 @@ type specDoc struct {
 	Runtime   string                 `yaml:"runtime"`
 	DependsOn []string               `yaml:"depends_on"`
 	Color     string                 `yaml:"color"`
+	TTY       bool                   `yaml:"tty"`
 	Open      string                 `yaml:"open"`
 	Autostart *bool                  `yaml:"autostart"`
 	// ReadyTimeout is a pointer so an absent key means "inherit the global".
@@ -476,6 +483,7 @@ func (d specDoc) spec() Spec {
 		Runtime:   d.Runtime,
 		DependsOn: d.DependsOn,
 		Color:     d.Color,
+		TTY:       d.TTY,
 		Open:      d.Open,
 		Autostart: d.Autostart,
 	}

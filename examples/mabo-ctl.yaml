@@ -81,6 +81,12 @@ ready_timeout: 30s
 #               rejected at load time.
 #   color       Label colour in status output: red, green, yellow, blue,
 #               magenta, cyan, white.
+#   tty         Run on a pty via mabo-ctl's broker so `mabo-ctl attach <name>`
+#               works: an interactive process INSIDE a supervised service
+#               becomes reachable without giving up detachment (Ctrl-Q to
+#               detach; one attached terminal at a time). Default false — the
+#               /dev/null stdin default is what keeps consoles safe. macOS
+#               declines tty at start for now and says so.
 #
 # Templates. cmd, env values and health are expanded AFTER every port is
 # resolved, so a service can be told about another service's port:

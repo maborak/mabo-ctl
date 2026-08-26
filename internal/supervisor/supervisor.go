@@ -976,37 +976,71 @@ func (s *Supervisor) startOne(ctx context.Context, in service.Instance, ev chan<
 	// a close error on it says nothing about the child, which holds its own.
 	defer func() { _ = logFile.Close() }()
 
-	devnull, err := os.OpenFile(os.DevNull, os.O_RDONLY, 0)
-	if err != nil {
-		emit(ev, Event{Service: in.Name, Phase: PhaseFailed, Err: err,
-			Msg: fmt.Sprintf("cannot open %s: %v", os.DevNull, err)})
-		return PhaseFailed, err
-	}
-	defer func() { _ = devnull.Close() }()
-
 	// 4. Spawn detached. stdin from /dev/null matters: a service that reads
 	//    stdin would otherwise inherit the terminal and steal the user's keys —
 	//    catastrophic under the TUI.
 	emit(ev, Event{Service: in.Name, Msg: "starting…"})
-	cmd := exec.Command(in.Cmd[0], in.Cmd[1:]...) // #nosec G204 -- argv comes from mabo-ctl.yaml, which is arbitrary code execution BY DESIGN; see THREAT_MODEL.md
-	cmd.Dir = in.Dir
-	cmd.Env = in.Env
-	cmd.Stdout = logFile
-	cmd.Stderr = logFile
-	cmd.Stdin = devnull
-	setDetached(cmd)
 
-	if err := cmd.Start(); err != nil {
-		err = fmt.Errorf("spawn %s: %w", in.Name, err)
-		emit(ev, Event{Service: in.Name, Phase: PhaseFailed, Msg: err.Error(), Err: err})
-		return PhaseFailed, err
+	// A tty: service never spawns here directly: its pty is owned by the
+	// detached broker this same binary launches (see spawnTTY), which answers
+	// with the real child's pid. Everything downstream — pid record, probe —
+	// proceeds identically; only the waiter differs (the broker waitpids, and
+	// writes the exit record itself).
+	var reaped chan exitInfo
+	var pid int
+	if in.TTY {
+		spawned, err := s.spawnTTY(in, s.st.LogPath(in.Name), s.st.TTYSockPath(in.Name))
+		if err != nil {
+			emit(ev, Event{Service: in.Name, Phase: PhaseFailed, Msg: err.Error(), Err: err})
+			return PhaseFailed, err
+		}
+		pid = spawned
+		reaped = nil // nobody here can waitpid it; "status unknown" is honest
+	} else {
+		devnull, derr := os.OpenFile(os.DevNull, os.O_RDONLY, 0)
+		if derr != nil {
+			emit(ev, Event{Service: in.Name, Phase: PhaseFailed, Err: derr,
+				Msg: fmt.Sprintf("cannot open %s: %v", os.DevNull, derr)})
+			return PhaseFailed, derr
+		}
+		defer func() { _ = devnull.Close() }()
+
+		cmd := exec.Command(in.Cmd[0], in.Cmd[1:]...) // #nosec G204 -- argv comes from mabo-ctl.yaml, which is arbitrary code execution BY DESIGN; see THREAT_MODEL.md
+		cmd.Dir = in.Dir
+		cmd.Env = in.Env
+		cmd.Stdout = logFile
+		cmd.Stderr = logFile
+		cmd.Stdin = devnull
+		setDetached(cmd)
+
+		if err := cmd.Start(); err != nil {
+			err = fmt.Errorf("spawn %s: %w", in.Name, err)
+			emit(ev, Event{Service: in.Name, Phase: PhaseFailed, Msg: err.Error(), Err: err})
+			return PhaseFailed, err
+		}
+		pid = cmd.Process.Pid
+
+		// Reap the child when it exits. Setsid does not reparent, so mabo-ctl
+		// stays its parent for as long as mabo-ctl lives; without a waitpid
+		// every stopped service accumulates a zombie.
+		//
+		// The wait status is KEPT now. It is the only evidence of how the
+		// process died and the kernel hands it over exactly once; see reapChild
+		// and recordExit. The channel is buffered so the reaper never blocks on
+		// a startOne that took the ready path and is not listening.
+		reaped = make(chan exitInfo, 1)
+		s.reap.Add(1)
+		go func() {
+			defer s.reap.Done()
+			s.reapChild(in.Name, pid, time.Now(), cmd, reaped)
+		}()
 	}
-	pid := cmd.Process.Pid
-	// Spawn time is captured here, at the instant the child exists, and written
-	// to disk with the pid. It cannot live in memory: the next `mabo-ctl status`
-	// is a different process with no recollection of this one, so uptime and the
-	// "is it still inside its startup window" question are both unanswerable
-	// unless the answer was written down at the spawn.
+
+	// Spawn time is captured at the instant the child exists, and written to
+	// disk with the pid. It cannot live in memory: the next `mabo-ctl status`
+	// is a different process with no recollection of this one, so uptime and
+	// the "is it still inside its startup window" question are both
+	// unanswerable unless the answer was written down at the spawn.
 	startedAt := time.Now()
 
 	// A new process supersedes whatever mabo-ctl last saw happen to this service:
@@ -1019,21 +1053,6 @@ func (s *Supervisor) startOne(ctx context.Context, in service.Instance, ev chan<
 		emit(ev, Event{Service: in.Name, Err: err, Msg: fmt.Sprintf(
 			"could not clear the previous exit record: %v", err)})
 	}
-
-	// Reap the child when it exits. Setsid does not reparent, so mabo-ctl stays
-	// its parent for as long as mabo-ctl lives; without a waitpid every stopped
-	// service accumulates a zombie.
-	//
-	// The wait status is KEPT now. It is the only evidence of how the process
-	// died and the kernel hands it over exactly once; see reapChild and recordExit.
-	// The channel is buffered so the reaper never blocks on a startOne that
-	// took the ready path and is not listening.
-	reaped := make(chan exitInfo, 1)
-	s.reap.Add(1)
-	go func() {
-		defer s.reap.Done()
-		s.reapChild(in.Name, pid, startedAt, cmd, reaped)
-	}()
 
 	if err := s.st.WritePIDAt(in.Name, pid, startedAt); err != nil {
 		emit(ev, Event{Service: in.Name, Err: err,

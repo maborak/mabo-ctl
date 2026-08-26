@@ -1760,3 +1760,22 @@ func TestLogsTimestampsStampsEveryStreamedLine(t *testing.T) {
 		}
 	}
 }
+
+// tty: + attach (#17 done the way the roadmap allowed)
+
+// TestAttachRefusesAServiceWithoutTTY: pretend-attaching to an /dev/null-stdin
+// service would be a lie; the refusal names the field that would fix it.
+func TestAttachRefusesAServiceWithoutTTY(t *testing.T) {
+	h := newHarnessWithConfig(t, fixture, "attach", "alpha")
+	if code := h.run(); code != exitUsage {
+		t.Fatalf("exit = %d, want %d; stderr:\\n%s", code, exitUsage, h.stderr.String())
+	}
+	if !strings.Contains(h.stderr.String(), "tty: true") {
+		t.Fatalf("refusal does not name the missing declaration:\\n%s", h.stderr.String())
+	}
+
+	bad := newHarnessWithConfig(t, fixture, "attach", "nosuch")
+	if code := bad.run(); code != exitUsage || !strings.Contains(bad.stderr.String(), "unknown service") {
+		t.Fatalf("unknown service not refused; exit %d stderr:\n%s", code, bad.stderr.String())
+	}
+}

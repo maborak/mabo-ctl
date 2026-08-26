@@ -156,6 +156,8 @@ func (a *app) rootCmd() *cobra.Command {
 		a.schemaCmd(),
 		a.doctorCmd(),
 		a.initCmd(),
+		a.attachCmd(),
+		a.ttyBrokerCmd(),
 	)
 	return root
 }
