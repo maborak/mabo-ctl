@@ -24,9 +24,11 @@ rename.
 Three front ends over ONE supervisor:
 
 1. **One-shot CLI** — `start`, `stop`, `restart`, `status [--json]`, `health`,
-   `config`, `logs`/`tailf`, `open`, `reset`, `preflight`, `doctor`, `exec`,
-   `shell`, `serve`, `completion`, `schema`, `upgrade`. `ui.StatusJSON` is the
-   stable machine contract.
+   `config`, `logs`/`tailf`, `open`, `reset`, `preflight`, `doctor`, `init`,
+   `exec`, `shell`, `serve`, `completion`, `schema [--commands]`, `upgrade`.
+   `ui.StatusJSON` is the stable machine contract, `--version` prints the full
+   build report, and `schema --commands` is the machine-readable catalogue of
+   the binary itself.
 2. **Interactive console** — running the bare binary drops into a TUI
    (`internal/console`) or prompt (`internal/repl`).
 3. **Web console** — `serve` binds a loopback HTTP listener (`127.0.0.1:7999`)
@@ -74,10 +76,23 @@ internal/web/         web console: embedded page, JSON/SSE API, HTTP guards
 
 ## Behaviours that are load-bearing (do not regress them)
 
-- **Port precedence**: `--ports` > caller env > `.dev/run.env` > declared
-  default. Caller-env `<NAME>_PORT` variables are captured AND unset before any
-  spawn. Collision detection is computed pairwise over all services — never a
-  hand-written comparison list.
+- **Port precedence**: named `--port svc=N` > positional `--ports` > caller env
+  > `.dev/run.env` > declared default; the two flag spellings are rejected
+  together. Caller-env `<NAME>_PORT` variables are captured AND unset before any
+  spawn; a service that declares a port also gets it as a bare `PORT`. Collision
+  detection is computed pairwise over all services — never a hand-written
+  comparison list.
+- **A start takes the cross-process CLAIM first** (`state.ClaimPID`, an O_EXCL
+  create superseded by the pid record), before the port guard. A fresh claim
+  held by another live mabo-ctl refuses the start with `ErrClaimed`; stale
+  wreckage (dead owner, past ten minutes, unparseable) is cleared, never fatal.
+- **The probe set is closed** — http URL, tcp dial, exec argv — chosen by how
+  `health:` is written. A scalar value stays an http probe byte-for-byte, so
+  pre-existing configs parse unchanged.
+- **`schema --commands` is GENERATED from the live cobra tree, and the web mux
+  is built FROM `consoleRoutes`** — one source each, two consumers. Adding a
+  subcommand without a `commandMetas` entry, or a handler outside the route
+  table, fails loudly instead of shipping undocumented.
 - **Stop kills the process GROUP**, SIGTERM → grace → SIGKILL, identity verified
   before signalling (pid recycling is real).
 - **`stop`/`restart` take exactly the named services** — `depends_on` orders

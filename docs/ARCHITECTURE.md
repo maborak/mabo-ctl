@@ -42,7 +42,7 @@ bug, and several of those are recorded in [LANDMINES.md](LANDMINES.md).
 | `internal/web` | the loopback console: embedded page, JSON + SSE API, HTTP guards | import `os/exec` or `syscall`; open a browser |
 | `internal/ui` | colour, fixed-width labels, status/config rendering, the `--json` contract | import `os/exec` or `syscall` |
 | `internal/supervisor` | spawn, signals, process groups, pid files, reaping | format a user-facing string |
-| `internal/health` | HTTP readiness probes | — |
+| `internal/health` | readiness probes: HTTP, TCP dial, exec argv | — |
 | `internal/service` | the service model, port precedence, template expansion | — |
 | `internal/state` | everything under `.dev/` — it is the only writer | — |
 | `internal/redact` | what is withheld from anything shown to a reader | anything else; it is pure |
@@ -70,18 +70,28 @@ What `mabo-ctl start` actually does, in order:
    alive *and* it is ours. Liveness alone is not ownership: a recycled pid is
    alive and belongs to someone else, so the check also verifies the process is
    its own group leader, which every mabo-ctl child is by construction.
-2. **Refuse if the port is held** by something mabo-ctl did not start — and print
+2. **Take the cross-process start claim** — an `O_EXCL` create of
+   `.dev/pids/<svc>.pid.claim`, recording who is starting and since when. This
+   is what stops a second mabo-ctl in another terminal from racing the same
+   stack past step 1 and spawning a duplicate; a fresh claim held by a live
+   owner refuses the start with `ErrClaimed`, and stale wreckage (dead owner,
+   past ten minutes, unparseable) is cleared rather than fatal. Released on
+   every path below — on success the pid record supersedes it.
+3. **Refuse if the port is held** by something mabo-ctl did not start — and print
    the `lsof` command, so the operator can see who holds it rather than being
    told "in use" and left to guess.
-3. **Truncate the log**, so the tail printed on failure is *this* run's output.
-4. **Spawn detached**: `SysProcAttr{Setsid: true}`, stdout and stderr to the log,
+4. **Truncate the log**, so the tail printed on failure is *this* run's output.
+5. **Spawn detached**: `SysProcAttr{Setsid: true}`, stdout and stderr to the log,
    stdin from `/dev/null`. Setsid is what makes the child survive the invoking
    terminal closing — a supervisor whose children die with the shell is broken —
    and it makes every child a process-group leader, which is what makes step 1's
    ownership test free.
-5. **Write the pid record** (`{"pid":N,"started_at":"…"}`).
-6. **Poll the health URL** until it answers, the process dies, or the timeout
-   expires. Those are three different outcomes and they are reported as three.
+6. **Write the pid record** (`{"pid":N,"started_at":"…"}`), superseding the
+   claim.
+7. **Run its readiness probe** — an HTTP request, a TCP dial or an exec argv,
+   chosen by how `health:` was written — until it answers, the process dies, or
+   the timeout expires. Those are three different outcomes and they are reported
+   as three.
 
 Stopping reverses it: `SIGTERM` to the process **group**, wait `stop_grace`,
 then `SIGKILL`. The group matters — a supervised `npm run dev` spawns a child
@@ -124,12 +134,14 @@ and "no restart-on-crash" is a stated non-goal. The refusal is written on
 
 ## Port resolution
 
-Four levels, highest first:
+Five levels, highest first:
 
-1. `--ports=A,B,C,D` — positional; an empty slot keeps the default
-2. `<NAME>_PORT` in the caller's environment
-3. the persisted `.dev/run.env`
-4. the port declared in `mabo-ctl.yaml`
+1. `--port <svc>=<n>` — named, repeatable; outranks everything, `--ports`
+   included, and the two spellings are rejected on one command line
+2. `--ports=A,B,C,D` — positional; an empty slot keeps the default
+3. `<NAME>_PORT` in the caller's environment
+4. the persisted `.dev/run.env`
+5. the port declared in `mabo-ctl.yaml`
 
 Two rules that exist because of specific failures:
 
@@ -139,6 +151,10 @@ Two rules that exist because of specific failures:
   caller's value — listening on one port while being told it is on another.
 - **A persisted port that outranks a changed default is announced.** Stale state
   silently winning cost a debugging round during a port move.
+
+A service that declares a port also receives it as a bare `PORT` in its child
+environment (the Procfile/Heroku convention), gated on the declaration: a
+portless worker never gets a meaningless `0`.
 
 Collision detection is computed **pairwise over a `port → services` map**, never
 a hand-written list of comparisons: three services need three comparisons and
@@ -156,6 +172,7 @@ Git-ignored, safe to delete, `0700` with `0600` files.
 ```
 .dev/logs/<svc>.log     truncated on each start
 .dev/pids/<svc>.pid     {"pid":N,"started_at":"…"} — a legacy bare integer is still read
+.dev/pids/<svc>.pid.claim   a start IN PROGRESS; O_EXCL create, see the supervision path
 .dev/exits/<svc>.json   the last death observed: code or signal, timings, a capped log tail
 .dev/run.env            persisted resolved ports (read-modify-write, under a lock)
 ```

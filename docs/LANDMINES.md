@@ -282,3 +282,45 @@ go test ./internal/service/ -run TestSelectExact -race
 go test ./internal/supervisor/ -run TestStopTakesExactlyTheNamedServices -race
 rg -n 'service\.Select\(' internal cmd   # Select itself should now have NO production callers left
 ```
+
+---
+
+## 9. Two `mabo-ctl` processes could start the same service
+
+**Shape.** A check-then-act sequence whose guard (a mutex) lives inside one
+process, while the other participants are OTHER processes agreeing on nothing
+but the filesystem.
+
+**Where it bit us.** `internal/supervisor/supervisor.go` (`startOne`), diagnosed
+2026-08-26 when closing roadmap #11; flagged in the code as a known gap since
+the parallel-start work, and listed in SECURITY.md as an accepted risk until
+then. The per-service mutex serialises lifecycle operations inside ONE mabo-ctl;
+a second mabo-ctl in another terminal never reaches it. No pid file exists yet
+on either side, so both pass the already-running check and both spawn. For a
+service that declares a port the port guard catches the loser afterwards —
+badly, but caught. For a portless service nothing intervenes at all: two
+workers ran concurrently while `.dev/pids/<svc>.pid` recorded only the later
+one, and the survivor was unreachable by every command mabo-ctl has — stop,
+status, logs and exec all address a process through that record.
+
+**Fix.** An exclusive-create START CLAIM taken before the port check:
+`state.ClaimPID` creates `.dev/pids/<svc>.pid.claim` with `O_EXCL` — the one
+primitive two independent processes agree on — recording who is starting and
+since when. `WritePIDAt` supersedes the claim with the real record on success;
+every failure path releases it. A claim found standing is refused with
+`ErrClaimed` unless it is stale, where stale means its owner process no longer
+exists, or it is older than ten minutes (longer than any legitimate start's
+window), or it cannot be parsed — wreckage is cleared and retried, never fatal,
+so a crashed mabo-ctl cannot wedge the service permanently.
+
+**Detector.**
+```bash
+go test ./internal/state/ -race \
+  -run 'TestClaimPIDExclusiveCreate|TestClaimPIDStalenessRules|TestReleaseClaimIsIdempotent'
+go test ./internal/supervisor/ -race -run TestStartRefusesWhenAnotherMaboCtlHoldsTheClaim
+
+# Structural: the claim must be taken BEFORE the port guard, or the
+# check-then-spawn window reopens between the two lines. Read this output in
+# order — ClaimPID first, lookupPortHolder second, both inside startOne.
+rg -n 's\.st\.ClaimPID|lookupPortHolder' internal/supervisor/supervisor.go
+```

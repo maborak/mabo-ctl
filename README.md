@@ -161,7 +161,9 @@ parser deliberately accepts a `$schema:` key it ignores. The schema is
 drift-guarded against the shipped example, so a field the parser accepts but
 the schema does not describe is a test failure.
 
-**For agents and scripts**: `mabo-ctl schema --commands` prints a catalogue of
+#### For agents and scripts
+
+`mabo-ctl schema --commands` prints a catalogue of
 the binary itself as JSON — every command's flags and argument semantics, which
 ones mutate state, the exit-code table, which outputs are stable machine
 contracts (`status --json` above), and every web-console HTTP route with its
@@ -224,16 +226,18 @@ Leave the key out to inherit the global.
 | `mabo-ctl restart [svc...] [-f]` | Stop, then start. |
 | `mabo-ctl status [--json]` | One line per service. `--json` is the stable machine contract. Always exits 0: a service being down is information. |
 | `mabo-ctl health` | The same phases `status` reports, with an exit code: 4 when any declared probe (http, tcp or exec) did not answer. |
-| `mabo-ctl config [svc] [--json] [--raw]` | Where `mabo-ctl.yaml` was loaded from and what it resolved to: the port **and which of the four precedence levels produced it**, the absolute command, the runtime, the expanded health URL, the declared env. `--raw` prints the file verbatim. |
+| `mabo-ctl config [svc] [--json] [--raw]` | Where `mabo-ctl.yaml` was loaded from and what it resolved to: the port **and which of the five precedence levels produced it**, the absolute command, the runtime, the expanded health URL, the declared env. `--raw` prints the file verbatim. |
 | `mabo-ctl logs [svc\|all] [--tail=N] [-f]` | Tail a log, or interleave every log with per-service labels. `tailf` is an alias. |
 | `mabo-ctl reset [--force]` | Stop everything and delete `.dev/`. `--force` also kills whatever still holds a declared port. |
 | `mabo-ctl preflight` | Run the `checks:` block: a TCP dial for `tcp:`, an exec for `command:`. |
 | `mabo-ctl doctor` | Read-only stack exam: unresolvable runtimes, stale or recycled pids, foreign port holders, unsurfaced crashes, loose `.dev/` permissions. Warn → 0, FAIL → 1. |
+| `mabo-ctl schema [--commands]` | Print the JSON Schema (draft-07) for `mabo-ctl.yaml`. With `--commands`, print a machine-readable catalogue of the binary itself: every command's flags and argument semantics, which mutate state, the exit-code table, which outputs are stable contracts, every web-console route with its auth level. Generated from the same tree `--help` renders — see [For agents and scripts](#for-agents-and-scripts). |
 | `mabo-ctl exec <svc> <cmd>...` | Run a command in the service's exact environment and directory; forwards the child's exit code. |
 | `mabo-ctl shell <name>` | Run a declared `shells:` entry, or open `$SHELL` in a service's environment. |
 | `mabo-ctl open` | Hand each running service's URL — its `open:` target when declared, else the derived origin — to `open` (macOS) or `xdg-open` (Linux). |
 | `mabo-ctl serve [--addr] [--open] [--notify] [--i-know-this-is-dangerous]` | Serve the web console on `127.0.0.1:7999` until interrupted; `--notify` announces dying services on the desktop. It can start and stop services — see [Web console](#web-console). |
 | `mabo-ctl init` | Scaffold a fully commented-out `mabo-ctl.yaml` from what the repo looks like (`package.json` + `.nvmrc`, `manage.py`, `pyproject.toml`, `Cargo.toml`). Refuses to overwrite; adds `.dev/` to `.gitignore`; runs nothing it finds. |
+| `mabo-ctl --version` | The full build report: commit, dirty flag, when it was linked, toolchain, platform and dependencies. Paste it whole into bug reports — [SECURITY.md](SECURITY.md) asks for exactly this output. |
 | `mabo-ctl completion <bash\|zsh\|fish\|powershell>` | Print a completion script. |
 | `mabo-ctl upgrade [--force]` | Replace this binary with the latest GitHub release — see [Upgrading](#upgrading). |
 
@@ -654,7 +658,7 @@ cmd/mabo-ctl/           flag wiring, exit codes, the console-vs-status decision
 internal/config/      mabo-ctl.yaml: load and validate. Pure.
 internal/service/     port resolution, template expansion, runtime resolution
 internal/state/       .dev/: logs, pid records, exit records, run.env. The only writer.
-internal/health/      HTTP readiness probes
+internal/health/      readiness probes: http URL, tcp dial, exec argv
 internal/redact/      what is withheld from anything shown a reader. Pure, and the
                       ONLY copy of those rules: both front ends import it.
 internal/supervisor/  spawn, signal process groups, pid files. Returns data.

@@ -132,14 +132,18 @@ default; so is reordering the chain — consent, not precedence, is the remedy.
 
 Precedence, highest first:
 
-1. `--ports=A,B,C,D` (positional; empty slot keeps the default)
-2. caller env — `WEBSITE_PORT`, `FRONTEND_PORT`, `BACKEND_PORT`, `BROWSER_PORT`
-3. persisted `.dev/run.env`
-4. compiled default
+1. `--port <svc>=<n>` — named, repeatable; outranks everything including
+   `--ports`, and the two flag spellings are rejected together
+2. `--ports=A,B,C,D` (positional; empty slot keeps the default)
+3. caller env — `WEBSITE_PORT`, `FRONTEND_PORT`, `BACKEND_PORT`, `BROWSER_PORT`
+4. persisted `.dev/run.env`
+5. compiled default
 
 The caller-env values must be captured and **unset** before anything else runs,
 or a child process inherits them and a service that resolves a different port
-still sees the caller's value in its environment.
+still sees the caller's value in its environment. A service that declares a port
+also gets it as a bare `PORT` (the Procfile/Heroku convention) in its child
+environment; a portless service gets none.
 
 Collision detection must be **computed pairwise over all services**, not a
 hand-written list of comparisons. The shell version had three hardcoded
@@ -149,9 +153,12 @@ to service name, and the error should name **both** services and the port.
 
 ## Lifecycle
 
-**Start:** skip if already running (pid alive) → refuse if the port is already
-in use by something else → truncate the log → spawn detached with stdout+stderr
-to the log and stdin from `/dev/null` → write the pid → poll health.
+**Start:** skip if already running (pid alive) → take the cross-process START
+CLAIM (an O_EXCL create of `.dev/pids/<svc>.pid.claim`; a fresh claim from
+another live mabo-ctl refuses the start, stale wreckage is cleared) → refuse if
+the port is already in use by something else → truncate the log → spawn detached
+with stdout+stderr to the log and stdin from `/dev/null` → write the pid
+(superseding the claim) → poll health.
 
 Spawn must survive the parent exiting: the shell version uses a subshell with
 `trap '' HUP INT` plus `disown`. In Go, `SysProcAttr{Setsid: true}`.

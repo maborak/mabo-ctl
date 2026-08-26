@@ -98,9 +98,12 @@ Audit these against the code (`internal/web/`), not against this list.
 - **A health URL's query string reaches the supervised service's own log**,
   because mabo-ctl's probe requests it and the service logs the request line.
   Prefer a credential in a header over one in a query.
-- **There is no cross-process double-spawn lock.** Two `mabo-ctl start` runs in
-  two terminals are serialised by the port guard for any service that declares a
-  port; a portless service has no such guard.
+- **The start claim trusts `.dev/` itself.** Cross-process double spawns ARE
+  now prevented — an exclusive `.dev/pids/<svc>.pid.claim` taken before any
+  spawn; see [`docs/LANDMINES.md`](docs/LANDMINES.md) §9 — but that claim, like
+  every pid record, means nothing to someone who can write to `.dev/`: anyone
+  with write access there can forge any record or hold a claim. Protecting
+  `.dev/` has always been the boundary.
 
 ## Past vulnerabilities
 
