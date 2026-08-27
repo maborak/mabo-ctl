@@ -159,14 +159,37 @@ func (s *Supervisor) Tail(ctx context.Context, svc string, n int, follow bool, o
 		case <-tick.C:
 		}
 
-		// Detect truncation: a start emptied the log, so the file we are
-		// holding is shorter than where we are reading. Rewind to the top.
-		if fi, err := f.Stat(); err == nil && fi.Size() < offset {
-			if _, err := f.Seek(0, io.SeekStart); err != nil {
-				return fmt.Errorf("rewind %s after truncation: %w", path, err)
+		// Detect REPLACEMENT, not just truncation. A start rotates the old log
+		// to <svc>.log.1 and creates a fresh file at the same path
+		// (state.TruncateLog), and an open handle follows the INODE, not the
+		// name: without this check the follower sits at the EOF of a dead file
+		// while every line the new run prints goes into an inode it will never
+		// see. Identity is compared against the PATH — a different inode there,
+		// or the old shrink, means reopen and read from the top. Nothing can be
+		// duplicated by rewinding to zero here: the replacement's contents were
+		// never read under the old handle.
+		if fi, err := f.Stat(); err == nil {
+			cur, serr := os.Stat(path)
+			switch {
+			case serr == nil && !sameFile(fi, cur):
+				nf, oerr := os.Open(path)
+				if oerr != nil {
+					return fmt.Errorf("reopen %s after rotation: %w", path, oerr)
+				}
+				f.Close()
+				f = nf
+				if _, serr2 := f.Seek(0, io.SeekStart); serr2 != nil {
+					return fmt.Errorf("rewind %s after rotation: %w", path, serr2)
+				}
+				offset = 0
+				reader.Reset(f)
+			case serr == nil && cur.Size() < offset:
+				if _, err := f.Seek(0, io.SeekStart); err != nil {
+					return fmt.Errorf("rewind %s after truncation: %w", path, err)
+				}
+				offset = 0
+				reader.Reset(f)
 			}
-			offset = 0
-			reader.Reset(f)
 		}
 	}
 }

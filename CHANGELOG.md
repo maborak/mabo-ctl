@@ -116,6 +116,11 @@ stable, everything else may still move.
 
 ### Fixed
 
+- **Every log follower went silent after a start or restart.** The
+  keep-one-generation rotation renamed `<svc>.log` aside and created a fresh
+  file at the same path, while web panes, TUI panes and `logs -f` kept reading
+  the old inode at EOF. Followers now detect the replacement by inode identity
+  against the path and resume from the top of the new file.
 - **Two mabo-ctl processes could start the same service.** The per-service
   mutex serialises only inside one process; a second terminal passed the same
   already-running check before either pid file existed, and two copies ran —

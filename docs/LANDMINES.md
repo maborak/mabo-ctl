@@ -324,3 +324,37 @@ go test ./internal/supervisor/ -race -run TestStartRefusesWhenAnotherMaboCtlHold
 # order — ClaimPID first, lookupPortHolder second, both inside startOne.
 rg -n 's\.st\.ClaimPID|lookupPortHolder' internal/supervisor/supervisor.go
 ```
+
+---
+
+## 10. Rotating the log silenced every attached follower
+
+**Shape.** A feature that changed file identity (rename-and-recreate) breaking
+another component's assumption written for in-place truncation (an open handle
+keeps working through O_TRUNC — but not through a rename).
+
+**Where it bit us.** `internal/state/state.go` (`TruncateLog`) and
+`internal/supervisor/tail.go` (the follow loop), diagnosed 2026-08-27 from an
+operator report that a web-console pane showed only lifecycle lines after a
+restart. The rotation shipped so a restart stops destroying the crash evidence
+of the run before it; but every follower — `/api/logs` SSE panes, the TUI's
+pane, `logs -f` — held an fd on the OLD inode. The truncation check compared
+that handle's own size against its offset, which never shrank after a rename,
+so followers sat at the EOF of `.log.1` forever while the new run wrote into a
+file they would never open again. Silent, across EVERY start/restart.
+
+**Fix.** The follow loop now compares identity against the PATH each tick
+(`sameFile`, Dev+Ino): a different inode there means reopen from the top of
+the replacement. No duplicates are possible by construction — those bytes were
+never delivered under the old handle. The legacy same-inode shrink check is
+kept as a fallback.
+
+**Detector.**
+```bash
+go test ./internal/supervisor/ -race -run TestTailFollowsTheLogAcrossARotation
+
+# Structural: any future writer to .dev/logs must be checked against this
+# invariant — if it changes the NAME↔INODE mapping of <svc>.log, Tail must see
+# it through path identity, not handle state.
+rg -n 'Rename|O_TRUNC' internal/state/ internal/supervisor/
+
