@@ -7,7 +7,11 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
+	"strings"
+	"sync"
 	"syscall"
+	"time"
 )
 
 // detachAttr returns the spawn attributes that make a supervised child outlive
@@ -46,14 +50,27 @@ func processGroup(pid int) (int, error) {
 // recycled, so yesterday's pid may today belong to something the user cares
 // about, and killing its group takes the whole tree down.
 //
-// Two checks make that unrepresentable:
+// Three checks make that unrepresentable:
 //
-//   - pgid must be greater than 1. Signalling group 0 means "my own group",
+//   - pid must be greater than 1. Signalling group 0 means "my own group",
 //     which is mabo-ctl itself, and group 1 is init.
 //   - pgid must EQUAL pid. Every process we spawn is a group leader by
 //     construction (see [detachAttr]), so a live pid whose group id differs is
-//     definitionally not ours — it is a recycled pid, and we must not touch it.
-func verifyGroup(pid int) (int, error) {
+//     definitionally not ours. The converse does NOT hold — every setsid
+//     process is its own group leader, ours or not — which is why the third
+//     check exists.
+//   - startedAt must match the process's REAL start time, as the kernel
+//     reports it, within [startSkew]. A group-leader pid alone is satisfied by
+//     every tmux pane and container init on the machine; only the spawn time
+//     recorded when mabo-ctl actually forked the child distinguishes ours from
+//     a recycled pid that merely looks like one. A zero startedAt (a legacy
+//     pid file that predates recorded spawn times) skips this check rather
+//     than fail every stop of an already-running stack after an upgrade.
+//
+// When the real start time cannot be read at all, the check refuses: a stop we
+// decline with a clear message is recoverable, a group we signalled in error
+// is not.
+func verifyGroup(pid int, startedAt time.Time) (int, error) {
 	if pid <= 1 {
 		return 0, fmt.Errorf("%w: pid %d", ErrUnsafeSignal, pid)
 	}
@@ -72,16 +89,99 @@ func verifyGroup(pid int) (int, error) {
 				"been recycled by an unrelated process",
 			ErrUnsafeSignal, pid, pgid)
 	}
+	if !startedAt.IsZero() {
+		real, err := processStartTime(pid)
+		if err != nil {
+			return 0, fmt.Errorf(
+				"%w: pid %d is a group leader, but its real start time could not be "+
+					"read to confirm the pid record: %v",
+				ErrUnsafeSignal, pid, err)
+		}
+		if diff := real.Sub(startedAt); diff > startSkew || diff < -startSkew {
+			return 0, fmt.Errorf(
+				"%w: pid %d is a group leader that started at %s, but the pid record "+
+					"says mabo-ctl spawned it at %s — the recorded pid was recycled",
+				ErrUnsafeSignal, pid,
+				real.Format(time.RFC3339), startedAt.Format(time.RFC3339))
+		}
+	}
 	return pgid, nil
 }
 
+// startSkew is how far the pid record's spawn time may sit from the start time
+// the kernel reports and the identity still be believed. Both sides come from
+// the same clock, but the kernel's record is truncated to the second while the
+// record's is not, so a spawn at 21:52:51.9 can be reported as 21:52:51.
+const startSkew = 2 * time.Second
+
+// processStartTime asks the kernel when pid was started, via
+// `ps -o lstart= -p PID` with a pinned C locale. It is the one portable
+// channel for the answer on both macOS and Linux; parsing `ps` is pinned to a
+// single format by forcing LC_ALL=C, because the default lstart layout is
+// locale-dependent on both platforms.
+//
+// The two layouts differ between platforms — macOS prints the day of month
+// before the month, Linux prints the month first — so both are tried.
+func processStartTime(pid int) (time.Time, error) {
+	ps, err := psPath()
+	if err != nil {
+		return time.Time{}, err
+	}
+	cmd := exec.Command(ps, "-o", "lstart=", "-p", strconv.Itoa(pid))
+	// No inherited environment: LC_ALL alone pins the format, so a caller's
+	// locale cannot change what this has to parse.
+	cmd.Env = []string{"LC_ALL=C"}
+	out, err := cmd.Output()
+	if err != nil {
+		return time.Time{}, fmt.Errorf("ps -o lstart= -p %d: %w", pid, err)
+	}
+	fields := strings.Fields(string(out))
+	if len(fields) != 5 {
+		return time.Time{}, fmt.Errorf("ps -o lstart= -p %d printed %q", pid, strings.TrimSpace(string(out)))
+	}
+	var layouts [2]struct {
+		layout string
+		value  string
+	}
+	if _, convErr := strconv.Atoi(fields[1]); convErr == nil {
+		// macOS: Thu 27 Aug 20:42:32 2026
+		layouts[0].layout, layouts[0].value = "2 Jan 15:04:05 2006",
+			fields[1]+" "+fields[2]+" "+fields[3]+" "+fields[4]
+	} else {
+		// Linux: Thu Aug 27 20:42:32 2026
+		layouts[0].layout, layouts[0].value = "Jan 2 15:04:05 2006",
+			fields[1]+" "+fields[2]+" "+fields[3]+" "+fields[4]
+	}
+	for _, l := range layouts {
+		if l.layout == "" {
+			continue
+		}
+		// ParseInLocation, not Parse: ps prints LOCAL time and carries no
+		// zone, and Parse's UTC assumption would offset every comparison by
+		// the machine's UTC difference.
+		if t, perr := time.ParseInLocation(l.layout, l.value, time.Local); perr == nil {
+			return t, nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("ps -o lstart= -p %d printed %q, which matches neither known lstart layout",
+		pid, strings.Join(fields, " "))
+}
+
+// psPath resolves the ps binary once per process. It is resolved explicitly
+// rather than left to exec.Command's implicit lookup so a missing ps fails
+// this check loudly instead of surfacing as an unrelated exec error.
+var psPath = sync.OnceValues(func() (string, error) {
+	return exec.LookPath("ps")
+})
+
 // CheckIdentity reports whether a live pid looks like one mabo-ctl spawned:
-// its own process-group leader, not init, not privileged. It is the same test
-// signalling runs before every kill, exported for read-only diagnostics —
-// `mabo-ctl doctor` asks "is this pid file still honest?" without ever
-// signalling anything.
-func CheckIdentity(pid int) error {
-	_, err := verifyGroup(pid)
+// its own process-group leader, started when the pid record says, not init,
+// not privileged. It is the same test signalling runs before every kill,
+// exported for read-only diagnostics — `mabo-ctl doctor` asks "is this pid
+// file still honest?" without ever signalling anything. startedAt is the pid
+// record's spawn time; zero means "not recorded" and skips that comparison.
+func CheckIdentity(pid int, startedAt time.Time) error {
+	_, err := verifyGroup(pid, startedAt)
 	return err
 }
 

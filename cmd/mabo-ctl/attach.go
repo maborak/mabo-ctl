@@ -88,11 +88,19 @@ func stdinFile(env *Env) *os.File {
 // completed: it exists so `mabo-ctl internal-tty-broker …` is dispatchable —
 // the broker process is this same binary re-invoking itself — and invisible
 // everywhere a user looks.
+//
+// DisableFlagParsing is load-bearing. The broker's argv IS its protocol —
+// --log, --sock, --svc and the child argv after -- — parsed by the broker's
+// own parseBrokerArgs, not by cobra. ArbitraryArgs bounds the POSITIONAL count
+// and nothing else; without this field cobra rejected the broker's own flags
+// before RunE ran, so `mabo-ctl start <tty service>` died at handshake on
+// every platform and the feature never worked.
 func (a *app) ttyBrokerCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:    supervisor.TTYBrokerCommand,
-		Hidden: true,
-		Args:   cobra.ArbitraryArgs,
+		Use:                supervisor.TTYBrokerCommand,
+		Hidden:             true,
+		Args:               cobra.ArbitraryArgs,
+		DisableFlagParsing: true,
 		RunE: func(_ *cobra.Command, args []string) error {
 			os.Exit(supervisor.RunTTYBroker(args, os.Stdout))
 			return nil

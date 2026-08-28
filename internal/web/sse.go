@@ -33,7 +33,15 @@ type broker struct {
 	// is diagnostic only, but a console that has silently missed transitions
 	// should be able to say so rather than look merely quiet.
 	dropped int64
+	// recent is the bounded in-memory phase history: the last
+	// historyCapacity events, oldest first. It is deliberately not
+	// persisted — this is a dev console's "what just happened", not an audit
+	// log, and .dev/ writes belong to internal/state.
+	recent []supervisor.Event
 }
+
+// historyCapacity bounds the phase history ring served by /api/history.
+const historyCapacity = 50
 
 // newBroker returns an empty broker.
 func newBroker() *broker {
@@ -84,6 +92,10 @@ func (b *broker) publish(e supervisor.Event) {
 	if b.closed {
 		return
 	}
+	b.recent = append(b.recent, e)
+	if len(b.recent) > historyCapacity {
+		b.recent = b.recent[len(b.recent)-historyCapacity:]
+	}
 	for ch := range b.subs {
 		select {
 		case ch <- e:
@@ -91,6 +103,17 @@ func (b *broker) publish(e supervisor.Event) {
 			b.dropped++
 		}
 	}
+}
+
+// history returns a copy of the recorded events, oldest first. Callers may
+// render it freely; the copy exists so a reader cannot race a concurrent
+// publish into growing the slice under it.
+func (b *broker) history() []supervisor.Event {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	out := make([]supervisor.Event, len(b.recent))
+	copy(out, b.recent)
+	return out
 }
 
 // close releases every subscriber. It is idempotent.

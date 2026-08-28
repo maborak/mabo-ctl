@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/maborak/mabo-ctl/internal/service"
@@ -58,6 +59,25 @@ type Holder struct {
 	Command string
 }
 
+// lsofPath resolves the lsof binary once per process. It is resolved
+// explicitly, with the error kept, because the port guard's failure mode is
+// the quiet kind: exec.Command's implicit lookup would surface a missing lsof
+// as an ordinary exec error, which PortHolder reads as "port free" — the guard
+// would be off on every service, permanently and invisibly. Callers that want
+// to say so ask [LsofLookupErr].
+var lsofPath = sync.OnceValues(func() (string, error) {
+	return exec.LookPath("lsof")
+})
+
+// LsofLookupErr reports why the port-holder guard cannot run on this machine,
+// or nil when lsof is present. A guard that fails open must at least say so:
+// preflight and the start path both consult this rather than leaving a host
+// without lsof silently unprotected.
+func LsofLookupErr() error {
+	_, err := lsofPath()
+	return err
+}
+
 // PortHolder reports which process is LISTENING on port.
 //
 // It shells out to lsof because that is the only portable way to answer the
@@ -70,7 +90,10 @@ type Holder struct {
 // A missing lsof, a timeout, or an unparseable line all yield a zero Holder and
 // a nil error. That is deliberate: "I cannot tell who holds this port" must
 // never become a fatal error that blocks an otherwise valid start. The caller
-// treats a zero PID as "free, or at least not provably taken".
+// treats a zero PID as "free, or at least not provably taken". Because that
+// generosity can be quiet, [LsofLookupErr] exists so the start path and
+// preflight can announce a missing lsof instead of leaving the guard off
+// unnoticed.
 //
 // PortHolder deliberately takes NO context and derives its deadline from
 // context.Background(). It looks like an omission; it is the fix for a real
@@ -88,7 +111,11 @@ func PortHolder(port int) Holder {
 	ctx, cancel := context.WithTimeout(context.Background(), lsofTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "lsof", "-nP",
+	lsof, lerr := lsofPath()
+	if lerr != nil {
+		return Holder{}
+	}
+	cmd := exec.CommandContext(ctx, lsof, "-nP",
 		"-iTCP:"+strconv.Itoa(port), "-sTCP:LISTEN")
 	out, err := cmd.Output()
 	if err != nil {

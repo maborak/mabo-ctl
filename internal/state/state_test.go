@@ -345,6 +345,50 @@ func TestTruncateLogTightensExistingPermissions(t *testing.T) {
 	}
 }
 
+func TestOpenLogAppendAddsToTheRunLogWithoutRotating(t *testing.T) {
+	t.Parallel()
+	d := newDir(t)
+	seed := d.LogPath("backend")
+	if err := os.WriteFile(seed, []byte("svc line\n"), 0o644); err != nil {
+		t.Fatalf("seed log: %v", err)
+	}
+
+	f, err := d.OpenLogAppend("backend")
+	if err != nil {
+		t.Fatalf("OpenLogAppend: %v", err)
+	}
+	if _, err := f.WriteString("hook line\n"); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	body, err := os.ReadFile(seed)
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if string(body) != "svc line\nhook line\n" {
+		t.Errorf("log = %q, want the service line kept and the hook line appended", body)
+	}
+	if got := mode(t, seed); got != 0o600 {
+		t.Errorf("log mode = %04o, want 0600 after append", got)
+	}
+	// The rotation sibling must be untouched: an append is not a start.
+	if _, err := os.Stat(seed + ".1"); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("OpenLogAppend rotated the log; want the previous run left alone")
+	}
+}
+
+func TestOpenLogAppendRejectsAnInvalidServiceName(t *testing.T) {
+	t.Parallel()
+	d := newDir(t)
+	if f, err := d.OpenLogAppend("../escape"); err == nil {
+		_ = f.Close()
+		t.Errorf("OpenLogAppend accepted an invalid service name")
+	}
+}
+
 func TestReset(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
@@ -477,10 +521,10 @@ func TestClaimPIDExclusiveCreate(t *testing.T) {
 	d := newDir(t)
 	now := time.Now()
 
-	if err := d.ClaimPID("svc", os.Getpid(), now); err != nil {
+	if _, err := d.ClaimPID("svc", os.Getpid(), now); err != nil {
 		t.Fatalf("first claim: %v", err)
 	}
-	err := d.ClaimPID("svc", os.Getpid(), now.Add(time.Second))
+	_, err := d.ClaimPID("svc", os.Getpid(), now.Add(time.Second))
 	if !errors.Is(err, ErrClaimed) {
 		t.Fatalf("second claim = %v, want ErrClaimed", err)
 	}
@@ -500,10 +544,10 @@ func TestClaimPIDStalenessRules(t *testing.T) {
 	d := newDir(t)
 
 	dead := deadPID(t)
-	if err := d.ClaimPID("svc", dead, time.Now()); err != nil {
+	if _, err := d.ClaimPID("svc", dead, time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	if err := d.ClaimPID("svc", os.Getpid(), time.Now()); err != nil {
+	if _, err := d.ClaimPID("svc", os.Getpid(), time.Now()); err != nil {
 		t.Errorf("a dead owner's claim blocked a new one: %v", err)
 	}
 
@@ -511,14 +555,14 @@ func TestClaimPIDStalenessRules(t *testing.T) {
 		fmt.Sprintf(`{"pid":%d,"at":"2006-01-02T15:04:05Z"}`, os.Getpid())), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := d.ClaimPID("ancient", os.Getpid(), time.Now()); err != nil {
+	if _, err := d.ClaimPID("ancient", os.Getpid(), time.Now()); err != nil {
 		t.Errorf("an ancient claim blocked a new one: %v", err)
 	}
 
 	if err := os.WriteFile(d.PIDClaimPath("garbage"), []byte("}{"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := d.ClaimPID("garbage", os.Getpid(), time.Now()); err != nil {
+	if _, err := d.ClaimPID("garbage", os.Getpid(), time.Now()); err != nil {
 		t.Errorf("an unparseable claim must be stale, not fatal: %v", err)
 	}
 }

@@ -402,6 +402,84 @@ checks:
 `,
 			want: []string{"must be host:port"},
 		},
+
+		// ---- readiness-gated dependencies ----
+		{
+			name: "gate names an unknown service",
+			yaml: `
+services:
+  - name: backend
+    cmd: [echo, hi]
+    depends_on: [worker]
+    depends_ready_on: [nosuch]
+  - name: worker
+    cmd: [echo, hi]
+`,
+			want: []string{`depends_ready_on names unknown service "nosuch"`},
+		},
+		{
+			name: "gate without an ordering edge",
+			yaml: `
+services:
+  - name: backend
+    cmd: [echo, hi]
+    depends_ready_on: [worker]
+  - name: worker
+    cmd: [echo, hi]
+`,
+			want: []string{"is not in depends_on"},
+		},
+		{
+			name: "gate on a service with no probe",
+			yaml: `
+services:
+  - name: backend
+    cmd: [echo, hi]
+    depends_on: [worker]
+    depends_ready_on: [worker]
+  - name: worker
+    cmd: [echo, hi]
+`,
+			want: []string{`gates on "worker", which declares no health probe`},
+		},
+		{
+			name: "gate duplicated",
+			yaml: `
+services:
+  - name: backend
+    cmd: [echo, hi]
+    depends_on: [worker]
+    depends_ready_on: [worker, worker]
+  - name: worker
+    cmd: [echo, hi]
+    health: http://127.0.0.1:1/
+`,
+			want: []string{`depends_ready_on lists "worker" more than once`},
+		},
+
+		// ---- lifecycle hooks ----
+		{
+			name: "hook with an empty program",
+			yaml: `
+services:
+  - name: backend
+    cmd: [echo, hi]
+    hooks:
+      pre_start: ["", hi]
+`,
+			want: []string{"hooks.pre_start[0] is empty"},
+		},
+		{
+			name: "hook with an empty argument",
+			yaml: `
+services:
+  - name: backend
+    cmd: [echo, hi]
+    hooks:
+      post_stop: [true, ""]
+`,
+			want: []string{"hooks.post_stop[1] is empty"},
+		},
 		{
 			name: "check with an out of range tcp port",
 			yaml: okService + `

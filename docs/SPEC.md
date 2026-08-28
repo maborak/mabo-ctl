@@ -51,11 +51,11 @@ registry compiled in rather than configured.
 mabo-ctl [start] [services...] [-f] [--ports=A,B,C,D] [--with-browser] [--with-worker] [--all]
 mabo-ctl stop    [services...]
 mabo-ctl restart [services...] [-f]
-mabo-ctl status  [--json]
-mabo-ctl health                       parallel health checks, all services
-mabo-ctl tailf   [svc|all] [--tail=N] follow (or last N) logs
-mabo-ctl logs    [svc|all] [--tail=N] alias for tailf
-mabo-ctl open                         open running URLs in the default browser
+ mabo-ctl status  [--json]
+ mabo-ctl health   [--wait] [--timeout=D]  probes; --wait blocks for ready
+ mabo-ctl tailf    [svc|all] [--tail=N] [--grep=S] [--since=D] logs
+ mabo-ctl logs     [svc|all] [--tail=N] [--grep=S] [--since=D] alias for tailf
+ mabo-ctl open                         open running URLs in the default browser
 mabo-ctl psql                         open psql/sqlite3 against the dev DB
 mabo-ctl reset                        stop, kill orphans, clear state dir
 mabo-ctl preflight                    check Postgres + Redis reachability
@@ -93,10 +93,24 @@ services:
     cmd: [uvicorn, "api_main:app", --port, "{{.Port}}", --reload]
   - name: worker
     dir: backend
-    runtime: conda
-    cmd: [python, cli.py, monitor, run]
-    depends_on: [backend]     # no port, no health check
+     runtime: conda
+     cmd: [python, cli.py, monitor, run]
+     depends_on: [backend]     # no port, no health check
 ```
+
+Beyond the fields shown here, a service may declare `hooks:` (argvs:
+`pre_start`, `post_start`, `pre_stop`, `post_stop` — pre_start failure
+refuses the start, the rest are best-effort and can never block their
+lifecycle), `depends_ready_on:` (a subset of `depends_on` that must reach
+phase ready before this service starts; every name must also be in
+`depends_on` and the gated service must declare a health probe), and
+`profiles:` (with `--profile a,b` or `MABO_PROFILE` in force, a service with
+a non-empty list runs only on overlap; an absent list always runs). The
+contract for all three is specified in `docs/EXTENSIONS.md`.
+
+Also: `mabo-ctl serve` additionally exposes `GET /api/history` — the last 50
+lifecycle events, read-only, same event shape as the mutation responses.
+
 
 Current registry, for reference (the 7100 port convention):
 
@@ -156,7 +170,8 @@ to service name, and the error should name **both** services and the port.
 **Start:** skip if already running (pid alive) → take the cross-process START
 CLAIM (an O_EXCL create of `.dev/pids/<svc>.pid.claim`; a fresh claim from
 another live mabo-ctl refuses the start, stale wreckage is cleared) → refuse if
-the port is already in use by something else → truncate the log → spawn detached
+the port is already in use by something else → rotate the log (one prior
+generation survives as <log>.1) → spawn detached
 with stdout+stderr to the log and stdin from `/dev/null` → write the pid
 (superseding the claim) → poll health.
 

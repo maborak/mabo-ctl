@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os/exec"
 	"syscall"
+	"time"
 )
 
 // errPlatform explains why this build cannot supervise anything.
@@ -21,7 +22,7 @@ var errPlatform = fmt.Errorf("mabo-ctl supervises processes on Unix only (macOS 
 
 func processGroup(int) (int, error) { return 0, errPlatform }
 
-func verifyGroup(int) (int, error) { return 0, errPlatform }
+func verifyGroup(int, time.Time) (int, error) { return 0, errPlatform }
 
 func signalGroup(int, syscall.Signal) error { return errPlatform }
 

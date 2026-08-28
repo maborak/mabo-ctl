@@ -162,6 +162,17 @@ func (v *validator) checkServices() {
 			v.addf("%s: cmd[0] is empty; the first element must be the program to run", id)
 		}
 
+		v.checkHooks(id, s)
+
+		// A profiles: entry is a name, not free text: an empty or
+		// whitespace-only name could never be activated, so the service it is
+		// on would silently never run.
+		for i, p := range s.Profiles {
+			if strings.TrimSpace(p) == "" {
+				v.addf("%s: profiles[%d] is empty; a profile name must be non-empty", id, i)
+			}
+		}
+
 		// Rule 6: port range.
 		if s.Port < 0 || s.Port > 65535 {
 			v.addf("%s: port %d is out of range; use 0 for a service with no port, or 1..65535", id, s.Port)
@@ -181,6 +192,34 @@ func (v *validator) checkServices() {
 		v.checkEnvFile(id, s)
 		if s.ReadyTimeout < 0 {
 			v.addf("%s: ready_timeout %s is negative; use a positive duration, or leave the key out to inherit the global", id, s.ReadyTimeout)
+		}
+	}
+}
+
+// checkHooks applies rule 4 to lifecycle hooks: a hook is an argv, so an empty
+// argv or an empty program element is the same unrepresentable nothing an
+// empty cmd is. A hook key that is absent is fine; present-but-empty is the
+// silent no-op the rule exists to prevent.
+func (v *validator) checkHooks(id string, s Spec) {
+	for _, hook := range []struct {
+		name string
+		argv []string
+	}{
+		{"hooks.pre_start", s.Hooks.PreStart},
+		{"hooks.post_start", s.Hooks.PostStart},
+		{"hooks.pre_stop", s.Hooks.PreStop},
+		{"hooks.post_stop", s.Hooks.PostStop},
+	} {
+		if len(hook.argv) == 0 {
+			continue // not declared
+		}
+		if strings.TrimSpace(hook.argv[0]) == "" {
+			v.addf("%s: %s[0] is empty; the first element must be the program to run", id, hook.name)
+		}
+		for i, tok := range hook.argv {
+			if strings.TrimSpace(tok) == "" {
+				v.addf("%s: %s[%d] is empty; hook arguments must be non-empty strings", id, hook.name, i)
+			}
 		}
 	}
 }
@@ -417,6 +456,42 @@ func (v *validator) checkDependencies() {
 				v.addf("%s: depends_on lists %q more than once", id, dep)
 			}
 			seen[dep] = true
+		}
+		rdep := make(map[string]bool, len(s.DependsReadyOn))
+		for _, dep := range s.DependsReadyOn {
+			if dep == s.Name {
+				continue // the self-cycle is already reported from depends_on
+			}
+			if !v.declared[dep] {
+				v.addf("%s: depends_ready_on names unknown service %q; declared services are: %s",
+					id, dep, v.declaredList())
+				continue
+			}
+			if rdep[dep] {
+				v.addf("%s: depends_ready_on lists %q more than once", id, dep)
+			}
+			rdep[dep] = true
+		}
+		ordered := make(map[string]bool, len(s.DependsOn))
+		for _, dep := range s.DependsOn {
+			ordered[dep] = true
+		}
+		for dep := range rdep {
+			if !ordered[dep] {
+				v.addf("%s: depends_ready_on names %q, which is not in depends_on; "+
+					"a readiness gate orders nothing by itself — add it to depends_on so the start is ordered",
+					id, dep)
+				continue
+			}
+			// A gate on a service that can never be ready would block this
+			// start forever: phase ready comes from the readiness probe, and a
+			// probe-less service goes running, never ready.
+			gated, _ := v.cfg.Service(dep)
+			if gated.Health.Zero() {
+				v.addf("%s: depends_ready_on gates on %q, which declares no health probe; "+
+					"a service without one never reaches ready — declare health: for %q or drop the gate",
+					id, dep, dep)
+			}
 		}
 	}
 	for _, cycle := range v.findCycles() {

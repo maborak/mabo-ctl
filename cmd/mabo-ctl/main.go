@@ -301,6 +301,29 @@ func peekConfig(args []string) string {
 	return ""
 }
 
+// peekProfile reports whether --profile was given before the config loads,
+// peekConfig-style, so the filter applies to every command identically. The
+// raw flag string is split later; here only presence matters, so a bare
+// --profile with its value anywhere after it still counts.
+func peekProfile(args []string) []string {
+	for i := 0; i < len(args); i++ {
+		switch arg := args[i]; arg {
+		case "--":
+			return nil
+		case "--profile":
+			if i+1 < len(args) {
+				return parseProfiles(args[i+1])
+			}
+			return nil
+		default:
+			if v, ok := strings.CutPrefix(arg, "--profile="); ok {
+				return parseProfiles(v)
+			}
+		}
+	}
+	return nil
+}
+
 // joinAnd renders a list as "a", "a and b", or "a, b and c".
 func joinAnd(items []string) string {
 	switch len(items) {

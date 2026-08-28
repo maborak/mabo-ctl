@@ -109,6 +109,14 @@ type Instance struct {
 	Color string
 	// DependsOn lists the services that must start first.
 	DependsOn []string
+	// DependsReadyOn is the readiness-gated subset of DependsOn (see
+	// config.Spec): the supervisor refuses to start this service while any of
+	// these is up but not ready.
+	DependsReadyOn []string
+	// Hooks are the lifecycle hook argvs with every template expanded and
+	// argv[0] resolved to an absolute path exactly as Cmd[0] is; see
+	// config.Hooks for the semantics.
+	Hooks config.Hooks
 	// Runtime is the declared runtime string ("", "system", "conda:<env>" or
 	// "node:<version>"), kept for display.
 	Runtime string
@@ -335,27 +343,72 @@ func build(cfg *config.Config, s config.Spec, port int, exp *expander, base []st
 		return Instance{}, rtErr
 	}
 
+	// Hooks get the SAME treatment cmd does, and for the same reason: the
+	// instance must be final. Each argv element is template-expanded — a hook
+	// that says --port={{.Port}} means the resolved port, as it does in cmd —
+	// and argv[0] is resolved through the declared runtime, never left for
+	// exec's implicit LookPath against whatever PATH the INVOKING mabo-ctl
+	// happened to inherit. A hook that cannot resolve here is deferred onto
+	// CmdErr alongside an unresolvable cmd[0]: it fails that service's start
+	// with the resolver's message instead of running a guess.
+	hooks := s.Hooks.Clone()
+	var hookErrs []error
+	for _, hook := range []struct {
+		label string
+		argv  *[]string
+	}{
+		{"pre_start", &hooks.PreStart},
+		{"post_start", &hooks.PostStart},
+		{"pre_stop", &hooks.PreStop},
+		{"post_stop", &hooks.PostStop},
+	} {
+		for i, arg := range *hook.argv {
+			expanded, err := exp.expand(s.Name, fmt.Sprintf("hooks.%s[%d]", hook.label, i), arg)
+			if err != nil {
+				return Instance{}, err
+			}
+			(*hook.argv)[i] = expanded
+		}
+		if len(*hook.argv) == 0 {
+			continue
+		}
+		hookRt, hookRtErr := resolveRuntime(s.Name, s.Runtime, (*hook.argv)[0], dir, searchPath)
+		switch {
+		case hookRtErr == nil:
+			(*hook.argv)[0] = hookRt.Path
+		case errors.Is(hookRtErr, errRuntimeUnavailable):
+			hookErrs = append(hookErrs, hookRtErr)
+		default:
+			return Instance{}, hookRtErr
+		}
+	}
+	if cmdErr != nil {
+		hookErrs = append(hookErrs, cmdErr)
+	}
+
 	open, err := exp.expand(s.Name, "open", s.Open)
 	if err != nil {
 		return Instance{}, err
 	}
 
 	return Instance{
-		Name:         s.Name,
-		Dir:          dir,
-		Port:         port,
-		Health:       display,
-		Probe:        probe,
-		Open:         open,
-		Cmd:          cmd,
-		Env:          buildEnv(base, exp.names, exp.ports, specEnv, rt, port),
-		TTY:          s.TTY,
-		Color:        s.Color,
-		DependsOn:    append([]string(nil), s.DependsOn...),
-		Runtime:      s.Runtime,
-		ReadyTimeout: s.ReadyTimeout,
-		NoAutostart:  !s.Autostarts(),
-		CmdErr:       cmdErr,
+		Name:           s.Name,
+		Dir:            dir,
+		Port:           port,
+		Health:         display,
+		Probe:          probe,
+		Open:           open,
+		Cmd:            cmd,
+		Env:            buildEnv(base, exp.names, exp.ports, specEnv, rt, port),
+		TTY:            s.TTY,
+		Color:          s.Color,
+		DependsOn:      append([]string(nil), s.DependsOn...),
+		DependsReadyOn: append([]string(nil), s.DependsReadyOn...),
+		Hooks:          hooks,
+		Runtime:        s.Runtime,
+		ReadyTimeout:   s.ReadyTimeout,
+		NoAutostart:    !s.Autostarts(),
+		CmdErr:         errors.Join(hookErrs...),
 	}, nil
 }
 

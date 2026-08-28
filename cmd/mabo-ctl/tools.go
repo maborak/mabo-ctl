@@ -163,6 +163,29 @@ func diagnoseMachineReadiness(in service.Instance) diagFinding {
 		}
 	}
 
+	// The port guard is fail-open by design; a machine without lsof has it off
+	// for every ported service. Off must not mean silent: preflight is where
+	// the operator is told, before a start proceeds past an occupied port.
+	if in.Port > 0 {
+		if err := supervisor.LsofLookupErr(); err != nil {
+			f.status = worst(f.status, ui.DoctorWarn)
+			f.detail = joinDetail(f.detail, fmt.Sprintf(
+				"port-conflict guard is OFF: lsof not found (%v) — install lsof so a start can refuse a held port", err))
+		}
+	}
+
+	// A health: URL that does not name this machine is an egress destination
+	// every start will poll. The config author already has code execution, so
+	// this is not a security boundary — it is the visibility the channel
+	// contract requires: a config that makes the machine call out must say so.
+	if in.Probe.Kind == service.ProbeHTTP {
+		if host, err := url.Parse(in.Probe.URL); err == nil && !isLoopbackHost(host.Hostname()) {
+			f.status = worst(f.status, ui.DoctorWarn)
+			f.detail = joinDetail(f.detail, fmt.Sprintf(
+				"health probes %s — a non-loopback destination this machine will poll on every start", in.Probe.URL))
+		}
+	}
+
 	if strings.HasPrefix(in.Runtime, "node:") {
 		modules := filepath.Join(in.Dir, "node_modules")
 		if _, err := os.Stat(modules); errors.Is(err, fs.ErrNotExist) {
@@ -209,6 +232,20 @@ func afterColon(s string) string {
 		return strings.TrimSpace(rest)
 	}
 	return s
+}
+
+// isLoopbackHost reports whether host names this machine: a loopback IP
+// literal, or the literal name "localhost". Any DNS name other than
+// "localhost" is treated as off-box, because where it resolves is not
+// something preflight can promise.
+func isLoopbackHost(host string) bool {
+	if host == "" || host == "localhost" {
+		return true
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
 }
 
 // nvmrcMajor reads major-version prefix of an .nvmrc ("v24.4.0" → "24"),

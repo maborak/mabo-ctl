@@ -20,6 +20,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -61,6 +62,9 @@ type Config struct {
 	Shells       []Shell
 	StopGrace    time.Duration // default 10s
 	ReadyTimeout time.Duration // default 30s
+	// ActiveProfiles is the profile set in force, when one was requested and
+	// passed validation; nil means "no profile selection", not "no profiles".
+	ActiveProfiles []string
 }
 
 // Spec is a service exactly as declared. Cmd/Env and the parts of Health hold
@@ -77,6 +81,19 @@ type Spec struct {
 	Runtime   string            `yaml:"runtime"`  // "", "system", "conda:<env>", "node:<ver>"
 	DependsOn []string          `yaml:"depends_on"`
 	Color     string            `yaml:"color"`
+	// DependsReadyOn is the readiness-gated subset of DependsOn: every name
+	// must also appear in depends_on, and must have reached phase ready before
+	// this service is allowed to start. Ordering still comes from depends_on
+	// alone, so the dependency graph the levels are computed from is unchanged.
+	DependsReadyOn []string `yaml:"depends_ready_on"`
+	// Hooks run at fixed points of this service's lifecycle, through the same
+	// spawn rules as the service itself: same dir, same resolved env.
+	Hooks Hooks `yaml:"hooks"`
+	// Profiles is the set of profile names this service belongs to. An absent
+	// or empty list means the service is always active. When an active
+	// profile set is in force, a service with a non-empty list is part of the
+	// run only if at least one of its names is active.
+	Profiles []string `yaml:"profiles"`
 	// TTY opts this service into a terminal relay: the child runs on a pty
 	// owned by a detached broker mabo-ctl spawns beside it, and
 	// `mabo-ctl attach <name>` connects a terminal to it. Default false —
@@ -110,6 +127,35 @@ type Spec struct {
 // Autostarts reports whether a bare `mabo-ctl start` should include this service.
 // An unset autostart field means yes, which is what every config written before
 // the field existed means.
+// Hooks are the four lifecycle hook command lines for one service. Each is an
+// argv, run — not a shell string, for the same no-shell-quote-reinterpretation
+// reason cmd is one. A pre_start failure refuses the start; post_start,
+// pre_stop and post_stop failures are recorded and never block the lifecycle
+// they hang off.
+type Hooks struct {
+	// PreStart runs after the start claim is taken and the log truncated, but
+	// before the service command spawns. Failing it fails the start.
+	PreStart []string `yaml:"pre_start"`
+	// PostStart runs once the service is settled (ready, or running with no
+	// probe). Failing it annotates the start but never stops the service.
+	PostStart []string `yaml:"post_start"`
+	// PreStop runs before any signal is sent. Failing it delays nothing: the
+	// stop proceeds, because a stop must never be hostage to a hook.
+	PreStop []string `yaml:"pre_stop"`
+	// PostStop runs after the process group is confirmed dead.
+	PostStop []string `yaml:"post_stop"`
+}
+
+// Clone returns a copy of h that shares no slices with it.
+func (h Hooks) Clone() Hooks {
+	return Hooks{
+		PreStart:  append([]string(nil), h.PreStart...),
+		PostStart: append([]string(nil), h.PostStart...),
+		PreStop:   append([]string(nil), h.PreStop...),
+		PostStop:  append([]string(nil), h.PostStop...),
+	}
+}
+
 func (s Spec) Autostarts() bool { return s.Autostart == nil || *s.Autostart }
 
 // EnvFilePath resolves the service's env_file against the project root, the
@@ -379,6 +425,66 @@ func (c *Config) Service(n string) (Spec, bool) {
 	return Spec{}, false
 }
 
+// ApplyProfiles narrows the config to the services active under the given
+// profile set, dropping the rest in place. A service with an absent or empty
+// profiles: list is always active; with a non-empty list it needs at least one
+// overlap with active. Unknown active profiles are an error rather than a
+// silent no-run: a typo in MABO_PROFILE must not read as "everything filtered
+// out happened to be fine". A nil or empty active set changes nothing.
+func (c *Config) ApplyProfiles(active []string) error {
+	if len(active) == 0 {
+		return nil
+	}
+	want := make(map[string]bool, len(active))
+	for _, p := range active {
+		want[p] = true
+	}
+	kept := c.Services[:0:0]
+	for _, s := range c.Services {
+		if len(s.Profiles) == 0 {
+			kept = append(kept, s)
+			continue
+		}
+		for _, p := range s.Profiles {
+			if want[p] {
+				kept = append(kept, s)
+				break
+			}
+		}
+	}
+	if len(kept) == 0 {
+		return fmt.Errorf("profiles %s exclude every declared service; "+
+			"declared profiles are: %s",
+			strings.Join(active, ", "), c.declaredProfiles())
+	}
+	c.Services = kept
+	c.ActiveProfiles = append([]string(nil), active...)
+	return nil
+}
+
+// declaredProfiles names every profile any declared service belongs to, for
+// the exclusion error message.
+func (c *Config) declaredProfiles() string {
+	if len(c.Services) == 0 {
+		return "(none)"
+	}
+	seen := map[string]bool{}
+	var names []string
+	for _, s := range c.Services {
+		for _, p := range s.Profiles {
+			if !seen[p] {
+				seen[p] = true
+				names = append(names, p)
+			}
+		}
+	}
+	if len(names) == 0 {
+		return "(none — no service declares profiles:)"
+	}
+	sort.Strings(names)
+	return strings.Join(names, ", ")
+}
+
 // Names returns every declared service name in declaration order.
 func (c *Config) Names() []string {
 	if c == nil {
@@ -426,6 +532,13 @@ func (s Spec) clone() Spec {
 	if s.DependsOn != nil {
 		out.DependsOn = append([]string(nil), s.DependsOn...)
 	}
+	if s.DependsReadyOn != nil {
+		out.DependsReadyOn = append([]string(nil), s.DependsReadyOn...)
+	}
+	out.Hooks = s.Hooks.Clone()
+	if s.Profiles != nil {
+		out.Profiles = append([]string(nil), s.Profiles...)
+	}
 	if s.Health.Argv != nil {
 		out.Health.Argv = append([]string(nil), s.Health.Argv...)
 	}
@@ -455,37 +568,43 @@ type fileDoc struct {
 
 // specDoc mirrors Spec with a lenient env value type.
 type specDoc struct {
-	Name      string                 `yaml:"name"`
-	Dir       string                 `yaml:"dir"`
-	Port      int                    `yaml:"port"`
-	Health    Health                 `yaml:"health"`
-	Cmd       []string               `yaml:"cmd"`
-	Env       map[string]scalarValue `yaml:"env"`
-	EnvFile   string                 `yaml:"env_file"`
-	Runtime   string                 `yaml:"runtime"`
-	DependsOn []string               `yaml:"depends_on"`
-	Color     string                 `yaml:"color"`
-	TTY       bool                   `yaml:"tty"`
-	Open      string                 `yaml:"open"`
-	Autostart *bool                  `yaml:"autostart"`
+	Name           string                 `yaml:"name"`
+	Dir            string                 `yaml:"dir"`
+	Port           int                    `yaml:"port"`
+	Health         Health                 `yaml:"health"`
+	Cmd            []string               `yaml:"cmd"`
+	Env            map[string]scalarValue `yaml:"env"`
+	EnvFile        string                 `yaml:"env_file"`
+	Runtime        string                 `yaml:"runtime"`
+	DependsOn      []string               `yaml:"depends_on"`
+	Color          string                 `yaml:"color"`
+	DependsReadyOn []string               `yaml:"depends_ready_on"`
+	Hooks          Hooks                  `yaml:"hooks"`
+	Profiles       []string               `yaml:"profiles"`
+	TTY            bool                   `yaml:"tty"`
+	Open           string                 `yaml:"open"`
+	Autostart      *bool                  `yaml:"autostart"`
 	// ReadyTimeout is a pointer so an absent key means "inherit the global".
 	ReadyTimeout *durationValue `yaml:"ready_timeout"`
 }
 
 func (d specDoc) spec() Spec {
 	s := Spec{
-		Name:      d.Name,
-		Dir:       d.Dir,
-		Port:      d.Port,
-		Health:    d.Health,
-		Cmd:       d.Cmd,
-		EnvFile:   d.EnvFile,
-		Runtime:   d.Runtime,
-		DependsOn: d.DependsOn,
-		Color:     d.Color,
-		TTY:       d.TTY,
-		Open:      d.Open,
-		Autostart: d.Autostart,
+		Name:           d.Name,
+		Dir:            d.Dir,
+		Port:           d.Port,
+		Health:         d.Health,
+		Cmd:            d.Cmd,
+		EnvFile:        d.EnvFile,
+		Runtime:        d.Runtime,
+		DependsOn:      d.DependsOn,
+		Color:          d.Color,
+		DependsReadyOn: d.DependsReadyOn,
+		Hooks:          d.Hooks,
+		Profiles:       d.Profiles,
+		TTY:            d.TTY,
+		Open:           d.Open,
+		Autostart:      d.Autostart,
 	}
 	if d.ReadyTimeout != nil {
 		s.ReadyTimeout = time.Duration(*d.ReadyTimeout)

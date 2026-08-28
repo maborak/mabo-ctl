@@ -608,6 +608,24 @@ func (s *Server) handleGetOrigins(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleHistory serves the recorded phase history — the same event shape the
+// mutation responses and /api/events use, oldest first, capped at the
+// broker's ring. Read-only: it never touches supervisor state.
+func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
+	events := s.events.history()
+	out := make([]eventJSON, len(events))
+	for i, e := range events {
+		out[i] = toEventJSON(e)
+	}
+	writeJSON(w, http.StatusOK, historyResponse{Events: out})
+}
+
+// historyResponse is the body of GET /api/history.
+type historyResponse struct {
+	// Events is the ring contents, oldest first.
+	Events []eventJSON `json:"events"`
+}
+
 // handleSetOrigins replaces the trusted list.
 //
 // The whole list is sent rather than an add/remove verb, so the page never has

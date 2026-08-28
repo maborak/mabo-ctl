@@ -140,7 +140,7 @@ func (a *app) diagnoseService(inst service.Instance) diagFinding {
 		f.detail = joinDetail(f.detail,
 			fmt.Sprintf("stale pid file: pid %d is gone (a reboot or a kill outside mabo-ctl); clear it with `mabo-ctl reset`", rec.PID))
 	case rec.PID > 0:
-		if err := supervisor.CheckIdentity(rec.PID); err != nil {
+		if err := supervisor.CheckIdentity(rec.PID, rec.StartedAt); err != nil {
 			f.status = worst(f.status, ui.DoctorFail)
 			f.detail = joinDetail(f.detail, err.Error())
 		}

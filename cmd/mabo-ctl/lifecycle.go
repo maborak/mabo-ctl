@@ -132,6 +132,8 @@ func (a *app) rootCmd() *cobra.Command {
 	root.CompletionOptions.DisableDefaultCmd = true
 
 	root.PersistentFlags().String("config", "", "path to mabo-ctl.yaml; skips the walk up the directory tree")
+	root.PersistentFlags().String("profile", "",
+		"comma-separated profiles to activate (overrides MABO_PROFILE); services whose profiles: list misses all of them stay out of this run")
 	root.PersistentFlags().Bool("refresh-ports", false,
 		"re-resolve every port from the declared defaults, ignoring persisted .dev/run.env, and rewrite the file")
 	addStartFlags(root)
@@ -381,7 +383,7 @@ func (a *app) runStart(cmd *cobra.Command, args []string) error {
 		return outcome
 	}
 	if mode.follow {
-		return a.runTail(cmd, names, defaultTailLines, true, false)
+		return a.runTail(cmd, names, defaultTailLines, true, false, 0, "")
 	}
 	return nil
 }
@@ -522,7 +524,7 @@ Exit code 4 means at least one service failed to become ready.`,
 				return restartErr
 			}
 			if boolFlag(cmd, "follow") {
-				return a.runTail(cmd, names, defaultTailLines, true, false)
+				return a.runTail(cmd, names, defaultTailLines, true, false, 0, "")
 			}
 			return nil
 		},

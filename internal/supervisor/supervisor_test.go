@@ -79,6 +79,17 @@ func TestHelperProcess(t *testing.T) {
 	case "dieloud":
 		fmt.Fprintln(os.Stderr, "PANIC: could not bind configuration")
 		os.Exit(1)
+	case "hookwrite":
+		// A lifecycle hook under test: drop a marker file, then exit with the
+		// status named in the environment (0 when unset).
+		if p := os.Getenv("HOOK_FILE"); p != "" {
+			_ = os.WriteFile(p, []byte("hook ran\n"), 0o644)
+		}
+		code := 0
+		if s := os.Getenv("HOOK_STATUS"); s != "" {
+			code, _ = strconv.Atoi(s)
+		}
+		os.Exit(code)
 	}
 	os.Exit(0)
 }
@@ -591,7 +602,7 @@ func TestParseLsof(t *testing.T) {
 
 func TestVerifyGroupRefusesPrivilegedPIDs(t *testing.T) {
 	for _, pid := range []int{0, 1, -1} {
-		if _, err := verifyGroup(pid); !errors.Is(err, ErrUnsafeSignal) {
+		if _, err := verifyGroup(pid, time.Time{}); !errors.Is(err, ErrUnsafeSignal) {
 			t.Errorf("verifyGroup(%d) error = %v, want ErrUnsafeSignal", pid, err)
 		}
 	}
@@ -1268,12 +1279,12 @@ func TestSlowBecomesDegradedPastReadyTimeout(t *testing.T) {
 	if got := statusOf(t, sup, "svc"); got.Phase != PhaseSlow {
 		t.Fatalf("phase inside ready_timeout = %q, want %q", got.Phase, PhaseSlow)
 	}
-
 	// Past it, the same words become a lie: "still starting" was true for
-	// thirty seconds and false for the three hours after.
-	if err := st.WritePIDAt("svc", pid, time.Now().Add(-time.Hour)); err != nil {
-		t.Fatalf("WritePIDAt: %v", err)
-	}
+	// thirty seconds and false for the three hours after. The window is
+	// waited out for real: backdating the pid record — the old shortcut — now
+	// reads as a forged record whose spawn time disagrees with the kernel,
+	// which is precisely what stopOne's identity check must refuse.
+	time.Sleep(31 * time.Second)
 	got := statusOf(t, sup, "svc")
 	if got.Phase != PhaseDegraded {
 		t.Fatalf("phase past ready_timeout = %q, want %q", got.Phase, PhaseDegraded)
@@ -1282,8 +1293,8 @@ func TestSlowBecomesDegradedPastReadyTimeout(t *testing.T) {
 	if got.Detail == "" {
 		t.Error("Detail is empty; a probe that could not connect must say why")
 	}
-	if got.Uptime < time.Minute {
-		t.Errorf("Uptime = %s, want roughly an hour", got.Uptime)
+	if got.Uptime < 30*time.Second {
+		t.Errorf("Uptime = %s, want past the thirty-second ready window", got.Uptime)
 	}
 	if got.StartedAt.IsZero() {
 		t.Error("StartedAt is zero for a live process")
@@ -1942,11 +1953,11 @@ func TestPerServiceReadyTimeoutOverridesTheGlobal(t *testing.T) {
 		t.Fatal("the service is not running, so neither phase is under test")
 	}
 
-	// Ten seconds ago: past the service's own 5s window, inside the 30s
-	// global. Degraded here proves the instance value decided.
-	if err := st.WritePIDAt("svc", pid, time.Now().Add(-10*time.Second)); err != nil {
-		t.Fatalf("WritePIDAt: %v", err)
-	}
+	// Wait out the service's own 5s window (inside the 30s global) for real.
+	// Backdating the pid record instead — the old shortcut — now reads as a
+	// forged record whose spawn time disagrees with the kernel, and
+	// verifyGroup refuses it, which is the recycled-pid guard doing its job.
+	time.Sleep(6 * time.Second)
 	if got := statusOf(t, sup, "svc"); got.Phase != PhaseDegraded {
 		t.Fatalf("phase past the service's own 5s window = %q, want %q", got.Phase, PhaseDegraded)
 	}
@@ -2316,7 +2327,7 @@ func TestStartRefusesWhenAnotherMaboCtlHoldsTheClaim(t *testing.T) {
 	})
 	defer func() { _ = sup.Stop(context.Background(), nil, nil); sup.Wait() }()
 
-	if err := st.ClaimPID("worker", foreign, time.Now()); err != nil {
+	if _, err := st.ClaimPID("worker", foreign, time.Now()); err != nil {
 		t.Fatalf("seed claim: %v", err)
 	}
 

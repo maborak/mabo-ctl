@@ -358,3 +358,125 @@ go test ./internal/supervisor/ -race -run TestTailFollowsTheLogAcrossARotation
 # it through path identity, not handle state.
 rg -n 'Rename|O_TRUNC' internal/state/ internal/supervisor/
 
+## 11. `stop` killed a foreign process that was merely a group leader
+
+**Shape.** An identity check that proved "ours ⇒ group leader" and then relied
+on the unproven converse "group leader ⇒ ours". Every `setsid` process on the
+machine — tmux panes, container inits, other supervisors' children — satisfies
+the structural check, and the pid record's own spawn time, already on disk and
+already in the struct, was never consulted before signalling.
+
+**Where it bit us.** `internal/supervisor/signal_unix.go` (`verifyGroup`),
+written in the initial release (2026-08-24); diagnosed 2026-08-27 by audit
+H-1 with a live reproduction: a pid record stamped `2020-01-01` killed a
+process the tester had spawned that same minute, because `pgid == pid` held.
+
+**Fix.** `verifyGroup` takes the pid record's `StartedAt` and, when it is not
+the zero time, requires the kernel's start time (`ps -o lstart=` under a
+pinned `LC_ALL=C`, parsed for both the macOS and Linux layouts) to agree
+within 2s. A start time that cannot be read at all refuses the signal:
+a declined stop is recoverable, a wrong-group kill is not. The read-only
+status path deliberately skips the comparison — display is not authority,
+and paying a `ps` fork per status poll buys nothing.
+
+**Detector.**
+```bash
+go test ./internal/supervisor/ -run TestVerifyGroupRefusesARecycledGroupLeader
+
+# Structural: any identity check added to the signalling path must consult
+# the record the pid file already carries.
+rg -n 'StartedAt' internal/supervisor/ --glob '!*_test.go'
+```
+
+## 12. `tty: true` never worked: cobra ate the broker's own flags
+
+**Shape.** A hidden subcommand whose argv IS its protocol registered with
+`Args: cobra.ArbitraryArgs` — which bounds positional-argument COUNT and does
+not stop flag parsing. Cobra rejected `--log`/`--sock` before RunE ran; the
+parent JSON-unmarshalled cobra's error line as the handshake; the feature
+failed on every platform with a syntax-error message. A package-var seam
+(`ttyBrokerExecutable`) let every test substitute a well-behaved fake, so the
+real dispatch path had no test at all.
+
+**Where it bit us.** `cmd/mabo-ctl/attach.go` (`ttyBrokerCmd`) and
+`internal/supervisor/tty_broker.go` (the handshake pipe), shipped in
+95f277c (2026-08-26); diagnosed 2026-08-27 by audit H-2.
+
+**Fix.** `DisableFlagParsing: true` on the broker command — the broker's
+`parseBrokerArgs` owns its argv — and a dispatch test that executes the real
+cobra command with RunE swapped, asserting the full raw argv arrives.
+
+**Detector.**
+```bash
+go test ./cmd/mabo-ctl/ -run TestTTYBrokerDispatchPassesFlagsRaw
+rg -n 'DisableFlagParsing' cmd/ internal/
+```
+
+## 13. A missing `lsof` turned the port guard off, silently, forever
+
+**Shape.** A guard whose failure mode is indistinguishable from its success
+value. `lsof` exits 1 when nothing listens — the common case — so "any error
+means free" read ENOENT (no lsof on the box) as a free port on every service,
+permanently. The project had already diagnosed the SAME shape for a different
+cause (a dead context made every port read back as free) and closed only that
+one path.
+
+**Where it bit us.** `internal/supervisor/portholder.go` (`PortHolder`),
+written in the initial release; diagnosed 2026-08-27 by audit M-2.
+
+**Fix.** `lsof` is resolved once per process via an explicit `LookPath` with
+the error retained (`LsofLookupErr`); the start path and preflight announce a
+missing binary instead of leaving the fail-open guard unnoticed. The
+fail-open contract itself is kept — "cannot tell" still must not block a
+valid start — but it can no longer be silent.
+
+**Detector.**
+```bash
+go build ./... && go run ./cmd/mabo-ctl preflight   # warns: guard is OFF
+
+# Structural: an error swallowed into a zero value must have a companion
+# probe the start path can surface.
+rg -n 'LsofLookupErr' internal/ cmd/
+```
+
+## 14. The tty socket existed at umask permissions before its chmod
+
+**Shape.** Ordering: `net.Listen` created the unix socket at `0777 & ~umask`
+and the `Chmod(0600)` ran after — a brief window in which the socket carried
+group/world bits. The same code also wrote under `.dev/` directly, breaking
+the write-ownership invariant that names `internal/state` as the only writer.
+
+**Where it bit us.** `internal/supervisor/tty_broker.go`, shipped in 95f277c
+(2026-08-26); diagnosed 2026-08-27 by audit M-5. Unreachable in practice
+until the broker's flag bug (§12) was fixed, which is how it survived.
+
+**Fix.** `state.PrepareTTY` (create `.dev/tty`, clear a dead broker's stale
+socket) runs before the listen; `state.SealTTY` runs immediately after it;
+`state.RemoveTTY` replaces the direct remove. The broker no longer touches
+the filesystem under `.dev/` itself.
+
+**Detector.**
+```bash
+rg -n 'os\.(Remove|Chmod|Mkdir)' internal/supervisor/tty_broker.go
+```
+
+## 15. Clearing a stale start claim was silent
+
+**Shape.** Asymmetric UX built alongside a security primitive: the REFUSAL
+named the holder's pid and timestamp, but CLEARING the wreckage emitted
+nothing on any branch. An operator could not distinguish a clean start from
+"this start just overtook another mabo-ctl's in-flight claim" — which is
+exactly the situation a hung pre_start hook (fixed in the same wave) used to
+manufacture.
+
+**Where it bit us.** `internal/state/state.go` (`ClaimPID`), shipped in
+a9b72aa (2026-08-26); diagnosed 2026-08-27 by audit M-6.
+
+**Fix.** `ClaimPID` returns a `ClaimReport` (who held the cleared claim, when
+it was taken, why it was judged stale), and `startOne` emits it as an event.
+A clean take reports nothing, so "evicted" stays distinguishable from "clean".
+
+**Detector.**
+```bash
+go test ./internal/state/ -run TestClaimPIDReportsTheEviction
+```

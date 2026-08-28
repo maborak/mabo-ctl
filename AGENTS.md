@@ -35,7 +35,9 @@ Three front ends over ONE supervisor:
 3. **Web console** — `serve` binds a loopback HTTP listener (`127.0.0.1:7999`)
    serving one embedded page plus a JSON/SSE API. Token-gated, POST-only
    mutations, Host+Origin validated. It can start and stop processes, so treat
-   every guard on it as security-critical.
+   every guard on it as security-critical. It is the one TCP listener in the
+   repo; the tty broker additionally holds a `.dev/tty/*.sock` unix-domain
+   socket for local PTY IPC, which is not a network surface.
 
 ### Non-goals — out of scope by declaration, never gaps
 
@@ -62,6 +64,8 @@ internal/ui/          colour, fixed-width labels, table + status rendering
 internal/redact/      THE one credential-redaction implementation
 internal/selfupdate/  self-upgrade: latest release, version compare, verified binary swap
 internal/web/         web console: embedded page, JSON/SSE API, HTTP guards
+internal/surface/     generated surface inventories (cli, config, json) and the drift gate
+tools/surfacemap/     generator whose output must be byte-identical to surfaces.json
 ```
 
 ### Layering rules — BINDING
@@ -114,7 +118,10 @@ internal/web/         web console: embedded page, JSON/SSE API, HTTP guards
 - **Exit records** make crashes visible after the spawning process is gone;
   `failed` ≠ `slow` ≠ `exited`, and a deliberate stop must never read as a crash.
 - Every output channel (stdout, logs, JSON, web) redacts through
-  `internal/redact` at the SOURCE, not per route.
+  `internal/redact` at the SOURCE, not per route. That covers everything
+  mabo-ctl itself composes; a child's stdout in `.dev/logs/*.log` is the
+  child's own output, stored verbatim and channel-consistently — never
+  re-rendered worse on one channel than another.
 
 ## Tooling
 
@@ -138,6 +145,9 @@ name and is a complete sentence.
 
 - `docs/SPEC.md` — spec of record.
 - `docs/ARCHITECTURE.md` — how the packages fit and why.
+- `docs/EXTENSIONS.md` — the shipped extension contracts (hooks,
+  `depends_ready_on`, profiles, `--wait`, log filters, phase history) and
+  the audit that separated them from what was already built in.
 - `docs/LANDMINES.md` — bugs this codebase actually shipped, each with a
   runnable detector. When you fix a diagnosed bug, adding its row is part of the
   fix. Cross-check findings against it before claiming anything new.

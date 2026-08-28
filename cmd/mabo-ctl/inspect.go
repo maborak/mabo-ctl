@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -69,7 +71,7 @@ func (a *app) runStatus(cmd *cobra.Command, asJSON bool) error {
 
 // healthCmd builds `mabo-ctl health`.
 func (a *app) healthCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "health",
 		Short: "Probe every declared health URL in parallel",
 		Long: `Health probes every service that declares a health URL, all at once.
@@ -98,6 +100,29 @@ because that is the question it was asked.`,
 			sts := healthStatus(sup.Status(ctx))
 			a.printStatus(sts)
 
+			wait := boolFlag(cmd, "wait")
+			var timeout time.Duration
+			if cmd.Flags().Changed("timeout") {
+				timeout, err = cmd.Flags().GetDuration("timeout")
+				if err != nil {
+					return usageError(err)
+				}
+				if !wait {
+					return usageErrorf("--timeout needs --wait: there is nothing to bound without it")
+				}
+				if timeout <= 0 {
+					return usageErrorf("--timeout must be positive, got %s", timeout)
+				}
+			}
+
+			if wait {
+				if err := waitReady(ctx, sup, timeout); err != nil {
+					return err
+				}
+				sts = healthStatus(sup.Status(ctx))
+				a.printStatus(sts)
+			}
+
 			var down []string
 			for _, st := range sts {
 				if st.Health != "" && st.Phase != supervisor.PhaseReady {
@@ -111,6 +136,57 @@ because that is the question it was asked.`,
 			return nil
 		},
 	}
+	cmd.Flags().Bool("wait", false,
+		"poll until every declared health URL answers (phase ready), or give up on --timeout")
+	cmd.Flags().Duration("timeout", 0,
+		"with --wait, give up after this long; the exit then reports who was still down (requires --wait)")
+	return cmd
+}
+
+// healthWaitInterval is how often --wait re-reads the supervisor's statuses.
+// The supervisor already runs the probes itself, so this only bounds how stale
+// a ready answer may be when it is noticed.
+const healthWaitInterval = time.Second
+
+// waitReady blocks until every service that declares a health URL reports
+// supervisor.PhaseReady, the deadline expires, or ctx is interrupted. A nil
+// timeout waits indefinitely. The busy case — nothing declared — returns
+// immediately, because there would be nothing ever to observe changing.
+func waitReady(ctx context.Context, sup interface {
+	Status(ctx context.Context) []supervisor.Status
+}, timeout time.Duration) error {
+	var deadline <-chan time.Time
+	if timeout > 0 {
+		t := time.NewTimer(timeout)
+		defer t.Stop()
+		deadline = t.C
+	}
+	tick := time.NewTicker(healthWaitInterval)
+	defer tick.Stop()
+
+	pending := func() []string {
+		var down []string
+		for _, st := range healthStatus(sup.Status(ctx)) {
+			if st.Health != "" && st.Phase != supervisor.PhaseReady && st.Phase != supervisor.PhaseFailed {
+				down = append(down, st.Name)
+			}
+		}
+		return down
+	}
+
+	down := pending()
+	for len(down) > 0 {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-deadline:
+			return withCode(exitNotReady, fmt.Errorf(
+				"timed out after %s waiting for %s to answer their health URL", timeout, joinAnd(down)))
+		case <-tick.C:
+			down = pending()
+		}
+	}
+	return nil
 }
 
 // healthStatus is the supervisor's statuses with one annotation `mabo-ctl health`
@@ -155,7 +231,7 @@ tail it would be a lie, so historical tails refuse the flag.
 
 Logs are truncated when a service starts, so what is here belongs to the current
 run.`,
-		Args:          cobra.MaximumNArgs(1),
+		Args:          cobra.ArbitraryArgs,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -167,7 +243,7 @@ run.`,
 				return usageErrorf("--tail must not be negative, got %d", n)
 			}
 			var names []string
-			if len(args) == 1 && args[0] != "all" {
+			if !(len(args) == 0 || (len(args) == 1 && args[0] == "all")) {
 				if err := a.validateNames(cmd, args); err != nil {
 					return err
 				}
@@ -182,14 +258,59 @@ run.`,
 				// small lies in a tool whose value is not lying compound.
 				return usageErrorf("--timestamps is follow-only (-f): stamps on a historical tail would be read times, not write times")
 			}
-			return a.runTail(cmd, names, n, follow, stamp)
+			var since time.Duration
+			if cmd.Flags().Changed("since") {
+				since, err = cmd.Flags().GetDuration("since")
+				if err != nil {
+					return usageError(err)
+				}
+				if since <= 0 {
+					return usageErrorf("--since must be positive, got %s", since)
+				}
+				if follow {
+					return usageErrorf("--since is historical-only: a -f stream cannot bound which replayed lines belong to the window")
+				}
+			}
+			grep, err := cmd.Flags().GetString("grep")
+			if err != nil {
+				return usageError(err)
+			}
+			return a.runTail(cmd, names, n, follow, stamp, since, grep)
 		},
 	}
 	cmd.Flags().Int("tail", defaultTailLines, "how many trailing lines to show before following")
 	cmd.Flags().BoolP("follow", "f", false, "keep streaming new lines until interrupted")
 	cmd.Flags().Bool("timestamps", false,
 		"prefix each followed line with the time it was read (requires -f); format HH:MM:SS.mmm")
+	cmd.Flags().Duration("since", 0,
+		"only tail services whose log changed within this window; historical tails only (no -f)")
+	cmd.Flags().String("grep", "", "print only lines containing this substring")
 	return cmd
+}
+
+// filterFreshLogs keeps the services whose log was written at or after cutoff.
+// A log line carries no timestamp — the file is plain text — so the honest
+// granularity here is the file's mtime, coarse but never invented. A service
+// with no log yet counts as stale: nothing written means nothing to show.
+func filterFreshLogs(ctx context.Context, sup lifecycle, names []string, cutoff time.Time) (fresh, skipped []string) {
+	wanted := make(map[string]bool, len(names))
+	for _, n := range names {
+		wanted[n] = true
+	}
+	logPath := make(map[string]string)
+	for _, st := range sup.StatusNoPorts(ctx) {
+		if wanted[st.Name] && st.LogPath != "" {
+			logPath[st.Name] = st.LogPath
+		}
+	}
+	for _, n := range names {
+		if info, err := os.Stat(logPath[n]); err == nil && !info.ModTime().Before(cutoff) {
+			fresh = append(fresh, n)
+		} else {
+			skipped = append(skipped, n)
+		}
+	}
+	return fresh, skipped
 }
 
 // runTail streams the logs of names — every service when names is empty — to
@@ -206,7 +327,7 @@ run.`,
 // meaningless for anything older, which is why the historical tail refuses it.
 //
 // It blocks until every stream ends, or until ctx is cancelled by Ctrl-C.
-func (a *app) runTail(cmd *cobra.Command, names []string, n int, follow, stamp bool) error {
+func (a *app) runTail(cmd *cobra.Command, names []string, n int, follow, stamp bool, since time.Duration, needle string) error {
 	sup, insts, err := a.supervisor()
 	if err != nil {
 		return err
@@ -219,6 +340,17 @@ func (a *app) runTail(cmd *cobra.Command, names []string, n int, follow, stamp b
 	}
 	if len(names) == 0 {
 		return errors.New("mabo-ctl: no services to tail")
+	}
+	if since > 0 {
+		cutoff := time.Now().Add(-since)
+		fresh, skipped := filterFreshLogs(cmd.Context(), sup, names, cutoff)
+		for _, s := range skipped {
+			fmt.Fprintf(a.env.Stderr, "%s: no output within %s\n", s, since)
+		}
+		if len(fresh) == 0 {
+			return nil
+		}
+		names = fresh
 	}
 
 	ctx, cancel := interruptible(cmd.Context())
@@ -256,6 +388,9 @@ func (a *app) runTail(cmd *cobra.Command, names []string, n int, follow, stamp b
 	r := a.renderer()
 	for l := range merged {
 		text := l.text
+		if needle != "" && !strings.Contains(text, needle) {
+			continue
+		}
 		if stamp {
 			text = time.Now().Format("15:04:05.000") + " " + text
 		}

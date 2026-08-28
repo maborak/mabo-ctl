@@ -79,6 +79,17 @@ ready_timeout: 30s
 #                   other service. It is opted out of starting, not hidden.
 #   depends_on  Services started first. Must name declared services; cycles are
 #               rejected at load time.
+#   depends_ready_on  The readiness-gated subset of depends_on: every name must
+#               also be in depends_on, must declare a health probe, and must
+#               reach phase ready before this service starts.
+#   hooks       Lifecycle argvs — pre_start, post_start, pre_stop, post_stop.
+#               Run directly (no shell) with the service's dir and env; output
+#               goes to the service's log. pre_start failure refuses the
+#               start; the rest are best-effort and can never block their
+#               lifecycle.
+#   profiles    Profile names this service belongs to. With --profile or
+#               MABO_PROFILE active, a service with a non-empty list runs only
+#               when a name overlaps; an absent list always runs.
 #   color       Label colour in status output: red, green, yellow, blue,
 #               magenta, cyan, white.
 #   tty         Run on a pty via mabo-ctl's broker so `mabo-ctl attach <name>`
@@ -172,6 +183,12 @@ services:
   #     health:
   #       exec: [redis-cli, ping]        # exit 0 is ready
   #     depends_on: [backend]
+  #     depends_ready_on: [backend]      # start only once backend is READY,
+  #                                      # not merely spawned
+  #     hooks:
+  #       pre_start: [./scripts/migrate.sh]   # failing this refuses the start
+  #       post_stop: [./scripts/notify.sh]    # best-effort, cannot block a stop
+  #     profiles: [queues]               # runs only under --profile queues
   #
   # And a database service probes TCP, not HTTP:
   #

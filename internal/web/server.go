@@ -69,8 +69,6 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
-	"io"
-	"log"
 	"net"
 	"net/http"
 	"net/url"
@@ -442,6 +440,7 @@ func (s *Server) routes() *http.ServeMux {
 		"GET /api/stream/{svc}": s.handleStream,
 		"GET /api/events":       s.handleEvents,
 		"GET /api/origins":      s.handleGetOrigins,
+		"GET /api/history":      s.handleHistory,
 
 		"POST /api/origins":       s.handleSetOrigins,
 		"POST /api/start-all":     s.handleStartAll,
@@ -573,7 +572,7 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 		// No WriteTimeout: an SSE stream is a response that legitimately never
 		// ends, and a write deadline would sever every log pane on a timer.
 		BaseContext: func(net.Listener) context.Context { return base },
-		ErrorLog:    log.New(io.Discard, "", 0),
+		ErrorLog:    auditLog,
 	}
 
 	stopped := make(chan error, 1)

@@ -3,8 +3,10 @@ package web
 import (
 	"crypto/subtle"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 )
@@ -73,6 +75,37 @@ func isLoopbackAddr(addr string) (bool, error) {
 	return true, nil
 }
 
+// auditLog is where the console records its activity. A refused probe and a
+// blocked attack used to be indistinguishable afterwards because neither left
+// a trace: the guards themselves were silent on every branch, and net/http's
+// own error log was pointed at io.Discard. Every refusal now lands here, as
+// does every accepted mutation; the console's read-only polling does not, or
+// the log would be the poller's transcript. It writes to stderr because serve
+// runs in the foreground and stderr is the operator's channel; nothing here
+// ever quotes a request body or a token value.
+var auditLog = log.New(os.Stderr, "mabo-ctl serve ", log.LstdFlags)
+
+// statusRecorder captures the status code a handler wrote so the audit line
+// can name it. It forwards Flush because the SSE routes type-assert
+// http.Flusher on the writer they are handed.
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+// WriteHeader records code and passes it through unchanged.
+func (r *statusRecorder) WriteHeader(code int) {
+	r.status = code
+	r.ResponseWriter.WriteHeader(code)
+}
+
+// Flush forwards to the wrapped writer when it supports flushing.
+func (r *statusRecorder) Flush() {
+	if f, ok := r.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
 // guard is the middleware every request passes through: security headers, then
 // the Host check, then the Origin check.
 //
@@ -81,9 +114,26 @@ func isLoopbackAddr(addr string) (bool, error) {
 // any part of the request back to the client — a message that quotes the
 // attacker's Host header is a small reflection bug for no benefit, since the
 // only reader who ever sees this text is the attacker.
+//
+// Every refusal is recorded on [auditLog], whatever route refused it — the
+// recorder sees the final status, so a bad token on a handler route and a
+// forged Host here leave the same kind of trace. An accepted mutation is
+// recorded too: the one network surface that can start and stop processes must
+// be able to answer "who asked for that, when".
 func (s *Server) guard(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h := w.Header()
+		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		defer func() {
+			switch {
+			case rec.status >= 400:
+				auditLog.Printf("refused %d %s %s from %s",
+					rec.status, r.Method, r.URL.Path, r.RemoteAddr)
+			case r.Method == http.MethodPost:
+				auditLog.Printf("accepted %d %s %s from %s",
+					rec.status, r.Method, r.URL.Path, r.RemoteAddr)
+			}
+		}()
+		h := rec.Header()
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("Referrer-Policy", "no-referrer")
 		h.Set("X-Frame-Options", "DENY")
@@ -93,15 +143,15 @@ func (s *Server) guard(next http.Handler) http.Handler {
 		// reading the body of even the read-only routes.
 
 		if !s.allowedHost(r.Host) && !s.trustedHost(r.Host) {
-			http.Error(w, "forbidden: the Host header does not name the address mabo-ctl is "+
+			http.Error(rec, "forbidden: the Host header does not name the address mabo-ctl is "+
 				"bound to; this request looks like DNS rebinding", http.StatusForbidden)
 			return
 		}
 		if origin := r.Header.Get("Origin"); origin != "" && !s.allowedOrigin(origin) {
-			http.Error(w, "forbidden: cross-origin request", http.StatusForbidden)
+			http.Error(rec, "forbidden: cross-origin request", http.StatusForbidden)
 			return
 		}
-		next.ServeHTTP(w, r)
+		next.ServeHTTP(rec, r)
 	})
 }
 

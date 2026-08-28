@@ -176,20 +176,41 @@ func runTTYBrokerFromArgs(argv []string, out *os.File) int {
 	hub := newTeeHub(logFile, master)
 	go pumpMasterToHub(master, hub)
 
-	sockPath, svc := opts.sockPath, opts.svc
-	os.Remove(sockPath)
+	svc := opts.svc
+	// state.New BEFORE the listen: creating .dev/tty and clearing a socket a
+	// dead broker left behind are state's writes to own, and taking them first
+	// means the only thing between listen and the ownership seal is the kernel
+	// call itself.
+	st, stErr := state.New(rootOfSocket(opts.sockPath))
+	if stErr != nil {
+		_ = child.Process.Kill()
+		_, _ = child.Process.Wait()
+		return fail("open state dir: %v", stErr)
+	}
+	sockPath, prepErr := st.PrepareTTY(svc)
+	if prepErr != nil {
+		_ = child.Process.Kill()
+		_, _ = child.Process.Wait()
+		return fail("%v", prepErr)
+	}
 	ln, err := net.Listen("unix", sockPath)
 	if err != nil {
 		_ = child.Process.Kill()
 		_, _ = child.Process.Wait()
 		return fail("listen %s: %v", sockPath, err)
 	}
-	_ = os.Chmod(sockPath, 0o600)
+	// Seal the socket the instant it exists: between listen and this call it
+	// carries the umask's group/world bits, and owner-only is the whole point.
+	if sealErr := st.SealTTY(svc); sealErr != nil {
+		_ = ln.Close()
+		_ = child.Process.Kill()
+		_, _ = child.Process.Wait()
+		return fail("%v", sealErr)
+	}
 
 	b, _ := json.Marshal(ttyHandshake{PID: child.Process.Pid})
 	fmt.Fprintf(out, "%s\n", b) // THE handshake line: the parent records this pid
 
-	st, stErr := state.New(rootOfSocket(sockPath))
 	go serveAttach(ln, hub)
 
 	werr := child.Wait()
@@ -209,12 +230,10 @@ func runTTYBrokerFromArgs(argv []string, out *os.File) int {
 		rec.ExitCode = -1
 	}
 	rec.LogTail = hub.tailSnapshot()
-	if stErr == nil {
-		_ = st.WriteExit(svc, rec)
-	}
+	_ = st.WriteExit(svc, rec)
 
 	ln.Close()
-	os.Remove(sockPath)
+	_ = st.RemoveTTY(svc)
 	out.Close()
 	return 0
 }

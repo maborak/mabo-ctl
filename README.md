@@ -58,12 +58,18 @@ YAML
 
 mabo-ctl start          # start it, wait for the probe, print the status block
 mabo-ctl logs api -f    # follow its output
+mabo-ctl health --wait  # block until every probed service is ready (CI-friendly)
 mabo-ctl serve          # drive the whole stack from a browser
 mabo-ctl stop           # SIGTERM the process GROUP, then SIGKILL
 ```
 
 `examples/mabo-ctl.yaml` is a fuller one: several services, a pinned runtime, and
-one service told where another landed via `{{.Port "backend"}}`.
+one service told where another landed via `{{.Port "backend"}}`. It also shows
+the optional extras: `hooks:` (lifecycle argvs — `pre_start` can refuse the
+start, the rest are best-effort), `depends_ready_on:` (hold a start until a
+dependency is genuinely *ready*, not just spawned) and `profiles:` (activate
+subsets with `--profile a,b` or `MABO_PROFILE`). `docs/EXTENSIONS.md` is the
+contract for all three.
 
 ### Upgrading
 
@@ -481,6 +487,15 @@ prints whatever it likes on stdout and that lands in a log file — and, truncat
 in an exit record — so nothing under `.dev/` is ever created group- or
 world-readable. Secrets in your environment are forwarded to children and can end
 up in those logs — treat `.dev/` as secrets-adjacent, especially on a shared host.
+
+**Escape sequences are the child's own output, stored and shown verbatim.**
+Everything mabo-ctl composes is redacted at the source, but a service's stdout
+belongs to the service: colour, cursor movement, OSC-8 hyperlinks and OSC-52
+clipboard writes all reach `.dev/logs/*.log` byte-for-byte and render
+unmodified in `logs`, `tailf` and the web panes. That is deliberate — dev
+servers emit colour — but it means a compromised child can paint the terminal
+that reads its logs. Read untrusted services' logs through a pager
+(`mabo-ctl logs api | less -R` drops control sequences) if that matters to you.
 
 ## Interactive console
 

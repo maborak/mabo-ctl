@@ -12,6 +12,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"sort"
@@ -437,7 +438,14 @@ func (s *Supervisor) liveRecord(svc string) (state.PIDRecord, error) {
 	if rec.PID <= 0 || !state.Alive(rec.PID) {
 		return state.PIDRecord{}, nil
 	}
-	if _, err := verifyGroup(rec.PID); err != nil {
+	// The structural half of the recycled-pid guard — group leader, not init.
+	// The pid record's spawn time is deliberately NOT checked against the
+	// kernel here: this path serves status and supersession, it reads, and
+	// paying a ps fork per poll to re-verify what only matters when a signal
+	// is about to fly would tax every status block for a check stopOne runs
+	// anyway. Display is not authority; verifyGroup's full check fires on the
+	// signalling path.
+	if _, err := verifyGroup(rec.PID, time.Time{}); err != nil {
 		return state.PIDRecord{}, fmt.Errorf("%w: %s names pid %d, which mabo-ctl did not start: %w",
 			ErrStalePID, s.st.PIDPath(svc), rec.PID, err)
 	}
@@ -819,8 +827,12 @@ func (s *Supervisor) Start(ctx context.Context, names []string, ev chan<- Event)
 	// failed is read by firstFailedDep at the start of each LEVEL and written
 	// only between levels, never during one. That is what makes it safe without
 	// a lock: every dependency of a level-N service is in some level < N and is
-	// therefore already final by the time level N is scheduled.
+	// therefore already final by the time level N is scheduled. unready is the
+	// readiness-gated twin: services that came up but never reached ready
+	// (slow, degraded, or running with no probe), consulted only by
+	// DependsReadyOn edges.
 	failed := make(map[string]string)
+	unready := make(map[string]string)
 	var order []string
 
 	for _, level := range levels {
@@ -840,6 +852,7 @@ func (s *Supervisor) Start(ctx context.Context, names []string, ev chan<- Event)
 			name   string
 			failed bool
 			why    string // carried so a transitive dependant says "was skipped"
+			phase  Phase  // the settled phase, for the readiness fold below
 		}
 		results := make([]outcome, len(level))
 		var wg sync.WaitGroup
@@ -848,18 +861,24 @@ func (s *Supervisor) Start(ctx context.Context, names []string, ev chan<- Event)
 			if dep, why := firstFailedDep(in, failed); dep != "" {
 				emit(ev, Event{Service: in.Name, Phase: PhaseStopped,
 					Msg: fmt.Sprintf("skipped: dependency %s %s", dep, why)})
-				results[i] = outcome{in.Name, true, "was skipped"}
+				results[i] = outcome{name: in.Name, failed: true, why: "was skipped", phase: PhaseStopped}
+				continue
+			}
+			if dep, why := firstUnreadyDep(in, unready); dep != "" {
+				emit(ev, Event{Service: in.Name, Phase: PhaseStopped,
+					Msg: fmt.Sprintf("skipped: dependency %s %s, and this start gates on its readiness", dep, why)})
+				results[i] = outcome{name: in.Name, failed: true, why: "was skipped (gated dependency not ready)", phase: PhaseStopped}
 				continue
 			}
 			wg.Add(1)
 			go func(i int, in service.Instance) {
 				defer wg.Done()
 				if err := ctx.Err(); err != nil {
-					results[i] = outcome{in.Name, true, "was interrupted"}
+					results[i] = outcome{name: in.Name, failed: true, why: "was interrupted", phase: PhaseStopped}
 					return
 				}
 				phase, err := s.startOne(ctx, in, ev)
-				results[i] = outcome{in.Name, err != nil || phase == PhaseFailed, "failed to start"}
+				results[i] = outcome{name: in.Name, failed: err != nil || phase == PhaseFailed, why: "failed to start", phase: phase}
 			}(i, in)
 		}
 		wg.Wait()
@@ -872,6 +891,14 @@ func (s *Supervisor) Start(ctx context.Context, names []string, ev chan<- Event)
 					failed[r.name] = r.why
 				}
 				order = append(order, r.name)
+				continue
+			}
+			// Up but not ready: no health probe (running), still starting
+			// (slow), or past its window (degraded). Plain dependants start
+			// anyway — spawn-order-only is the depends_on contract — but a
+			// readiness-gated dependant must not.
+			if _, seen := unready[r.name]; !seen && r.phase != PhaseReady {
+				unready[r.name] = unreadyWhy(r.phase)
 			}
 		}
 	}
@@ -890,6 +917,93 @@ func firstFailedDep(in service.Instance, failed map[string]string) (string, stri
 		}
 	}
 	return "", ""
+}
+
+// firstUnreadyDep is firstFailedDep's readiness-gated twin: it names the first
+// of in's gated dependencies that came up but is not ready — slow, degraded,
+// or running with no probe. Only DependsReadyOn edges consult it; a plain
+// depends_on edge keeps its spawn-order-only meaning.
+func firstUnreadyDep(in service.Instance, unready map[string]string) (string, string) {
+	for _, d := range in.DependsReadyOn {
+		if why, bad := unready[d]; bad {
+			return d, why
+		}
+	}
+	return "", ""
+}
+
+// unreadyWhy explains, for a skip message, how a live dependency missed
+// ready. The phase set is closed, so this switch is total over the phases a
+// settled start can return that are not ready and not failed.
+func unreadyWhy(p Phase) string {
+	switch p {
+	case PhaseSlow:
+		return "is slow and never reached ready"
+	case PhaseDegraded:
+		return "is degraded and never reached ready"
+	case PhaseRunning:
+		return "is running but declares no probe to become ready"
+	default:
+		return fmt.Sprintf("settled at %s, not ready", p)
+	}
+}
+
+// hookExitCode digs the wait status out of a hook failure. exec.ExitError is// what Run returns for a non-zero status or a signal; anything else (context
+// expiry, unresolvable path) has no exit status, and -1 says so honestly —
+// the same reading the exit record gives a service whose wait was never seen.
+func hookExitCode(err error) int {
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
+		return ee.ExitCode()
+	}
+	return -1
+}
+
+// runHook executes one lifecycle hook argv in the service's directory with the
+// service's resolved environment, sharing the service's log file so the hook's
+// output sits next to the run it belongs to. The hook is a foreground child of
+// mabo-ctl and dies with its context: a hook that ignores Ctrl-C must not
+// outlive the command that ran it.
+func (s *Supervisor) runHook(ctx context.Context, in service.Instance, argv []string, out io.Writer) error {
+	hook := exec.CommandContext(ctx, argv[0], argv[1:]...) // #nosec G204 -- argv comes from mabo-ctl.yaml, arbitrary code execution BY DESIGN
+	hook.Dir = in.Dir
+	hook.Env = in.Env
+	hook.Stdout = out
+	hook.Stderr = out
+	return hook.Run()
+}
+
+// runPostStart runs the post_start hook, best-effort: the service is already
+// up and a hook that fails must not read as the service having failed. The
+// failure is emitted as an event and written through the log so both the
+// console and a later `logs` see it.
+func (s *Supervisor) runPostStart(ctx context.Context, in service.Instance, ev chan<- Event) {
+	s.runStopHook(ctx, in, in.Hooks.PostStart, ev, "post_start")
+}
+
+// runStopHook runs a best-effort lifecycle hook — post_start, pre_stop or
+// post_stop — appending its output to the service's log. The label is how the
+// failure is announced in the event stream. None of these hooks can block the
+// lifecycle they hang off: a stop must not be hostage to a pre_stop that
+// hangs, so each is bounded by the same grace a stop signal gets, and a
+// failure is recorded, never returned.
+func (s *Supervisor) runStopHook(ctx context.Context, in service.Instance, argv []string, ev chan<- Event, label string) {
+	if len(argv) == 0 {
+		return
+	}
+	hookCtx, cancel := context.WithTimeout(ctx, s.stopGrace())
+	defer cancel()
+	f, err := s.st.OpenLogAppend(in.Name)
+	if err != nil {
+		emit(ev, Event{Service: in.Name, Err: err,
+			Msg: fmt.Sprintf("%s hook could not open the log: %v", label, err)})
+		return
+	}
+	defer func() { _ = f.Close() }()
+	if err := s.runHook(hookCtx, in, argv, f); err != nil {
+		emit(ev, Event{Service: in.Name, Err: err,
+			Msg: fmt.Sprintf("%s hook failed: %v", label, err)})
+	}
 }
 
 // startOne spawns a single service and waits for it to become ready.
@@ -939,12 +1053,22 @@ func (s *Supervisor) startOne(ctx context.Context, in service.Instance, ev chan<
 	//     It is taken BEFORE the port check so the check-then-spawn window is
 	//     covered end to end, and released on every path below — including the
 	//     success path, where WritePIDAt supersedes it with the real record.
-	if err := s.st.ClaimPID(in.Name, os.Getpid(), time.Now()); err != nil {
-		emit(ev, Event{Service: in.Name, Phase: PhaseFailed, Err: err,
-			Msg: fmt.Sprintf("not starting: %v", err)})
-		return PhaseFailed, err
+	claimRep, claimErr := s.st.ClaimPID(in.Name, os.Getpid(), time.Now())
+	if claimErr != nil {
+		emit(ev, Event{Service: in.Name, Phase: PhaseFailed, Err: claimErr,
+			Msg: fmt.Sprintf("not starting: %v", claimErr)})
+		return PhaseFailed, claimErr
 	}
 	defer func() { _ = s.st.ReleaseClaim(in.Name) }()
+	// An eviction is not a clean start. Say what was just removed from the
+	// claim file so an operator can tell "nothing was there" from "I overtook
+	// another mabo-ctl's wreckage — or, before hooks were bounded, its
+	// in-flight start".
+	if claimRep.ClearedStale {
+		emit(ev, Event{Service: in.Name, Msg: fmt.Sprintf(
+			"cleared a stale start claim (held by pid %d since %s: %s)",
+			claimRep.PrevPID, claimRep.PrevAt.Format(time.RFC3339), claimRep.PrevWhy)})
+	}
 
 	// 2. Port held by someone else? Refuse, and show the user who and how to
 	//    look for themselves. Starting anyway produces a service that binds
@@ -954,7 +1078,16 @@ func (s *Supervisor) startOne(ctx context.Context, in service.Instance, ev chan<
 		//    The lookup is the UNCACHED one on purpose, and the sentence is
 		//    built by the same portHeldError the status block uses. See
 		//    Supervisor.heldBy.
-		if h := s.lookupPortHolder(in.Port); h.PID > 0 {
+		//
+		//    A missing lsof reads as "free" — the guard's documented fail-open
+		//    — but it must not read as that SILENTLY: say, every start, that
+		//    the guard is off and how to get it back.
+		if lerr := LsofLookupErr(); lerr != nil {
+			emit(ev, Event{Service: in.Name,
+				Msg: fmt.Sprintf("port-conflict guard is OFF: lsof was not found (%v) — "+
+					"starting without checking who holds port %d; install lsof to restore the guard",
+					lerr, in.Port)})
+		} else if h := s.lookupPortHolder(in.Port); h.PID > 0 {
 			err := portHeldError(in.Name, in.Port, h)
 			emit(ev, Event{Service: in.Name, Phase: PhaseFailed, Msg: err.Error(), Err: err})
 			return PhaseFailed, err
@@ -980,6 +1113,38 @@ func (s *Supervisor) startOne(ctx context.Context, in service.Instance, ev chan<
 	//    stdin would otherwise inherit the terminal and steal the user's keys —
 	//    catastrophic under the TUI.
 	emit(ev, Event{Service: in.Name, Msg: "starting…"})
+
+	// pre_start hook. The log is already truncated, so the hook's output
+	// belongs to this run's log and a later tail shows it beside whatever the
+	// service writes. Failure refuses the start: the claim is released by the
+	// defer above, and the exit record written here is what makes the failure
+	// visible after the spawning process is gone — Startup marks it so the
+	// phase reads failed, not exited.
+	//
+	// The hook runs under the same budget a readiness probe gets, NOT the bare
+	// caller context. The CLI cancels on SIGINT only and the console never
+	// cancels, so an unbounded hook would hold the per-service lock AND the
+	// cross-process claim for as long as the hook hung, refusing every other
+	// terminal's start for up to claimMaxAge with nothing on screen saying why.
+	// The event below plus the deadline are what keep a hung hook a visible,
+	// self-healing failure instead of a silent multi-terminal wedge.
+	if len(in.Hooks.PreStart) > 0 {
+		emit(ev, Event{Service: in.Name, Msg: "running pre_start hook…"})
+		hookCtx, cancelHook := context.WithTimeout(ctx, s.readyTimeout())
+		herr := s.runHook(hookCtx, in, in.Hooks.PreStart, logFile)
+		cancelHook()
+		if herr != nil {
+			_ = s.st.WriteExit(in.Name, state.ExitRecord{
+				EndedAt:  time.Now(),
+				ExitCode: hookExitCode(herr),
+				LogTail:  s.logTail(in.Name, failLogLines),
+				Startup:  true,
+			})
+			emit(ev, Event{Service: in.Name, Phase: PhaseFailed, Err: herr,
+				Msg: fmt.Sprintf("pre_start hook failed: %v", herr)})
+			return PhaseFailed, herr
+		}
+	}
 
 	// A tty: service never spawns here directly: its pty is owned by the
 	// detached broker this same binary launches (see spawnTTY), which answers
@@ -1063,6 +1228,7 @@ func (s *Supervisor) startOne(ctx context.Context, in service.Instance, ev chan<
 	if in.Health == "" {
 		emit(ev, Event{Service: in.Name, Phase: PhaseRunning,
 			Msg: fmt.Sprintf("running (pid %d, no health check declared)", pid)})
+		s.runPostStart(ctx, in, ev)
 		return PhaseRunning, nil
 	}
 
@@ -1075,6 +1241,7 @@ func (s *Supervisor) startOne(ctx context.Context, in service.Instance, ev chan<
 		emit(ev, Event{Service: in.Name, Phase: PhaseReady,
 			Msg: fmt.Sprintf("ready in %s (pid %d%s)",
 				res.Elapsed.Round(time.Millisecond), pid, probeKindNote(in.Readiness(), res.Status))})
+		s.runPostStart(ctx, in, ev)
 		return PhaseReady, nil
 
 	case !state.Alive(pid):
@@ -1167,11 +1334,12 @@ func (s *Supervisor) stopOne(ctx context.Context, name string, ev chan<- Event) 
 			"could not clear the exit record: %v", err)})
 	}
 
-	pid, err := s.st.ReadPID(name)
+	pidRec, err := s.st.ReadPIDRecord(name)
 	if err != nil {
 		emit(ev, Event{Service: name, Err: err, Msg: err.Error()})
 		return
 	}
+	pid := pidRec.PID
 	if pid <= 0 {
 		emit(ev, Event{Service: name, Phase: PhaseStopped, Msg: "not running"})
 		return
@@ -1186,9 +1354,10 @@ func (s *Supervisor) stopOne(ctx context.Context, name string, ev chan<- Event) 
 	}
 
 	// The recycled-pid guard. See verifyGroup: every service mabo-ctl spawns is
-	// its own process-group leader, so a live pid whose group differs is not
-	// ours and must not be signalled.
-	pgid, err := verifyGroup(pid)
+	// its own process-group leader, AND was spawned at the time its pid record
+	// recorded — a live group leader whose real start time disagrees with the
+	// record is a recycled pid wearing our shape, and must not be signalled.
+	pgid, err := verifyGroup(pid, pidRec.StartedAt)
 	if err != nil {
 		// Refusing to signal is right; leaving the file behind is not. Without
 		// the clear, every later start reported "already running" and every
@@ -1201,6 +1370,13 @@ func (s *Supervisor) stopOne(ctx context.Context, name string, ev chan<- Event) 
 
 	if in, ok := s.byName[name]; ok {
 		s.forgetHolder(in.Port)
+		// Announce the hook BEFORE it runs. A pre_stop that takes seconds used
+		// to leave the operator staring at a silent stop with no way to tell a
+		// slow hook from a wedged supervisor.
+		if len(in.Hooks.PreStop) > 0 {
+			emit(ev, Event{Service: name, Msg: "running pre_stop hook…"})
+		}
+		s.runStopHook(ctx, in, in.Hooks.PreStop, ev, "pre_stop")
 	}
 	emit(ev, Event{Service: name, Msg: fmt.Sprintf("stopping… (pid %d, group %d)", pid, pgid)})
 
@@ -1217,6 +1393,9 @@ func (s *Supervisor) stopOne(ctx context.Context, name string, ev chan<- Event) 
 
 	if s.awaitDeath(ctx, pid, s.stopGrace()) {
 		s.forgetStopped(name)
+		if in, ok := s.byName[name]; ok {
+			s.runStopHook(ctx, in, in.Hooks.PostStop, ev, "post_stop")
+		}
 		emit(ev, Event{Service: name, Phase: PhaseStopped, Msg: "stopped"})
 		return
 	}
@@ -1229,6 +1408,9 @@ func (s *Supervisor) stopOne(ctx context.Context, name string, ev chan<- Event) 
 	}
 	if s.awaitDeath(ctx, pid, killGrace) {
 		s.forgetStopped(name)
+		if in, ok := s.byName[name]; ok {
+			s.runStopHook(ctx, in, in.Hooks.PostStop, ev, "post_stop")
+		}
 		emit(ev, Event{Service: name, Phase: PhaseStopped, Msg: "stopped (SIGKILL)"})
 		return
 	}

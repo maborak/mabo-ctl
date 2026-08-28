@@ -55,6 +55,9 @@ type app struct {
 
 	// configPath is the value of the global --config flag, or "" for discovery.
 	configPath string
+	// profilesArg is the parsed --profile flag value, or nil when the flag was
+	// not given (MABO_PROFILE then applies, then the empty set).
+	profilesArg []string
 
 	cfg    *config.Config
 	cfgErr error
@@ -136,6 +139,7 @@ func newApp(e *Env) *app { return &app{env: e} }
 // nothing can spawn without it, so skipping the capture is safe.
 func (a *app) bootstrap() {
 	a.configPath = peekConfig(a.env.Args)
+	a.profilesArg = peekProfile(a.env.Args)
 	a.load()
 	a.capture()
 }
@@ -164,7 +168,36 @@ func (a *app) load() {
 		return
 	}
 	a.cfg = cfg
+	if err := cfg.ApplyProfiles(a.activeProfiles()); err != nil {
+		a.cfgErr = withCode(exitConfig, err)
+		return
+	}
 	a.announceDiscovery()
+}
+
+// activeProfiles resolves the active profile set: the --profile flag wins over
+// MABO_PROFILE, and both being absent means the empty set, under which every
+// declared service is visible — the pre-profiles behaviour, byte for byte.
+func (a *app) activeProfiles() []string {
+	if a.profilesArg != nil {
+		return a.profilesArg
+	}
+	if env := os.Getenv("MABO_PROFILE"); env != "" {
+		return parseProfiles(env)
+	}
+	return nil
+}
+
+// parseProfiles splits a comma-separated profile list, trimming whitespace
+// and dropping empties so "a,, b" means the same thing as "a,b".
+func parseProfiles(s string) []string {
+	var out []string
+	for _, part := range strings.Split(s, ",") {
+		if p := strings.TrimSpace(part); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // announceDiscovery names the config file when it was found somewhere OTHER

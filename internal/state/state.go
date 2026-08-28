@@ -83,7 +83,7 @@ func New(root string) (*Dir, error) {
 		return nil, fmt.Errorf("state: resolve root %q: %w", root, err)
 	}
 	d := &Dir{Root: abs}
-	for _, p := range []string{d.Path(), d.LogsDir(), d.PIDsDir(), d.ExitsDir()} {
+	for _, p := range []string{d.Path(), d.LogsDir(), d.PIDsDir(), d.ExitsDir(), d.TTYDir()} {
 		if err := os.MkdirAll(p, dirPerm); err != nil {
 			return nil, fmt.Errorf("state: create %s: %w", p, err)
 		}
@@ -266,6 +266,61 @@ func (d *Dir) TTYSockPath(svc string) string {
 	return filepath.Join(d.Path(), "tty", svc+".sock")
 }
 
+// TTYDir returns the path of the directory holding the terminal-relay
+// sockets: Root/.dev/tty.
+func (d *Dir) TTYDir() string {
+	return filepath.Join(d.Path(), "tty")
+}
+
+// PrepareTTY clears the way for svc's terminal-relay socket and returns its
+// path: the tty directory is created if the state dir predates it, and any
+// socket left by a broker that died between listen and cleanup is removed, or
+// the broker's net.Listen would hit "address already in use". It is the
+// state-owned way to write under .dev/tty — the broker never touches the
+// filesystem there itself.
+func (d *Dir) PrepareTTY(svc string) (string, error) {
+	if err := validService(svc); err != nil {
+		return "", err
+	}
+	dir := d.TTYDir()
+	if err := os.MkdirAll(dir, dirPerm); err != nil {
+		return "", fmt.Errorf("state: create %s: %w", dir, err)
+	}
+	sock := d.TTYSockPath(svc)
+	if err := os.Remove(sock); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return "", fmt.Errorf("state: remove stale tty socket %s: %w", sock, err)
+	}
+	return sock, nil
+}
+
+// SealTTY restricts svc's terminal-relay socket to its owner, immediately
+// after the broker's listen made it exist. The window between listen and this
+// chmod is the one moment the socket carries a group/world mode from the
+// umask; the seal runs first thing so the window is as short as the OS allows.
+func (d *Dir) SealTTY(svc string) error {
+	if err := validService(svc); err != nil {
+		return err
+	}
+	sock := d.TTYSockPath(svc)
+	if err := os.Chmod(sock, filePerm); err != nil {
+		return fmt.Errorf("state: seal tty socket %s: %w", sock, err)
+	}
+	return nil
+}
+
+// RemoveTTY deletes svc's terminal-relay socket once the broker is done with
+// it. An already-absent socket is not an error.
+func (d *Dir) RemoveTTY(svc string) error {
+	if err := validService(svc); err != nil {
+		return err
+	}
+	sock := d.TTYSockPath(svc)
+	if err := os.Remove(sock); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("state: remove tty socket %s: %w", sock, err)
+	}
+	return nil
+}
+
 // PIDClaimPath returns the path of svc's start claim:
 // Root/.dev/pids/<svc>.pid.claim.
 func (d *Dir) PIDClaimPath(svc string) string {
@@ -278,6 +333,23 @@ func (d *Dir) PIDClaimPath(svc string) string {
 type claimRecord struct {
 	PID int       `json:"pid"`
 	At  time.Time `json:"at"`
+}
+
+// ClaimReport says what a ClaimPID call did to a claim it found already on
+// disk. A start that EVICTED another mabo-ctl's wreckage and a start that took
+// a clean claim used to be indistinguishable to the operator; the report is
+// what lets the caller say which happened.
+type ClaimReport struct {
+	// ClearedStale reports whether a stale claim file was removed before this
+	// caller's own claim was taken.
+	ClearedStale bool
+	// PrevPID is the owner pid named by the cleared claim, 0 when the claim
+	// was unparseable.
+	PrevPID int
+	// PrevAt is when the cleared claim was taken; the zero time when unknown.
+	PrevAt time.Time
+	// PrevWhy names why the cleared claim was judged stale.
+	PrevWhy string
 }
 
 // ClaimPID takes svc's cross-process START CLAIM with an exclusive create.
@@ -299,27 +371,30 @@ type claimRecord struct {
 // [claimMaxAge], or when it cannot be parsed at all. Freshness of the OWNER is
 // answered with the same liveness test used for services; an unparseable claim
 // is treated as wreckage, never as fatal, because one corrupt byte must not
-// wedge the service permanently.
+// wedge the service permanently. The returned [ClaimReport] says when that
+// happened, so the caller can surface the eviction instead of hiding it
+// behind an otherwise ordinary start.
 //
 // It returns an error wrapping ErrClaimed when a fresh claim survives the
 // staleness check, ErrInvalidService for an unsafe name, and errors wrapping
 // owner-pid or filesystem problems otherwise.
-func (d *Dir) ClaimPID(svc string, owner int, now time.Time) error {
+func (d *Dir) ClaimPID(svc string, owner int, now time.Time) (ClaimReport, error) {
+	var rep ClaimReport
 	if err := validService(svc); err != nil {
-		return err
+		return rep, err
 	}
 	if owner <= 0 {
-		return fmt.Errorf("state: claim %q: owner pid %d is not positive", svc, owner)
+		return rep, fmt.Errorf("state: claim %q: owner pid %d is not positive", svc, owner)
 	}
 	p := d.PIDClaimPath(svc)
 
 	for attempt := 0; attempt < 2; attempt++ {
 		err := d.createClaim(p, claimRecord{PID: owner, At: now})
 		if err == nil {
-			return nil
+			return rep, nil
 		}
 		if !errors.Is(err, fs.ErrExist) {
-			return fmt.Errorf("state: create claim %s: %w", p, err)
+			return rep, fmt.Errorf("state: create claim %s: %w", p, err)
 		}
 		if attempt > 0 {
 			break // we just cleared a stale claim and lost the re-race: report it below
@@ -329,20 +404,26 @@ func (d *Dir) ClaimPID(svc string, owner int, now time.Time) error {
 		switch {
 		case recErr != nil:
 			// Unparseable or unreadable: wreckage, not authority. Remove and retry.
+			rep.PrevWhy = "unparseable or unreadable"
 		case now.Sub(rec.At) > claimMaxAge:
 			// Old beyond any legitimate start.
+			rep.PrevPID, rep.PrevAt = rec.PID, rec.At
+			rep.PrevWhy = "older than the ten-minute claim age limit"
 		case !Alive(rec.PID):
 			// Its creator is gone; the claim outlived the process that would
 			// have released it.
+			rep.PrevPID, rep.PrevAt = rec.PID, rec.At
+			rep.PrevWhy = "its owner pid is gone"
 		default:
-			return fmt.Errorf("state: %w: %s claims pid %d has been starting it since %s",
+			return rep, fmt.Errorf("state: %w: %s claims pid %d has been starting it since %s",
 				ErrClaimed, svc, rec.PID, rec.At.Format(time.RFC3339))
 		}
 		if err := os.Remove(p); err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return fmt.Errorf("state: clear stale claim %s: %w", p, err)
+			return rep, fmt.Errorf("state: clear stale claim %s: %w", p, err)
 		}
+		rep.ClearedStale = true
 	}
-	return fmt.Errorf("state: %w: another mabo-ctl claimed %s first", ErrClaimed, svc)
+	return rep, fmt.Errorf("state: %w: another mabo-ctl claimed %s first", ErrClaimed, svc)
 }
 
 // ReleaseClaim removes svc's start claim. An absent claim is not an error: it
@@ -422,6 +503,26 @@ func (d *Dir) TruncateLog(svc string) (*os.File, error) {
 	if err := f.Chmod(filePerm); err != nil {
 		return nil, errors.Join(
 			fmt.Errorf("state: chmod log %s to %o: %w", p, filePerm, err),
+			f.Close(),
+		)
+	}
+	return f, nil
+}
+
+// OpenLogAppend opens the service's log for appending without truncating or
+// rotating it. Post-start hooks write here after the service is up, so their
+// output lands in the run's log the way the service's own output does.
+func (d *Dir) OpenLogAppend(svc string) (*os.File, error) {
+	if err := validService(svc); err != nil {
+		return nil, err
+	}
+	f, err := os.OpenFile(d.LogPath(svc), os.O_CREATE|os.O_WRONLY|os.O_APPEND, filePerm)
+	if err != nil {
+		return nil, fmt.Errorf("state: append log %s: %w", d.LogPath(svc), err)
+	}
+	if err := f.Chmod(filePerm); err != nil {
+		return nil, errors.Join(
+			fmt.Errorf("state: chmod log %s to %o: %w", d.LogPath(svc), filePerm, err),
 			f.Close(),
 		)
 	}
