@@ -1379,6 +1379,44 @@ func TestTheUnlockPageCarriesNoToken(t *testing.T) {
 	}
 }
 
+// TestDocsPageCarriesEmbeddedOpenAPISpec checks that the API reference page
+// contains the parsed OpenAPI spec as an inline JSON variable, so the browser
+// can render endpoint cards without a client-side YAML parser or fetch.
+func TestDocsPageCarriesEmbeddedOpenAPISpec(t *testing.T) {
+	t.Parallel()
+	s := newRecorderServer(t, twoServices())
+
+	req := httptest.NewRequest(http.MethodGet, "http://"+recorderAddr+"/api-docs", nil)
+	req.Header.Set(tokenHeader, s.Token())
+	rec := httptest.NewRecorder()
+	s.h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /api-docs = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+
+	// The page must embed the OpenAPI spec as JSON for the browser.
+	if !strings.Contains(body, "window.__OPENAPI__=") {
+		t.Error("the docs page does not embed the OpenAPI spec as window.__OPENAPI__")
+	}
+	// The embedded JSON must contain the route paths.
+	for _, want := range []string{"/api/status", "/api/services", "/health"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the embedded OpenAPI spec does not contain %s", want)
+		}
+	}
+	// The page must carry the same CSP as the console.
+	csp := rec.Header().Get("Content-Security-Policy")
+	if !strings.Contains(csp, "default-src 'none'") {
+		t.Errorf("CSP %q is missing default-src 'none'", csp)
+	}
+	// The page must not leak the token.
+	if strings.Contains(body, s.Token()) {
+		t.Error("the docs page leaked the session token")
+	}
+}
+
 // TestAWrongTokenIsRefusedEverywhere pins that the check is a comparison and not
 // a presence test.
 func TestAWrongTokenIsRefusedEverywhere(t *testing.T) {

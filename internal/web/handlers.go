@@ -13,6 +13,8 @@ import (
 	"sync"
 	"time"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/maborak/mabo-ctl/internal/redact"
 	"github.com/maborak/mabo-ctl/internal/supervisor"
 	"github.com/maborak/mabo-ctl/internal/ui"
@@ -40,6 +42,23 @@ var apiDocsHTML string
 //
 //go:embed openapi.yaml
 var openapiSpec string
+
+// openapiSpecJSON is the same spec converted to JSON at init time. The
+// API docs page receives it as an inline script variable so the browser
+// can render endpoints without a client-side YAML parser.
+var openapiSpecJSON string
+
+func init() {
+	var raw any
+	if err := yaml.Unmarshal([]byte(openapiSpec), &raw); err != nil {
+		panic("web: parsing openapi.yaml: " + err.Error())
+	}
+	b, err := json.Marshal(raw)
+	if err != nil {
+		panic("web: marshaling openapi.yaml to JSON: " + err.Error())
+	}
+	openapiSpecJSON = string(b)
+}
 
 // contentSecurityPolicy is served with the page. It permits the inline style
 // and script the single-file page is made of, and same-origin fetch and
@@ -180,6 +199,9 @@ func (s *Server) handleDocs(w http.ResponseWriter, r *http.Request) {
 		s.setSessionCookie(w)
 	}
 	w.WriteHeader(http.StatusOK)
+	// Inject the parsed OpenAPI spec as a global JS variable so the page
+	// can render endpoints without a client-side YAML parser or fetch.
+	_, _ = w.Write([]byte("<script>window.__OPENAPI__=" + openapiSpecJSON + ";</script>\n"))
 	_, _ = w.Write([]byte(apiDocsHTML))
 }
 
