@@ -11,6 +11,14 @@ stable, everything else may still move.
 
 ### Added
 
+- **`GET /health`** — unauthenticated server liveness check on the web console.
+  Returns `{"status": "ok"}` with a 200 status when the server is running.
+  The only route that does not require a session token, designed for monitoring
+  tools, load balancers and CI probes.
+- **`docs/API.md`** — comprehensive HTTP API reference for the web console:
+  every route, authentication model, request/response shapes, SSE stream
+  formats, error handling, and curl examples. The machine-readable catalogue
+  (`mabo-ctl schema --commands`) is now paired with a human-readable companion.
 - **`tty: true` makes a service attachable** — the child runs on a pty owned
   by a detached broker that tees its output into the normal log, and
   `mabo-ctl attach <name>` connects your terminal to it: Ctrl-Q detaches,
