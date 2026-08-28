@@ -25,6 +25,12 @@ const (
 	// stack. Wrapped in [Server.requireToken], the stricter of the two guards,
 	// because anything holding such a token drives the dev stack.
 	RouteMutate RouteKind = "mutate"
+	// RouteHealth marks an unauthenticated health-check endpoint. Monitoring
+	// tools, load balancers and CI probes need to check whether mabo-ctl's
+	// web server is alive without holding a session token. The handler must
+	// reveal no process state, no credentials and no information beyond
+	// the fact that the server is up.
+	RouteHealth RouteKind = "health"
 )
 
 // Route describes one HTTP route the console serves.
@@ -62,6 +68,9 @@ type Route struct {
 // still rejects an unknown service — registration order plays no part.
 var consoleRoutes = []Route{
 	{http.MethodGet, "/{$}", "the web console page", RouteIndex, false},
+	{http.MethodGet, "/health",
+		"unauthenticated server liveness check; returns 200 when the web server is up",
+		RouteHealth, false},
 	{http.MethodGet, "/api/services",
 		"every declared service as resolved: name, dir, cmd, runtime, port, health URL, dependencies, colours",
 		RouteRead, false},

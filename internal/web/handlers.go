@@ -133,6 +133,18 @@ type errorResponse struct {
 	Valid []string `json:"valid,omitempty"`
 }
 
+// handleHealth serves an unauthenticated liveness probe. It reveals nothing
+// beyond the fact that the web server process is running: no service state,
+// no version, no credential, no uptime. A monitoring system that can parse
+// JSON is expected to check for {"status":"ok"}; a simple HTTP client checks
+// for 200.
+func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(`{"status":"ok"}`))
+}
+
 // handleIndex serves the console page to a caller that has the session token,
 // and an unlock page to one that does not.
 //

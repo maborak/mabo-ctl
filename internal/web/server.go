@@ -432,6 +432,7 @@ func (s *Server) routes() *http.ServeMux {
 	// list, POST /api/origins replaces it.
 	handlers := map[string]http.HandlerFunc{
 		"GET /{$}":              s.handleIndex,
+		"GET /health":           s.handleHealth,
 		"GET /api/services":     s.handleServices,
 		"GET /api/config":       s.handleConfig,
 		"GET /api/status":       s.handleStatus,
@@ -463,6 +464,13 @@ func (s *Server) routes() *http.ServeMux {
 			// answer an unauthenticated person with a box to paste the token
 			// into rather than a bare 403. It still never puts the token in
 			// that response.
+			wrap = func(pattern string, h http.HandlerFunc) {
+				mux.HandleFunc(pattern, h)
+			}
+		case RouteHealth:
+			// NOT wrapped: monitoring tools, load balancers and CI probes
+			// need liveness without a session token. The handler must not
+			// reveal process state, credentials or anything beyond liveness.
 			wrap = func(pattern string, h http.HandlerFunc) {
 				mux.HandleFunc(pattern, h)
 			}

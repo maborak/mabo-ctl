@@ -59,6 +59,11 @@ func TestTheDocumentedRoutesAreTheServedRoutes(t *testing.T) {
 			if r.Method != http.MethodGet || r.Path != "/{$}" {
 				t.Errorf("index route is %s; the page lives at exactly GET /{$}", r.Method+" "+r.Path)
 			}
+		case RouteHealth:
+			// Health routes must be accessible without authentication.
+			if code := do(s, http.MethodGet, path, false); code != http.StatusOK {
+				t.Errorf("%s unauthenticated = %d, want 200 (health must be open)", key2(r), code)
+			}
 		case RouteRead:
 			// Every read route is session-gated; no credential means no data.
 			if code := do(s, http.MethodGet, path, false); code != http.StatusForbidden {
