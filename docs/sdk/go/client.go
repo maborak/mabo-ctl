@@ -184,10 +184,10 @@ type EventJSON struct {
 
 // MutationResponse is the body of a start, stop or restart.
 type MutationResponse struct {
-	Operation string     `json:"operation"`
-	Services  []string   `json:"services"`
-	OK        bool       `json:"ok"`
-	Error     string     `json:"error,omitempty"`
+	Operation string      `json:"operation"`
+	Services  []string    `json:"services"`
+	OK        bool        `json:"ok"`
+	Error     string      `json:"error,omitempty"`
 	Events    []EventJSON `json:"events"`
 }
 
@@ -381,12 +381,12 @@ func decodeSSE[T any](ctx context.Context, body io.Reader, ch chan<- T) {
 
 			// Split on double newlines (SSE event boundary)
 			for {
-			idx := bytes.Index(buf, []byte("\n\n"))
-			if idx < 0 {
-				leftover = make([]byte, len(buf))
-				copy(leftover, buf)
-				break
-			}
+				idx := bytes.Index(buf, []byte("\n\n"))
+				if idx < 0 {
+					leftover = make([]byte, len(buf))
+					copy(leftover, buf)
+					break
+				}
 
 				event := buf[:idx]
 				buf = buf[idx+2:]
