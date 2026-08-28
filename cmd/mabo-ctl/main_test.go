@@ -1645,12 +1645,12 @@ func TestPreflightMachinePassAdvisesOnNvmrcWithoutRuntimeVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeFile(t, filepath.Join(svc, ".nvmrc"), "v24.4.0\n")
-	writeFile(t, filepath.Join(root, "mabo-ctl.yaml"), fmt.Sprintf(`
+	writeFile(t, filepath.Join(root, "mabo-ctl.yaml"), `
 services:
   - name: frontend
     dir: frontend
     cmd: [echo, up]
-`))
+`)
 
 	h := newHarnessAt(t, root, "preflight")
 	if code := h.run(); code != exitOK {
@@ -1689,7 +1689,7 @@ checks:
 		t.Fatalf("failure does not say the port should be free:\n%s", out)
 	}
 
-	l.Close() // now free: the same check passes
+	_ = l.Close() // now free: the same check passes
 	good := newHarnessWithConfig(t, fmt.Sprintf(`
 services:
   - name: api

@@ -16,7 +16,7 @@ func TestDetachFilterConsumesCtrlQ(t *testing.T) {
 	defer r.Close()
 	go func() {
 		_, _ = w.Write([]byte{'a', ttyDetachByte, 'b'})
-		w.Close()
+		_ = w.Close()
 	}()
 	var sb strings.Builder
 	err := detachFilterCopy(&sb, r)

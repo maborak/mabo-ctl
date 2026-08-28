@@ -135,10 +135,10 @@ func Latest(ctx context.Context, opt Options) (Release, error) {
 	var sumsURL string
 	out := Release{Tag: meta.TagName, AssetName: want}
 	for _, a := range meta.Assets {
-		switch {
-		case a.Name == want:
+		switch a.Name {
+		case want:
 			out.AssetURL = pick(a)
-		case a.Name == "SHA256SUMS":
+		case "SHA256SUMS":
 			sumsURL = pick(a)
 		}
 	}
@@ -248,7 +248,7 @@ func Apply(ctx context.Context, opt Options, exePath string, rel Release) error 
 	if err != nil {
 		return fmt.Errorf("selfupdate: create temp file next to %s: %w", exePath, err)
 	}
-	defer os.Remove(tmp.Name()) // a no-op after a successful rename
+	defer func() { _ = os.Remove(tmp.Name()) }() // a no-op after a successful rename
 
 	info, err := os.Stat(exePath)
 	if err != nil {
@@ -259,7 +259,7 @@ func Apply(ctx context.Context, opt Options, exePath string, rel Release) error 
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("selfupdate: downloading %s: unexpected status %s", rel.AssetURL, resp.Status)
 	}
@@ -312,7 +312,7 @@ func (o Options) getJSON(ctx context.Context, raw string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("selfupdate: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == http.StatusNotFound {
 		if o.Token == "" {
 			return nil, errors.New("selfupdate: no release of mabo-ctl has been published yet (or the repository is private — set GITHUB_TOKEN)")
@@ -331,7 +331,7 @@ func (o Options) get(ctx context.Context, raw string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("selfupdate: downloading %s: unexpected status %s", raw, resp.Status)
 	}

@@ -123,7 +123,7 @@ func TestStopHooksRunAndCannotBlockTheStop(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	sup.Stop(ctx, []string{"svc"}, nil)
+	_ = sup.Stop(ctx, []string{"svc"}, nil)
 	sup.Wait()
 
 	for _, p := range []string{pre, post} {

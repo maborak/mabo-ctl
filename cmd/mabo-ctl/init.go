@@ -273,7 +273,7 @@ func ensureGitIgnore(path string) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("append to %s: %w", path, err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	if len(existing) > 0 && existing[len(existing)-1] != '\n' {
 		fmt.Fprintln(f)
 	}

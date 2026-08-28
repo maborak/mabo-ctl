@@ -73,8 +73,8 @@ func (s *Supervisor) spawnTTY(in service.Instance, logPath, sockPath string) (in
 	if err != nil {
 		return 0, fmt.Errorf("broker handshake pipe: %w", err)
 	}
-	defer pr.Close()
-	defer pw.Close()
+	defer func() { _ = pr.Close() }()
+	defer func() { _ = pw.Close() }()
 
 	c := exec.Command(self, ttyBrokerCommand, "--log", logPath, "--sock", sockPath, "--")
 	c.Args = append(c.Args, in.Cmd...)
@@ -86,7 +86,7 @@ func (s *Supervisor) spawnTTY(in service.Instance, logPath, sockPath string) (in
 	if serr := c.Start(); serr != nil {
 		return 0, fmt.Errorf("spawn terminal broker: %w", serr)
 	}
-	pw.Close() // EOF at the broker's end matters, not ours
+	_ = pw.Close() // EOF at the broker's end matters, not ours
 
 	type hsResult struct {
 		hs  ttyHandshake
@@ -135,7 +135,7 @@ func runTTYBrokerFromArgs(argv []string, out *os.File) int {
 	fail := func(format string, args ...any) int {
 		b, _ := json.Marshal(ttyHandshake{Err: fmt.Sprintf(format, args...)})
 		fmt.Fprintf(out, "%s\n", b)
-		out.Close()
+		_ = out.Close()
 		return 1
 	}
 	opts, cmdArgs, ok := parseBrokerArgs(argv)
@@ -143,17 +143,20 @@ func runTTYBrokerFromArgs(argv []string, out *os.File) int {
 		return fail("broker needs --log PATH --sock PATH [--svc NAME] -- then the child argv")
 	}
 
+	//nolint:staticcheck // SA4023 fires because openPty's error is provably
+	// non-nil on the darwin build, where it always declines; the linux build
+	// can succeed, so the comparison is correct.
 	master, slavePath, err := openPty()
-	if err != nil {
+	if err != nil { //nolint:staticcheck
 		return fail("%v", err)
 	}
-	defer master.Close()
+	defer func() { _ = master.Close() }()
 
 	logFile, err := os.OpenFile(opts.logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return fail("open service log %s: %v", opts.logPath, err)
 	}
-	defer logFile.Close()
+	defer func() { _ = logFile.Close() }()
 
 	slave, err := os.OpenFile(slavePath, os.O_RDWR, 0)
 	if err != nil {
@@ -171,7 +174,7 @@ func runTTYBrokerFromArgs(argv []string, out *os.File) int {
 	if serr := child.Start(); serr != nil {
 		return fail("spawn %s: %v", cmdArgs[0], serr)
 	}
-	slave.Close() // the child owns its end; the broker keeps only the master
+	_ = slave.Close() // the child owns its end; the broker keeps only the master
 
 	hub := newTeeHub(logFile, master)
 	go pumpMasterToHub(master, hub)
@@ -232,9 +235,9 @@ func runTTYBrokerFromArgs(argv []string, out *os.File) int {
 	rec.LogTail = hub.tailSnapshot()
 	_ = st.WriteExit(svc, rec)
 
-	ln.Close()
+	_ = ln.Close()
 	_ = st.RemoveTTY(svc)
-	out.Close()
+	_ = out.Close()
 	return 0
 }
 
@@ -319,7 +322,7 @@ func (h *teeHub) attach(c net.Conn) bool {
 	defer h.mu.Unlock()
 	if h.client != nil {
 		_, _ = c.Write(h.busyMsg)
-		c.Close()
+		_ = c.Close()
 		return false
 	}
 	h.client = c
@@ -374,7 +377,7 @@ func serveAttach(ln net.Listener, hub *teeHub) {
 		go func() {
 			defer func() {
 				hub.detach(client)
-				client.Close()
+				_ = client.Close()
 			}()
 			buf := make([]byte, 32*1024)
 			for {

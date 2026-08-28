@@ -26,14 +26,14 @@ func main() {
 		if err != nil {
 			fatal(err)
 		}
-		defer os.RemoveAll(tmp)
+		defer func() { _ = os.RemoveAll(tmp) }()
 		p := filepath.Join(tmp, "mabo-ctl")
 		b, err := surface.ExecGoBuild(p)
 		if err != nil {
 			fatal(err)
 		}
 		*bin = p
-		fmt.Fprintln(os.Stderr, "built:", b)
+		fmt.Fprintln(os.Stderr, "built:", string(b))
 	}
 
 	m, err := surface.Enumerate(*bin)

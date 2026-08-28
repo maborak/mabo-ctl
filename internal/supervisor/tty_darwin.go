@@ -19,12 +19,9 @@ func openPty() (*os.File, string, error) {
 		" (no libc-free openpty); declare tty: false and use mabo-ctl exec instead")
 }
 
-// makeControllingTTY makes fd the controlling terminal of the calling process,
-// which must already be a session leader. Without it a shell child cannot take
-// the terminal for its own job control.
-func makeControllingTTY(fd uintptr) error {
-	return ioctlPtr(fd, syscall.TIOCSCTTY, nil)
-}
+// (The TIOCSCTTY helper a real darwin implementation will need —
+// makeControllingTTY — was removed as dead code until that work lands; see
+// git history.)
 
 // termiosFor reads and makeRaw applies cfmakeraw semantics to fd's terminal —
 // the attach client's side of the relay, so keystrokes arrive at the broker one

@@ -634,7 +634,7 @@ func freePort(t *testing.T) (string, net.Listener) {
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	t.Cleanup(func() { l.Close() })
+	t.Cleanup(func() { _ = l.Close() })
 	return l.Addr().String(), l
 }
 
@@ -650,7 +650,7 @@ func TestProbeTCPConnectsAndCloses(t *testing.T) {
 	}
 
 	// A refused port is the negative case.
-	l.Close() //nolint:errcheck — nothing depends on this listener surviving
+	_ = l.Close() //nolint:errcheck — nothing depends on this listener surviving
 	if res2 := ProbeTCP(context.Background(), "127.0.0.1:1"); res2.OK {
 		t.Error("dialing a refused port reported OK")
 	}

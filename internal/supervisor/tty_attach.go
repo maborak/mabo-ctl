@@ -63,7 +63,7 @@ func AttachTTY(sockPath string, stdin *os.File, stdout io.Writer) error {
 		}
 		return fmt.Errorf("attach %s: %w", sockPath, err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	var saved *syscall.Termios
 	if stdin != nil { // nil-guarded so pipe-backed stdins (tests) stay usable
@@ -91,7 +91,7 @@ func AttachTTY(sockPath string, stdin *os.File, stdout io.Writer) error {
 	}()
 
 	err = <-done
-	conn.Close()
+	_ = conn.Close()
 	<-done // unblock the other pump; its next read/write fails on close
 	return err
 }

@@ -176,7 +176,7 @@ func (s *Supervisor) Tail(ctx context.Context, svc string, n int, follow bool, o
 				if oerr != nil {
 					return fmt.Errorf("reopen %s after rotation: %w", path, oerr)
 				}
-				f.Close()
+				_ = f.Close()
 				f = nf
 				if _, serr2 := f.Seek(0, io.SeekStart); serr2 != nil {
 					return fmt.Errorf("rewind %s after rotation: %w", path, serr2)

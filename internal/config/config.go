@@ -124,9 +124,6 @@ type Spec struct {
 	ReadyTimeout time.Duration
 }
 
-// Autostarts reports whether a bare `mabo-ctl start` should include this service.
-// An unset autostart field means yes, which is what every config written before
-// the field existed means.
 // Hooks are the four lifecycle hook command lines for one service. Each is an
 // argv, run — not a shell string, for the same no-shell-quote-reinterpretation
 // reason cmd is one. A pre_start failure refuses the start; post_start,
@@ -156,6 +153,9 @@ func (h Hooks) Clone() Hooks {
 	}
 }
 
+// Autostarts reports whether a bare `mabo-ctl start` should include this
+// service. An unset autostart field means yes, which is what every config
+// written before the field existed means.
 func (s Spec) Autostarts() bool { return s.Autostart == nil || *s.Autostart }
 
 // EnvFilePath resolves the service's env_file against the project root, the

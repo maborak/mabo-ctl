@@ -76,11 +76,11 @@ func TestTTYDarwinRefusalIsHonest(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s openPty failed: %v", runtime.GOOS, err)
 		}
-		master.Close()
+		_ = master.Close()
 		return
 	}
 	if err == nil {
-		master.Close()
+		_ = master.Close()
 		t.Fatalf("darwin unexpectedly allocated %s; update the refusal test", slavePath)
 	}
 	if !strings.Contains(err.Error(), "not yet supported on darwin") {

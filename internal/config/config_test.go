@@ -1373,7 +1373,7 @@ func TestEnvFileValidation(t *testing.T) {
 			t.Fatalf("err = %v, want a ValidationError", err)
 		}
 		msg := err.Error()
-		if !(strings.Contains(msg, "invalid env variable name") || strings.Contains(msg, "empty variable name")) ||
+		if (!strings.Contains(msg, "invalid env variable name") && !strings.Contains(msg, "empty variable name")) ||
 			!strings.Contains(msg, "env_file") {
 			t.Errorf("the bad key was not reported as an env_file problem:\n%s", msg)
 		}

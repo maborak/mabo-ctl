@@ -243,7 +243,7 @@ run.`,
 				return usageErrorf("--tail must not be negative, got %d", n)
 			}
 			var names []string
-			if !(len(args) == 0 || (len(args) == 1 && args[0] == "all")) {
+			if len(args) > 1 || (len(args) == 1 && args[0] != "all") {
 				if err := a.validateNames(cmd, args); err != nil {
 					return err
 				}
