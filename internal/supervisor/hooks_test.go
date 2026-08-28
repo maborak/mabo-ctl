@@ -41,6 +41,18 @@ func readyProbeService(name, dir string) service.Instance {
 	return in
 }
 
+// fixtureWithRoomyHooks is fixture with a wider ready budget, for the hook
+// tests that are about run/fail semantics rather than about the budget
+// itself. Under a full-suite -race load the first exec of a hook script can
+// stall for seconds; a test asserting "the hook ran" must not race the
+// pre_start deadline it is not trying to test.
+func fixtureWithRoomyHooks(t *testing.T, insts ...service.Instance) (*Supervisor, *state.Dir) {
+	t.Helper()
+	sup, st := fixture(t, insts...)
+	sup.cfg.ReadyTimeout = 60 * time.Second
+	return sup, st
+}
+
 func TestPreStartHookRunsAndFailingItFailsTheStart(t *testing.T) {
 	dir := t.TempDir()
 	marker := filepath.Join(dir, "prestart-ran")
@@ -48,7 +60,7 @@ func TestPreStartHookRunsAndFailingItFailsTheStart(t *testing.T) {
 	in := readyProbeService("svc", dir)
 	in.Hooks.PreStart = hookScript(t, dir, marker, "3")
 
-	sup, st := fixture(t, in)
+	sup, st := fixtureWithRoomyHooks(t, in)
 	defer sup.Wait()
 	ev, collect := drain(t)
 	err := sup.Start(context.Background(), []string{"svc"}, ev)
@@ -85,7 +97,7 @@ func TestPostStartHookIsBestEffort(t *testing.T) {
 	in := readyProbeService("svc", dir)
 	in.Hooks.PostStart = hookScript(t, dir, marker, "1")
 
-	sup, st := fixture(t, in)
+	sup, st := fixtureWithRoomyHooks(t, in)
 	defer func() { _ = sup.Stop(context.Background(), nil, nil); sup.Wait() }()
 
 	ev, collect := drain(t)
