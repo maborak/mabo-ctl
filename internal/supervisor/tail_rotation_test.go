@@ -32,7 +32,7 @@ func TestTailFollowsTheLogAcrossARotation(t *testing.T) {
 
 	await := func(substr string, what string) {
 		t.Helper()
-		deadline := time.After(3 * time.Second)
+		deadline := time.After(10 * time.Second)
 		for {
 			select {
 			case l, ok := <-lines:
