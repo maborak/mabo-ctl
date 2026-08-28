@@ -19,24 +19,21 @@ func openPty() (*os.File, string, error) {
 	}
 	var unlock int32
 	if err := ioctlPtr(master.Fd(), syscall.TIOCSPTLCK, unsafe.Pointer(&unlock)); err != nil {
-		master.Close()
+		_ = master.Close()
 		return nil, "", fmt.Errorf("unlock pty: %w", err)
 	}
 	var n int32
 	if err := ioctlPtr(master.Fd(), syscall.TIOCGPTN, unsafe.Pointer(&n)); err != nil {
-		master.Close()
+		_ = master.Close()
 		return nil, "", fmt.Errorf("resolve pty number: %w", err)
 	}
 	slavePath := fmt.Sprintf("/dev/pts/%d", n)
 	return master, slavePath, nil
 }
 
-// makeControllingTTY makes fd the controlling terminal of the calling process,
-// which must already be a session leader. Without it a shell child cannot take
-// the terminal for its own job control.
-func makeControllingTTY(fd uintptr) error {
-	return ioctlPtr(fd, syscall.TIOCSCTTY, nil)
-}
+// (The TIOCSCTTY helper a real Linux implementation will need —
+// makeControllingTTY — was removed as dead code until that work lands; see
+// git history.)
 
 // termiosGet / termiosSet read and write fd's terminal settings; makeRaw
 // applies cfmakeraw semantics so the attach client forwards every byte
