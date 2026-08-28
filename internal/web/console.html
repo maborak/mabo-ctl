@@ -1025,7 +1025,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     <div class="spacer"></div>
     {{with .Root}}<div class="where"><span title="{{.}}"><b>root</b>{{.}}</span></div>{{end}}
     <div class="bar-actions">
-      <a href="/api-docs/?token={{.Token}}" class="ghost"
+      <a href="/api-docs?token={{.Token}}" class="ghost"
          title="Open the API reference (Redoc-style endpoint docs)">API</a>
       <button type="button" id="btn-config" class="ghost toggle" aria-pressed="false"
               aria-controls="config-view"

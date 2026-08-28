@@ -451,6 +451,7 @@ func (s *Server) routes() *http.ServeMux {
 		"POST /api/{svc}/restart": s.handleRestart,
 
 		"GET /api-docs":         s.handleDocs,
+		"GET /api-docs/":        s.handleDocs,
 		"GET /api/openapi.yaml": s.handleOpenAPI,
 	}
 
