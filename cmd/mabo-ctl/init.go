@@ -137,9 +137,9 @@ func detectNode(dir, name string) *guess {
 		"%s: package.json declares a dev script (%q)", name, pkg.Scripts["dev"])}
 	g.lines = append(g.lines, "# - name: "+g.name)
 	if rc, err := os.ReadFile(filepath.Join(dir, ".nvmrc")); err == nil {
-		if v := strings.TrimSpace(string(rc)); v != "" {
+		if v := nvmrcVersion(string(rc)); v != "" {
 			g.lines = append(g.lines,
-				"#   runtime: node:"+strings.TrimPrefix(v, "v")+"  # from .nvmrc")
+				"#   runtime: node:"+v+"  # from .nvmrc")
 		}
 	}
 	g.lines = append(g.lines,
@@ -221,9 +221,43 @@ func renderInit(guesses []guess) string {
 
 	b.WriteString("\nservices: []  # TODO: replace this line with the uncommented entries below\n")
 	for _, g := range guesses {
-		fmt.Fprintf(&b, "\n  # %s\n", g.comment)
+		fmt.Fprintf(&b, "\n  # %s\n", yamlComment(g.comment))
 		for _, l := range g.lines {
 			fmt.Fprintf(&b, "%s\n", l)
+		}
+	}
+	return b.String()
+}
+
+// yamlComment makes repo-derived text safe inside a '#' comment line. A
+// newline in a directory name, a package.json field or any other detected
+// file would otherwise terminate the comment and let the rest of the line
+// become ACTIVE yaml in the scaffolded file — and a scaffold's checks:
+// entries execute when preflight runs. Every control character becomes a
+// space; the comment stays readable and stays a comment.
+func yamlComment(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return ' '
+		}
+		return r
+	}, s)
+}
+
+// nvmrcVersion reduces an .nvmrc value to the characters a `runtime: node:`
+// declaration can legally carry: versions, "lts/iron" style names, nothing
+// else. The raw file is untrusted repo content, and TrimSpace alone would
+// keep an internal newline — a second, UNCOMMENTED line of attacker yaml in
+// the scaffold. The leading "v" is kept as written; the runtime parser
+// accepts both forms.
+func nvmrcVersion(rc string) string {
+	rc = strings.TrimSpace(rc)
+	var b strings.Builder
+	for _, r := range rc {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9',
+			r == '.', r == '-', r == '_', r == '/':
+			b.WriteRune(r)
 		}
 	}
 	return b.String()
