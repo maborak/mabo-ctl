@@ -1,0 +1,683 @@
+openapi: "3.0.3"
+info:
+  title: mabo-ctl web console API
+  description: |
+    HTTP API served by `mabo-ctl serve`. Every route is registered from the
+    single source of truth in `internal/web/routes.go`. The machine-readable
+    catalogue (`mabo-ctl schema --commands`) is generated from the same source.
+
+    ## Authentication
+
+    - **Session**: Cookie (`mabo_session`), `?token=`, or `X-Mabo-Ctl-Token`
+      header. Required for all routes.
+    - **Token**: `X-Mabo-Ctl-Token` header only (not cookie or query). Required
+      for POST routes. This is the CSRF defence: a cross-origin page cannot
+      attach custom headers without triggering a CORS preflight, which this
+      server never answers.
+
+    ## Security
+
+    Every response carries: `X-Content-Type-Options: nosniff`,
+    `Referrer-Policy: no-referrer`, `X-Frame-Options: DENY`,
+    `Cache-Control: no-store`. No `Access-Control-Allow-*` headers are set.
+
+    ## Redaction
+
+    Credential-shaped values in health URLs, command arguments, and environment
+    values are replaced with `[redacted]` by `internal/redact`.
+  version: "0.1.0"
+  contact:
+    name: mabo-ctl
+    url: https://github.com/maborak/mabo-ctl
+
+servers:
+  - url: http://127.0.0.1:{port}
+    description: Local web console (loopback only)
+    variables:
+      port:
+        default: "7999"
+        description: Port printed by `mabo-ctl serve`
+
+security:
+  - sessionCookie: []
+  - sessionHeader: []paths:
+
+  /health:
+    get:
+      summary: Server liveness check (unauthenticated)
+      description: |
+        Returns 200 when the web server is running. This is the only route
+        that does not require authentication — monitoring tools, load
+        balancers and CI probes need it without a session token. Reveals
+        nothing beyond liveness: no service state, no version, no uptime.
+      security: []
+      responses:
+        "200":
+          description: Server is alive
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [ok]
+              example:
+                status: ok
+
+  /:
+    get:
+      summary: Console page
+      description: |
+        The web console HTML page. An unauthenticated browser gets a token-entry
+        form (401); an authenticated one gets the full console (200).
+      security:
+        - sessionCookie: []
+        - sessionHeader: []
+        - queryToken: []
+      responses:
+        "200":
+          description: Console page (authenticated)
+          content:
+            text/html:
+              schema:
+                type: string
+        "401":
+          description: Unlock page (token entry form)
+          content:
+            text/html:
+              schema:
+                type: string
+
+  /api/services:
+    get:
+      summary: List declared services
+      description: "Every declared service as resolved: name, dir, cmd, runtime, port, health URL, dependencies, colours."
+      responses:
+        "200":
+          description: Service list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ServiceInfo"
+
+  /api/config:
+    get:
+      summary: Resolved configuration
+      description: |
+        The loaded `mabo-ctl.yaml` plus where each resolved port came from.
+        Matches `mabo-ctl config --json` exactly.
+      responses:
+        "200":
+          description: Config view
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /api/status:
+    get:
+      summary: Service status (stable contract)
+      description: |
+        One status per service, shaped exactly like `mabo-ctl status --json`.
+        **This is a stable machine contract.** Running readiness probes is a
+        side effect of this route.
+      responses:
+        "200":
+          description: Status array
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/StatusRecord"
+
+  "/api/logs/{svc}":
+    get:
+      summary: Recent log lines
+      description: The last N lines of a service's log.
+      parameters:
+        - $ref: "#/components/parameters/svc"
+        - name: tail
+          in: query
+          schema:
+            type: integer
+            default: 200
+          description: Number of lines to return (clamped to max).
+      responses:
+        "200":
+          description: Log lines
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LogsResponse"
+        "404":
+          description: Unknown service
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorWithValid"
+
+  "/api/stream/{svc}":
+    get:
+      summary: Live log stream (SSE)
+      description: |
+        Server-Sent Events stream of one service's log output. Each event is
+        unnamed with a JSON data payload.
+      parameters:
+        - $ref: "#/components/parameters/svc"
+        - name: tail
+          in: query
+          schema:
+            type: integer
+            default: 200
+          description: Initial replay count (clamped to max).
+      responses:
+        "200":
+          description: SSE event stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: |
+                  SSE events with JSON data payloads. See LogLine and StreamEnd schemas.
+        "404":
+          description: Unknown service
+
+  /api/stream/all:
+    get:
+      summary: Merged log stream (SSE)
+      description: |
+        SSE stream of every running service's log, interleaved. Each line
+        carries its `service` field for labeling/filtering.
+      parameters:
+        - name: tail
+          in: query
+          schema:
+            type: integer
+            default: 200
+          description: Initial replay count per service (clamped to max).
+      responses:
+        "200":
+          description: SSE event stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        "404":
+          description: No services declared
+
+  /api/events:
+    get:
+      summary: Lifecycle events (SSE)
+      description: |
+        Server-Sent Events stream of lifecycle events (phase transitions) for
+        the whole stack.
+      responses:
+        "200":
+          description: SSE event stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: SSE events with EventJSON data payloads.
+
+  /api/history:
+    get:
+      summary: Recent lifecycle events
+      description: |
+        The most recent lifecycle events recorded since the console started,
+        oldest first. Capped at 50 events (ring buffer). Read-only.
+      responses:
+        "200":
+          description: Event history
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HistoryResponse"
+
+  /api/origins:
+    get:
+      summary: Trusted origins
+      description: The browser origins currently trusted for cross-origin access.
+      responses:
+        "200":
+          description: Origin list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OriginsResponse"
+    post:
+      summary: Replace trusted origins
+      description: Replace the entire trusted-origin list.
+      security:
+        - tokenHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                trusted:
+                  type: array
+                  items:
+                    type: string
+              required: [trusted]
+      responses:
+        "200":
+          description: Updated origins
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OriginsResponse"
+        "400":
+          description: Malformed body
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Would lock out current origin
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/start-all:
+    post:
+      summary: Start all services
+      description: "Start every declared service (including autostart: false)."
+      security:
+        - tokenHeader: []
+      responses:
+        "200":
+          description: Operation result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MutationResponse"
+        "429":
+          description: Too many operations in flight
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/stop-all:
+    post:
+      summary: Stop all services
+      description: Stop every running service.
+      security:
+        - tokenHeader: []
+      responses:
+        "200":
+          description: Operation result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MutationResponse"
+        "429":
+          description: Too many operations in flight
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  "/api/{svc}/start":
+    post:
+      summary: Start one service
+      description: Start one named service.
+      security:
+        - tokenHeader: []
+      parameters:
+        - $ref: "#/components/parameters/svc"
+      responses:
+        "200":
+          description: Operation result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MutationResponse"
+        "404":
+          description: Unknown service
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorWithValid"
+        "429":
+          description: Too many operations in flight
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  "/api/{svc}/stop":
+    post:
+      summary: Stop one service
+      description: Stop one named service.
+      security:
+        - tokenHeader: []
+      parameters:
+        - $ref: "#/components/parameters/svc"
+      responses:
+        "200":
+          description: Operation result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MutationResponse"
+        "404":
+          description: Unknown service
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorWithValid"
+
+  "/api/{svc}/restart":
+    post:
+      summary: Restart one service
+      description: Restart one named service (stop, then start).
+      security:
+        - tokenHeader: []
+      parameters:
+        - $ref: "#/components/parameters/svc"
+      responses:
+        "200":
+          description: Operation result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MutationResponse"
+        "404":
+          description: Unknown service
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorWithValid"
+
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: mabo_session
+      description: Session cookie set by opening the printed URL with ?token=
+    sessionHeader:
+      type: apiKey
+      in: header
+      name: X-Mabo-Ctl-Token
+      description: Session token (works for both reads and mutations)
+    queryToken:
+      type: apiKey
+      in: query
+      name: token
+      description: Token in URL query (sets cookie on first use)
+    tokenHeader:
+      type: apiKey
+      in: header
+      name: X-Mabo-Ctl-Token
+      description: Required for all POST routes (CSRF defence)
+
+  parameters:
+    svc:
+      name: svc
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: "^[a-zA-Z0-9][a-zA-Z0-9_-]*$"
+      description: Declared service name
+
+  schemas:
+    ServiceInfo:
+      type: object
+      properties:
+        name:
+          type: string
+          description: Declared service name
+        dir:
+          type: string
+          description: Resolved absolute working directory
+        port:
+          type: integer
+          description: Resolved port; 0 when no port is declared
+        health:
+          type: string
+          description: Expanded readiness URL; "" when no probe
+        runtime:
+          type: string
+          description: 'Declared runtime ("", "system", "conda:x", "node:x")'
+        cmd:
+          type: array
+          items:
+            type: string
+          description: Expanded argv, cmd[0] absolute
+        cmd_line:
+          type: string
+          description: cmd rendered as one shell-quoted line
+        cmd_error:
+          type: string
+          description: Why cmd[0] could not be resolved (omitted when empty)
+        env:
+          type: array
+          items:
+            $ref: "#/components/schemas/EnvVar"
+          description: Declared environment; values redacted by key
+        depends_on:
+          type: array
+          items:
+            type: string
+          description: Services that start first
+        color:
+          type: string
+          description: Label colour from config
+
+    EnvVar:
+      type: object
+      properties:
+        key:
+          type: string
+        value:
+          type: string
+          description: Redacted when credential-shaped
+
+    StatusRecord:
+      type: object
+      description: |
+        Stable machine contract. Fields and phase values may not change
+        without a version bump.
+      example:
+        service: backend
+        phase: ready
+        pid: 41825
+        port: 7102
+        health: http://localhost:7102/health
+        http_status: 200
+        detail: HTTP 200
+        log_path: .dev/logs/backend.log
+        elapsed_ms: 2000
+        started_at: "2026-08-28T10:00:00Z"
+        uptime_ms: 2000
+        exit_code: -1
+        exit_signal: ""
+        exited_at: ""
+      properties:
+        service:
+          type: string
+        phase:
+          type: string
+          enum: [stopped, running, ready, slow, degraded, failed, exited]
+        pid:
+          type: integer
+        port:
+          type: integer
+        health:
+          type: string
+          description: Redacted health URL
+        http_status:
+          type: integer
+        detail:
+          type: string
+          description: Human-readable detail (redacted health URL)
+        log_path:
+          type: string
+        elapsed_ms:
+          type: integer
+          description: Milliseconds since spawn
+        started_at:
+          type: string
+          format: date-time
+          description: RFC 3339, or "" when unknown
+        uptime_ms:
+          type: integer
+          description: Milliseconds the live process has been up
+        exit_code:
+          type: integer
+          description: Last observed exit status, -1 when signalled or unknown
+        exit_signal:
+          type: string
+          description: 'Signal name ("SIGKILL"), "" when none'
+        exited_at:
+          type: string
+          format: date-time
+          description: RFC 3339, or "" when not seen die
+
+    LogLine:
+      type: object
+      properties:
+        service:
+          type: string
+        line:
+          type: string
+
+    StreamEnd:
+      type: object
+      properties:
+        service:
+          type: string
+        end:
+          type: boolean
+        error:
+          type: string
+          description: Optional reason the stream stopped
+
+    EventJSON:
+      type: object
+      properties:
+        service:
+          type: string
+        phase:
+          type: string
+          enum: [stopped, running, ready, slow, degraded, failed, exited]
+        msg:
+          type: string
+        error:
+          type: string
+
+    LogsResponse:
+      type: object
+      example:
+        service: backend
+        lines:
+          - "INFO:     Uvicorn running on http://0.0.0.0:7102"
+          - "INFO:     Started reloader process [41825]"
+        count: 2
+      properties:
+        service:
+          type: string
+        lines:
+          type: array
+          items:
+            type: string
+        count:
+          type: integer
+
+    MutationResponse:
+      type: object
+      example:
+        operation: start
+        services: [backend, frontend]
+        ok: true
+        error: ""
+        events:
+          - service: backend
+            phase: running
+            msg: spawned
+          - service: backend
+            phase: ready
+            msg: HTTP 200
+      properties:
+        operation:
+          type: string
+          enum: [start, stop, restart]
+        services:
+          type: array
+          items:
+            type: string
+        ok:
+          type: boolean
+        error:
+          type: string
+          description: Supervisor error text when ok is false
+        events:
+          type: array
+          items:
+            $ref: "#/components/schemas/EventJSON"
+
+    OriginsResponse:
+      type: object
+      example:
+        trusted:
+          - https://my-tunnel.example.com
+        implicit: http://127.0.0.1:7999
+        origin: http://127.0.0.1:7999
+        max: 10
+      properties:
+        trusted:
+          type: array
+          items:
+            type: string
+          description: Editable allowlist, canonical and sorted
+        implicit:
+          type: string
+          description: Address mabo-ctl bound; always accepted
+        origin:
+          type: string
+          description: Requester's Origin header
+        max:
+          type: integer
+          description: Cap on trusted list
+
+    HistoryResponse:
+      type: object
+      properties:
+        events:
+          type: array
+          items:
+            $ref: "#/components/schemas/EventJSON"
+          description: Ring contents, oldest first (max 50)
+
+    Error:
+      type: object
+      example:
+        error: unknown service
+      properties:
+        error:
+          type: string
+
+    ErrorWithValid:
+      type: object
+      example:
+        error: unknown service
+        valid: [backend, frontend, worker]
+      properties:
+        error:
+          type: string
+        valid:
+          type: array
+          items:
+            type: string
+          description: List of valid service names
