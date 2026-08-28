@@ -64,6 +64,14 @@ func TestTheDocumentedRoutesAreTheServedRoutes(t *testing.T) {
 			if code := do(s, http.MethodGet, path, false); code != http.StatusOK {
 				t.Errorf("%s unauthenticated = %d, want 200 (health must be open)", key2(r), code)
 			}
+		case RouteDocs:
+			// Docs routes show an unlock form (401) without auth, 200 with auth.
+			if code := do(s, http.MethodGet, path, false); code != http.StatusUnauthorized {
+				t.Errorf("%s unauthenticated = %d, want 401", key2(r), code)
+			}
+			if code := do(s, http.MethodGet, path, true); code != http.StatusOK {
+				t.Errorf("%s authenticated = %d, want 200", key2(r), code)
+			}
 		case RouteRead:
 			// Every read route is session-gated; no credential means no data.
 			if code := do(s, http.MethodGet, path, false); code != http.StatusForbidden {

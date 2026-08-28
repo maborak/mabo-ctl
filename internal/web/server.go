@@ -449,6 +449,9 @@ func (s *Server) routes() *http.ServeMux {
 		"POST /api/{svc}/start":   s.handleStart,
 		"POST /api/{svc}/stop":    s.handleStop,
 		"POST /api/{svc}/restart": s.handleRestart,
+
+		"GET /api-docs":         s.handleDocs,
+		"GET /api/openapi.yaml": s.handleOpenAPI,
 	}
 
 	for _, r := range consoleRoutes {
@@ -478,6 +481,14 @@ func (s *Server) routes() *http.ServeMux {
 			wrap = get
 		case RouteMutate:
 			wrap = post
+		case RouteDocs:
+			// NOT wrapped: like RouteIndex, the handler does its own
+			// session check so it can show an unlock form to unauthenticated
+			// visitors rather than a bare 403. The page contains no token
+			// and no process state.
+			wrap = func(pattern string, h http.HandlerFunc) {
+				mux.HandleFunc(pattern, h)
+			}
 		default:
 			panic("web: console route " + r.Method + " " + r.Path + " has unknown kind " + string(r.Kind))
 		}

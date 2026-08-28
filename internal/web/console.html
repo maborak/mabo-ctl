@@ -335,10 +335,17 @@ button.primary { color: #fff; background: var(--accent); border-color: transpare
 @media (prefers-color-scheme: dark) { button.primary { color: #08111f; } }
 button.primary:hover:not(:disabled) { filter: brightness(1.08); }
 
-button.ghost {
+button.ghost, a.ghost {
   background: transparent; border-color: var(--border); color: var(--text-dim);
 }
-button.ghost:hover:not(:disabled) { background: var(--surface-2); color: var(--text); }
+button.ghost:hover:not(:disabled), a.ghost:hover { background: var(--surface-2); color: var(--text); }
+a.ghost {
+  font: inherit; font-size: var(--fs-sm); font-weight: 600;
+  border: 1px solid var(--border); border-radius: var(--r-md);
+  padding: 4px 10px; cursor: pointer; text-decoration: none;
+  display: inline-block; white-space: nowrap;
+  transition: background .12s ease, border-color .12s ease, color .12s ease;
+}
 
 button.tiny { font-size: var(--fs-xs); padding: 2px 7px; }
 
@@ -1018,6 +1025,8 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     <div class="spacer"></div>
     {{with .Root}}<div class="where"><span title="{{.}}"><b>root</b>{{.}}</span></div>{{end}}
     <div class="bar-actions">
+      <a href="/api-docs/?token={{.Token}}" class="ghost"
+         title="Open the API reference (Redoc-style endpoint docs)">API</a>
       <button type="button" id="btn-config" class="ghost toggle" aria-pressed="false"
               aria-controls="config-view"
               title="Show the resolved configuration: which mabo-ctl.yaml was loaded, and where each port came from">Config</button>

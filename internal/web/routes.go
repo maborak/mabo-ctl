@@ -31,6 +31,11 @@ const (
 	// reveal no process state, no credentials and no information beyond
 	// the fact that the server is up.
 	RouteHealth RouteKind = "health"
+	// RouteDocs marks the API reference page. Like [RouteIndex], it handles
+	// its own session check so it can show an unlock form to an unauthenticated
+	// visitor rather than a bare 403. The handler must not leak process state
+	// or credentials — only the API shape.
+	RouteDocs RouteKind = "docs"
 )
 
 // Route describes one HTTP route the console serves.
@@ -106,6 +111,14 @@ var consoleRoutes = []Route{
 	{http.MethodPost, "/api/{svc}/start", "start one named service", RouteMutate, false},
 	{http.MethodPost, "/api/{svc}/stop", "stop one named service", RouteMutate, false},
 	{http.MethodPost, "/api/{svc}/restart", "restart one named service", RouteMutate, false},
+
+	// API reference and OpenAPI spec — documentation routes, not process state.
+	{http.MethodGet, "/api-docs",
+		"interactive API reference page",
+		RouteDocs, false},
+	{http.MethodGet, "/api/openapi.yaml",
+		"the OpenAPI 3.0 specification in YAML",
+		RouteDocs, false},
 }
 
 // Routes returns a copy of the documented route table.

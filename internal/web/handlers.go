@@ -27,6 +27,20 @@ import (
 //go:embed console.html
 var consoleHTML string
 
+// apiDocsHTML is the self-contained API reference page, embedded in the
+// binary like console.html. It fetches /api/openapi.yaml at load time and
+// renders the spec as browsable endpoint cards.
+//
+//go:embed api-docs.html
+var apiDocsHTML string
+
+// openapiSpec is the OpenAPI 3.0 specification served at /api/openapi.yaml.
+// The canonical copy lives at docs/openapi.yaml; this embedded copy must
+// stay in sync.
+//
+//go:embed openapi.yaml
+var openapiSpec string
+
 // contentSecurityPolicy is served with the page. It permits the inline style
 // and script the single-file page is made of, and same-origin fetch and
 // EventSource, and nothing else at all: no remote script, no remote style, no
@@ -143,6 +157,46 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(`{"status":"ok"}`))
+}
+
+// handleDocs serves the API reference page. Like [Server.handleIndex], it
+// handles its own session check: an unauthenticated visitor gets an unlock
+// form rather than a bare 403, because the docs are informational and a
+// developer who followed a bookmark is more likely a colleague than an
+// attacker.
+func (s *Server) handleDocs(w http.ResponseWriter, r *http.Request) {
+	ok, fromQuery := s.session(r)
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+
+	if !ok {
+		w.Header().Set("Content-Security-Policy", unlockCSP)
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(unlockHTML))
+		return
+	}
+	w.Header().Set("Content-Security-Policy", contentSecurityPolicy)
+	if fromQuery {
+		s.setSessionCookie(w)
+	}
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(apiDocsHTML))
+}
+
+// handleOpenAPI serves the OpenAPI 3.0 specification in YAML. It requires
+// a valid session because the spec documents every endpoint, parameter and
+// response shape — useful to an attacker probing the attack surface.
+func (s *Server) handleOpenAPI(w http.ResponseWriter, r *http.Request) {
+	if ok, _ := s.session(r); !ok {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":"unauthorized"}`))
+		return
+	}
+	w.Header().Set("Content-Type", "text/yaml; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(openapiSpec))
 }
 
 // handleIndex serves the console page to a caller that has the session token,

@@ -13,6 +13,11 @@ stable, everything else may still move.
 
 - **`GET /health`** — unauthenticated server liveness check on the web console.
   Returns `{"status": "ok"}` with a 200 status when the server is running.
+- **`GET /api-docs`** — interactive API reference page (Redoc-style endpoint
+  docs) served directly from the binary. Fetches the OpenAPI spec from
+  `/api/openapi.yaml` and renders it as browsable endpoint cards.
+- **`GET /api/openapi.yaml`** — the OpenAPI 3.0 specification in YAML, served
+  from the binary. Requires a valid session.
   The only route that does not require a session token, designed for monitoring
   tools, load balancers and CI probes.
 - **`docs/API.md`** — comprehensive HTTP API reference for the web console:

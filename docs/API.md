@@ -598,6 +598,46 @@ curl -s -X POST \
 
 ---
 
+### `GET /api-docs`
+
+Interactive API reference page served directly from the binary. Renders the
+OpenAPI spec as browsable endpoint cards — a self-contained Redoc-style page
+with no CDN, no external scripts and no telemetry.
+
+The page fetches `/api/openapi.yaml` at load time and renders every route,
+parameter and response shape. A search box filters endpoints by method, path or
+description.
+
+**Auth:** Session cookie or token header required (shows unlock form if
+unauthenticated, like the console page).
+
+```bash
+curl -i -H 'X-Mabo-Ctl-Token: YOUR_TOKEN' http://127.0.0.1:7999/api-docs
+```
+
+**Response** `200 OK` — `text/html; charset=utf-8`.
+
+---
+
+### `GET /api/openapi.yaml`
+
+The OpenAPI 3.0 specification in YAML. This is the machine-readable version of
+what `/api-docs` renders visually. Useful for code generators, Postman imports
+and CI probes.
+
+The canonical source is `docs/openapi.yaml`; the embedded copy must stay in
+sync (run `cp docs/openapi.yaml internal/web/openapi.yaml`).
+
+**Auth:** Session cookie or token header required.
+
+```bash
+curl -H 'X-Mabo-Ctl-Token: YOUR_TOKEN' http://127.0.0.1:7999/api/openapi.yaml
+```
+
+**Response** `200 OK` — `text/yaml; charset=utf-8`.
+
+---
+
 ## Phase Machine
 
 Every service reports one of exactly seven phases. The set is closed — adding

@@ -1,0 +1,376 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>mabo-ctl — API Reference</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f6f8fa; --fg: #1f2328; --dim: #656d76; --line: #d1d9e0;
+    --card: #fff; --accent: #0969da; --green: #1a7f37; --red: #d1242f;
+    --orange: #bc4c00; --purple: #8250df; --surface-2: #eaeef2;
+    --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0d1117; --fg: #e6edf3; --dim: #8b949e; --line: #30363d;
+      --card: #161b22; --accent: #58a6ff; --green: #3fb950; --red: #f85149;
+      --orange: #d29922; --purple: #bc8cff; --surface-2: #21262d;
+    }
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg); color: var(--fg);
+    font: 14px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    padding: 0;
+  }
+
+  /* --- top bar --- */
+  .topbar {
+    position: sticky; top: 0; z-index: 10;
+    background: var(--card); border-bottom: 1px solid var(--line);
+    padding: 12px 24px;
+    display: flex; align-items: center; gap: 16px;
+  }
+  .topbar h1 { font-size: 16px; font-weight: 600; }
+  .topbar .sub { color: var(--dim); font-size: 13px; }
+  .topbar a { color: var(--accent); text-decoration: none; font-size: 13px; }
+  .topbar a:hover { text-decoration: underline; }
+  .topbar .spacer { flex: 1; }
+
+  /* --- layout --- */
+  .container { max-width: 960px; margin: 0 auto; padding: 24px; }
+
+  /* --- info box --- */
+  .info-box {
+    background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+    padding: 16px 20px; margin-bottom: 24px;
+  }
+  .info-box p { margin: 4px 0; font-size: 13px; color: var(--dim); }
+  .info-box code {
+    background: var(--surface-2); padding: 2px 6px; border-radius: 4px;
+    font-family: var(--font-mono); font-size: 12px;
+  }
+
+  /* --- search --- */
+  .search-wrap { margin-bottom: 20px; }
+  .search-wrap input {
+    width: 100%; padding: 8px 12px; border: 1px solid var(--line);
+    border-radius: 6px; background: var(--bg); color: var(--fg);
+    font: 14px/1.5 inherit; outline: none;
+  }
+  .search-wrap input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(9,105,218,.2); }
+  @media (prefers-color-scheme: dark) {
+    .search-wrap input:focus { box-shadow: 0 0 0 2px rgba(88,166,255,.2); }
+  }
+
+  /* --- endpoint card --- */
+  .endpoint {
+    background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+    margin-bottom: 12px; overflow: hidden;
+  }
+  .endpoint summary {
+    padding: 10px 16px; cursor: pointer; list-style: none;
+    display: flex; align-items: center; gap: 10px; font-size: 14px;
+  }
+  .endpoint summary::-webkit-details-marker { display: none; }
+  .endpoint summary:hover { background: var(--surface-2); }
+  .endpoint[open] summary { border-bottom: 1px solid var(--line); }
+
+  .method {
+    display: inline-block; min-width: 52px; text-align: center;
+    padding: 2px 6px; border-radius: 4px; font-weight: 700;
+    font-family: var(--font-mono); font-size: 11px; text-transform: uppercase;
+  }
+  .method-get { background: #ddf4ff; color: #0969da; }
+  .method-post { background: #dafbe1; color: #1a7f37; }
+  @media (prefers-color-scheme: dark) {
+    .method-get { background: #122a40; color: #58a6ff; }
+    .method-post { background: #12271e; color: #3fb950; }
+  }
+
+  .path-text { font-family: var(--font-mono); font-size: 13px; }
+  .desc-text { color: var(--dim); font-size: 13px; margin-left: auto; }
+
+  .ep-body { padding: 16px; font-size: 13px; }
+  .ep-body h4 { font-size: 12px; text-transform: uppercase; color: var(--dim); margin: 12px 0 6px; }
+  .ep-body h4:first-child { margin-top: 0; }
+  .ep-body pre {
+    background: var(--surface-2); border-radius: 6px; padding: 10px 14px;
+    overflow-x: auto; font-family: var(--font-mono); font-size: 12px;
+    line-height: 1.5; white-space: pre-wrap; word-break: break-word;
+  }
+
+  .param-table { width: 100%; border-collapse: collapse; margin: 4px 0 8px; }
+  .param-table th { text-align: left; font-size: 11px; text-transform: uppercase; color: var(--dim); padding: 4px 8px; }
+  .param-table td { padding: 4px 8px; border-top: 1px solid var(--line); font-size: 13px; }
+  .param-table code { font-family: var(--font-mono); font-size: 12px; }
+
+  .badge { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 11px; font-weight: 600; }
+  .badge-auth { background: #fff8c5; color: #7d6200; }
+  .badge-unauth { background: #dafbe1; color: #1a7f37; }
+  @media (prefers-color-scheme: dark) {
+    .badge-auth { background: #2d1e00; color: #d29922; }
+    .badge-unauth { background: #12271e; color: #3fb950; }
+  }
+
+  .hidden { display: none; }
+
+  /* --- loading --- */
+  .loading { text-align: center; padding: 60px; color: var(--dim); }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <h1>mabo-ctl</h1>
+  <span class="sub">API Reference</span>
+  <span class="spacer"></span>
+  <a href="/" id="back-link">← Console</a>
+</div>
+
+<div class="container">
+  <div class="info-box">
+    <p><strong>Base URL:</strong> <code>http://HOST:PORT</code> — bound address shown in the console topbar.</p>
+    <p><strong>Auth:</strong> Session cookie or <code>X-Mabo-Ctl-Token</code> header. Every mutating endpoint requires the token.</p>
+    <p><strong>Source of truth:</strong> All routes are defined in <code>internal/web/routes.go</code>.
+       Run <code>go run ./tools/surfacemap</code> when routes change.</p>
+  </div>
+
+  <div class="search-wrap">
+    <input type="text" id="search" placeholder="Filter endpoints…" autocomplete="off">
+  </div>
+
+  <div id="endpoints" class="loading">Loading spec…</div>
+</div>
+
+<script>
+(function() {
+  var el = document.getElementById("endpoints");
+
+  fetch("/api/openapi.yaml").then(function(r) {
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    return r.text();
+  }).then(function(yaml) {
+    var spec = parseYAML(yaml);
+    if (!spec || !spec.paths) { el.textContent = "Failed to parse spec."; return; }
+    render(spec);
+    el.classList.remove("loading");
+  }).catch(function(e) {
+    el.textContent = "Could not load OpenAPI spec: " + e.message;
+  });
+
+  function render(spec) {
+    var html = "";
+    var paths = spec.paths || {};
+    var pathKeys = Object.keys(paths).sort();
+    for (var i = 0; i < pathKeys.length; i++) {
+      var path = pathKeys[i];
+      var methods = Object.keys(paths[path]).sort();
+      for (var j = 0; j < methods.length; j++) {
+        var method = methods[j];
+        if (method === "parameters") continue;
+        var op = paths[path][method];
+        var id = method + "-" + path.replace(/[^a-zA-Z0-9]/g, "-");
+        html += renderEndpoint(method, path, op, id);
+      }
+    }
+    el.innerHTML = html;
+    bindSearch();
+  }
+
+  function renderEndpoint(method, path, op, id) {
+    var mc = "method-" + method;
+    var authBadge = "";
+    if (op.security && op.security.length === 0) {
+      authBadge = '<span class="badge badge-unauth">No auth</span>';
+    } else {
+      authBadge = '<span class="badge badge-auth">Auth required</span>';
+    }
+
+    var body = "";
+
+    // Description
+    if (op.description || op.summary) {
+      body += "<p>" + esc(op.description || op.summary) + "</p>";
+    }
+
+    // Parameters
+    if (op.parameters && op.parameters.length > 0) {
+      body += "<h4>Parameters</h4>";
+      body += '<table class="param-table"><tr><th>Name</th><th>In</th><th>Type</th><th>Description</th></tr>';
+      for (var p = 0; p < op.parameters.length; p++) {
+        var param = op.parameters[p];
+        var schema = param.schema || {};
+        body += "<tr><td><code>" + esc(param.name) + "</code></td>";
+        body += "<td>" + esc(param.in) + "</td>";
+        body += "<td><code>" + esc(schema.type || "-") + "</code></td>";
+        body += "<td>" + esc(param.description || "") + "</td></tr>";
+      }
+      body += "</table>";
+    }
+
+    // Request body
+    if (op.requestBody) {
+      body += "<h4>Request Body</h4>";
+      var content = op.requestBody.content || {};
+      var jsonContent = content["application/json"];
+      if (jsonContent && jsonContent.schema) {
+        body += "<pre>" + esc(JSON.stringify(jsonContent.schema, null, 2)) + "</pre>";
+      }
+    }
+
+    // Responses
+    if (op.responses) {
+      var codes = Object.keys(op.responses).sort();
+      body += "<h4>Responses</h4>";
+      for (var c = 0; c < codes.length; c++) {
+        var code = codes[c];
+        var resp = op.responses[code];
+        var desc = resp.description || "";
+        body += "<p><strong>" + esc(code) + "</strong> — " + esc(desc) + "</p>";
+        if (resp.content) {
+          var respTypes = Object.keys(resp.content);
+          for (var t = 0; t < respTypes.length; t++) {
+            var respType = resp.content[respTypes[t]];
+            if (respType.schema) {
+              body += "<pre>" + esc(JSON.stringify(respType.schema, null, 2)) + "</pre>";
+            }
+          }
+        }
+      }
+    }
+
+    return '<details class="endpoint" id="' + id + '" data-method="' + esc(method) + '" data-path="' + esc(path) + '">' +
+      '<summary><span class="method ' + mc + '">' + method.toUpperCase() + '</span>' +
+      '<span class="path-text">' + esc(path) + '</span>' +
+      '<span class="desc-text">' + esc(op.summary || "") + '</span>' +
+      authBadge + '</summary>' +
+      '<div class="ep-body">' + body + '</div></details>';
+  }
+
+  function esc(s) {
+    var d = document.createElement("div");
+    d.appendChild(document.createTextNode(s));
+    return d.innerHTML;
+  }
+
+  function bindSearch() {
+    var input = document.getElementById("search");
+    input.addEventListener("input", function() {
+      var q = input.value.toLowerCase();
+      var cards = document.querySelectorAll(".endpoint");
+      for (var i = 0; i < cards.length; i++) {
+        var card = cards[i];
+        var text = (card.getAttribute("data-method") + " " + card.getAttribute("data-path") + " " + card.textContent).toLowerCase();
+        card.classList.toggle("hidden", q !== "" && text.indexOf(q) === -1);
+      }
+    });
+  }
+
+  /* ---- minimal YAML parser (subset sufficient for OpenAPI 3.0) ---- */
+  function parseYAML(text) {
+    // Convert YAML subset to JSON via line-by-line processing
+    var lines = text.split("\n");
+    var result = {};
+    var stack = [{ indent: -1, obj: result }];
+
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i];
+      // Skip empty lines and comments
+      if (/^\s*$/.test(line) || /^\s*#/.test(line)) continue;
+
+      var indent = line.search(/\S/);
+      var content = line.substring(indent);
+
+      // Pop stack to find parent
+      while (stack.length > 1 && stack[stack.length - 1].indent >= indent) {
+        stack.pop();
+      }
+      var parent = stack[stack.length - 1].obj;
+
+      // Determine key: value or list item
+      if (/^- /.test(content)) {
+        // Array item
+        var val = content.substring(2);
+        if (typeof parent === "object" && !Array.isArray(parent)) {
+          // This shouldn't happen at top level, but handle gracefully
+          continue;
+        }
+        if (!Array.isArray(parent)) {
+          // Convert last value's parent to array
+          var parentEntry = stack[stack.length - 1];
+          var key = parentEntry.lastKey;
+          if (key) {
+            parentEntry.parent[key] = [];
+            parent = parentEntry.parent[key];
+          } else {
+            continue;
+          }
+        }
+        parent.push(parseValue(val));
+      } else if (/^(\w[\w\-]*):/.test(content)) {
+        var match = content.match(/^(\w[\w\-]*):\s*(.*)/);
+        if (match) {
+          var key = match[1];
+          var val = match[2].trim();
+          if (val === "" || val === "|" || val === ">") {
+            // Nested object or multi-line
+            if (val === "|" || val === ">") {
+              // Collect block scalar
+              var block = [];
+              var blockIndent = -1;
+              i++;
+              while (i < lines.length) {
+                var bline = lines[i];
+                if (/^\s*$/.test(bline)) { block.push(""); i++; continue; }
+                var bind = bline.search(/\S/);
+                if (bind <= indent) { i--; break; }
+                if (blockIndent === -1) blockIndent = bind;
+                block.push(bline.substring(blockIndent));
+                i++;
+              }
+              parent[key] = block.join("\n");
+            } else {
+              parent[key] = {};
+              stack.push({ indent: indent + 2, obj: parent[key], parent: parent, lastKey: key });
+            }
+          } else if (val === "[]") {
+            parent[key] = [];
+            stack.push({ indent: indent + 2, obj: parent[key], parent: parent, lastKey: key });
+          } else if (val === "{}") {
+            parent[key] = {};
+          } else if (/^\[/.test(val)) {
+            // Inline array
+            try { parent[key] = JSON.parse(val.replace(/'/g, '"')); }
+            catch(e) { parent[key] = val; }
+          } else if (/^\{/.test(val)) {
+            // Inline object
+            try { parent[key] = JSON.parse(val.replace(/'/g, '"')); }
+            catch(e) { parent[key] = val; }
+          } else {
+            parent[key] = parseValue(val);
+          }
+        }
+      }
+    }
+    return result;
+  }
+
+  function parseValue(s) {
+    if (s === "true") return true;
+    if (s === "false") return false;
+    if (s === "null" || s === "~") return null;
+    if (/^-?\d+$/.test(s)) return parseInt(s, 10);
+    if (/^-?\d+\.\d+$/.test(s)) return parseFloat(s);
+    // Remove quotes
+    if ((s[0] === '"' && s[s.length-1] === '"') || (s[0] === "'" && s[s.length-1] === "'")) {
+      return s.slice(1, -1);
+    }
+    return s;
+  }
+})();
+</script>
+</body>
+</html>
