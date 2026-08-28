@@ -78,6 +78,10 @@ The controls, as of the current `main`:
   DNS-rebinding defence. `--allow-origin` widens it to named hosts or
   `*.`-subdomain patterns, never a bare `*` without the danger flag.
 - **POST-only mutations.** A `GET` is reachable from an `<img>` tag.
+- **`GET /health` is unauthenticated** — the only route without a session gate.
+  It reveals nothing beyond liveness (`{"status":"ok"}`): no service state,
+  no version, no uptime, no credentials. Monitoring tools and CI probes need
+  it without a token.
 - **`{svc}` validated** against the declared service names before the supervisor
   sees it.
 - **Declared-env-only rendering**, with credential-shaped values redacted. The

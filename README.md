@@ -728,7 +728,6 @@ that proves it stays fixed, are in [`docs/LANDMINES.md`](docs/LANDMINES.md).
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | How the pieces fit: layering, the supervision path, the phase machine |
 | [`docs/API.md`](docs/API.md) | Web console HTTP API: every route, auth model, request/response shapes, SSE streams |
 | [`docs/openapi.yaml`](docs/openapi.yaml) | OpenAPI 3.0 spec for the web console API (for tooling integration) |
-| [`docs/sdk/go/`](docs/sdk/go/) | Go client for the web console API |
 | [`examples/mabo-ctl.yaml`](examples/mabo-ctl.yaml) | Every `mabo-ctl.yaml` field, annotated — the configuration reference, and a test asserts it stays valid |
 | [`docs/LANDMINES.md`](docs/LANDMINES.md) | Bugs mabo-ctl has actually shipped, and a runnable detector for each |
 | [`docs/ROADMAP.md`](docs/ROADMAP.md) | What is being considered, and what was rejected and why |

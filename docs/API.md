@@ -198,11 +198,11 @@ curl -s -H 'X-Mabo-Ctl-Token: YOUR_TOKEN' \
     "pid": 41825,
     "uptime_ms": 2000,
     "started_at": "2026-08-28T10:00:00Z",
-    "health": "http://localhost:7102/health",
+    "health": "[redacted]",
     "detail": "HTTP 200",
     "http_status": 200,
-    "exit_code": 0,
-    "exit_signal": 0,
+    "exit_code": -1,
+    "exit_signal": "",
     "exited_at": "",
     "log_path": ".dev/logs/backend.log"
   }
@@ -210,7 +210,7 @@ curl -s -H 'X-Mabo-Ctl-Token: YOUR_TOKEN' \
 ```
 
 **This is a stable machine contract.** Fields and phase values may not change
-without a version bump. The health URL is redacted here (unlike
+without a version bump. The `health` URL is **redacted** here (unlike
 `mabo-ctl status --json` on a terminal) because this route is reachable by any
 local process.
 

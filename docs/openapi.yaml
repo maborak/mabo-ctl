@@ -40,7 +40,9 @@ servers:
 
 security:
   - sessionCookie: []
-  - sessionHeader: []paths:
+  - sessionHeader: []
+
+paths:
 
   /health:
     get:
