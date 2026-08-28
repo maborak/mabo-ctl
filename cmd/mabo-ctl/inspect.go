@@ -387,7 +387,7 @@ func (a *app) runTail(cmd *cobra.Command, names []string, n int, follow, stamp b
 	prefix := len(names) > 1
 	r := a.renderer()
 	for l := range merged {
-		text := l.text
+		text := ui.Sanitize(l.text)
 		if needle != "" && !strings.Contains(text, needle) {
 			continue
 		}

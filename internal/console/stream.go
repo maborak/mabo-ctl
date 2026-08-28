@@ -9,6 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/maborak/mabo-ctl/internal/supervisor"
+	"github.com/maborak/mabo-ctl/internal/ui"
 )
 
 // Timing and buffering constants for the background work the console drives.
@@ -157,7 +158,7 @@ func (s *tailSession) next() tea.Cmd {
 			// as a silent, empty pane.
 			return tailClosedMsg{sess: s, err: <-s.done}
 		}
-		return tailLineMsg{sess: s, line: line}
+		return tailLineMsg{sess: s, line: ui.Sanitize(line)}
 	}
 }
 

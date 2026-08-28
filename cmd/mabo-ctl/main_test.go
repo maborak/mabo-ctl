@@ -1460,7 +1460,7 @@ func TestInitScaffoldsFromDetection(t *testing.T) {
 
 	for _, want := range []string{
 		"#   cmd: [npm, run, dev]",
-		"#   runtime: node:24.4.0",
+		"#   runtime: node:v24.4.0",
 		"# - name: backend",
 		"#   cmd: [python, manage.py, runserver]",
 	} {

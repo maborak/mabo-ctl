@@ -488,14 +488,15 @@ in an exit record — so nothing under `.dev/` is ever created group- or
 world-readable. Secrets in your environment are forwarded to children and can end
 up in those logs — treat `.dev/` as secrets-adjacent, especially on a shared host.
 
-**Escape sequences are the child's own output, stored and shown verbatim.**
-Everything mabo-ctl composes is redacted at the source, but a service's stdout
-belongs to the service: colour, cursor movement, OSC-8 hyperlinks and OSC-52
-clipboard writes all reach `.dev/logs/*.log` byte-for-byte and render
-unmodified in `logs`, `tailf` and the web panes. That is deliberate — dev
-servers emit colour — but it means a compromised child can paint the terminal
-that reads its logs. Read untrusted services' logs through a pager
-(`mabo-ctl logs api | less -R` drops control sequences) if that matters to you.
+**Escape sequences are sanitised on every terminal render.** Everything
+mabo-ctl composes is redacted at the source, but a service's own stdout is the
+child's, and a compromised dependency can write control sequences that
+repaint the operator's terminal, hide log lines, or attempt an OSC-52
+clipboard write. `logs`/`tailf` and the console's log panes therefore strip
+OSC (hyperlinks, titles, clipboard), DCS/APC/PM payload channels and bare C1
+controls before printing — while keeping CSI colour, because logs that lose
+their colour lose their usefulness. The bytes on disk in `.dev/logs/` stay
+verbatim: they are evidence, and a pager can show them raw.
 
 ## Interactive console
 
