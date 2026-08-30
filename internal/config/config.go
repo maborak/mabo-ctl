@@ -62,6 +62,10 @@ type Config struct {
 	Shells       []Shell
 	StopGrace    time.Duration // default 10s
 	ReadyTimeout time.Duration // default 30s
+	// ConsoleAddr is the address `mabo-ctl serve` binds by default when no
+	// --addr is given: "host:port", e.g. "127.0.0.1:9000". Empty means the
+	// built-in default (127.0.0.1:7999).
+	ConsoleAddr string
 	// ActiveProfiles is the profile set in force, when one was requested and
 	// passed validation; nil means "no profile selection", not "no profiles".
 	ActiveProfiles []string
@@ -390,6 +394,7 @@ func Load(path string) (*Config, error) {
 		Services:     make([]Spec, 0, len(doc.Services)),
 		Checks:       doc.Checks,
 		Shells:       doc.Shells,
+		ConsoleAddr:  doc.ConsoleAddr,
 		StopGrace:    DefaultStopGrace,
 		ReadyTimeout: DefaultReadyTimeout,
 	}
@@ -561,6 +566,7 @@ type fileDoc struct {
 	Schema       string         `yaml:"$schema"`
 	StopGrace    *durationValue `yaml:"stop_grace"`
 	ReadyTimeout *durationValue `yaml:"ready_timeout"`
+	ConsoleAddr  string         `yaml:"console_addr"`
 	Services     []specDoc      `yaml:"services"`
 	Checks       []Check        `yaml:"checks"`
 	Shells       []Shell        `yaml:"shells"`

@@ -9,6 +9,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -1379,10 +1381,13 @@ func TestTheUnlockPageCarriesNoToken(t *testing.T) {
 	}
 }
 
-// TestDocsPageCarriesEmbeddedOpenAPISpec checks that the API reference page
-// contains the parsed OpenAPI spec as an inline JSON variable, so the browser
-// can render endpoint cards without a client-side YAML parser or fetch.
-func TestDocsPageCarriesEmbeddedOpenAPISpec(t *testing.T) {
+// TestDocsPageServesRapidocWithTokenWiredIn checks that the API reference page
+// is the RapiDoc API Reference, with the session token wired into the api-key
+// (X-Mabo-Ctl-Token in the header) so try-it requests are authenticated exactly
+// like the console buttons, and the server pinned to the address actually
+// bound. Like the console page, this is delivered only to a caller who has
+// already proven possession of the token.
+func TestDocsPageServesRapidocWithTokenWiredIn(t *testing.T) {
 	t.Parallel()
 	s := newRecorderServer(t, twoServices())
 
@@ -1396,24 +1401,134 @@ func TestDocsPageCarriesEmbeddedOpenAPISpec(t *testing.T) {
 	}
 	body := rec.Body.String()
 
-	// The page must embed the OpenAPI spec as JSON for the browser.
-	if !strings.Contains(body, "window.__OPENAPI__=") {
-		t.Error("the docs page does not embed the OpenAPI spec as window.__OPENAPI__")
-	}
-	// The embedded JSON must contain the route paths.
-	for _, want := range []string{"/api/status", "/api/services", "/health"} {
+	// The page is driven by the vendored RapiDoc web component.
+	for _, want := range []string{
+		`id="api-reference"`,
+		`<rapi-doc`,
+		`spec-url="/api/openapi.yaml"`,
+		`<script src="/api-docs/rapidoc.js">`,
+	} {
 		if !strings.Contains(body, want) {
-			t.Errorf("the embedded OpenAPI spec does not contain %s", want)
+			t.Errorf("the docs page does not contain %s", want)
 		}
 	}
-	// The page must carry the same CSP as the console.
-	csp := rec.Header().Get("Content-Security-Policy")
-	if !strings.Contains(csp, "default-src 'none'") {
-		t.Errorf("CSP %q is missing default-src 'none'", csp)
+	// The token is wired in as the api-key value: try-it is authenticated.
+	if !strings.Contains(body, `api-key-value="`+s.Token()) {
+		t.Errorf("the docs page does not contain the wired-in token")
 	}
-	// The page must not leak the token.
+	// The server is pinned to the address actually bound, not the spec's
+	// 127.0.0.1:7999 default, so try-it reaches this console on any port.
+	if !strings.Contains(body, `server-url="http://`+recorderAddr) {
+		t.Errorf("the docs page does not contain the bound server address")
+	}
+
+	// The docs page uses the relaxed CSP that allows its same-origin script,
+	// and nothing else loosened.
+	csp := rec.Header().Get("Content-Security-Policy")
+	if !strings.Contains(csp, "script-src 'unsafe-inline' 'self'") {
+		t.Errorf("CSP %q is missing script-src 'unsafe-inline' 'self'", csp)
+	}
+	if !strings.Contains(csp, "connect-src 'self'") {
+		t.Errorf("CSP %q is missing connect-src 'self'", csp)
+	}
+}
+
+// TestRapidocBundleRouteServed pins the vendored RapiDoc bundle's route: the
+// page points at it with a script tag, so the same origin must serve it,
+// session-gated like the rest of the docs surface.
+func TestRapidocBundleRouteServed(t *testing.T) {
+	t.Parallel()
+	s := newRecorderServer(t, twoServices())
+
+	req := httptest.NewRequest(http.MethodGet, "http://"+recorderAddr+"/api-docs/rapidoc.js", nil)
+	req.Header.Set(tokenHeader, s.Token())
+	rec := httptest.NewRecorder()
+	s.h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /api-docs/rapidoc.js = %d, want 200", rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/javascript") {
+		t.Errorf("Content-Type = %q, want application/javascript", ct)
+	}
+	for _, want := range []string{"RapiDoc", "rapi-doc"} {
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Errorf("the served bundle does not contain %q", want)
+		}
+	}
+
+	// Unauthenticated, the bundle is refused like every docs route.
+	req2 := httptest.NewRequest(http.MethodGet, "http://"+recorderAddr+"/api-docs/rapidoc.js", nil)
+	rec2 := httptest.NewRecorder()
+	s.h.ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusUnauthorized {
+		t.Errorf("unauthenticated GET /api-docs/rapidoc.js = %d, want 401", rec2.Code)
+	}
+}
+
+// TestUnauthenticatedDocsPageLeaksNeitherTokenNorSpec pins the security
+// boundary of /api-docs: exactly one of the two responses carries the token
+// and the page, and it is not this one.
+func TestUnauthenticatedDocsPageLeaksNeitherTokenNorSpec(t *testing.T) {
+	t.Parallel()
+	s := newRecorderServer(t, twoServices())
+
+	req := httptest.NewRequest(http.MethodGet, "http://"+recorderAddr+"/api-docs", nil)
+	rec := httptest.NewRecorder()
+	s.h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated GET /api-docs = %d, want 401", rec.Code)
+	}
+	body := rec.Body.String()
 	if strings.Contains(body, s.Token()) {
-		t.Error("the docs page leaked the session token")
+		t.Fatal("an unauthenticated /api-docs response disclosed the session token")
+	}
+	if strings.Contains(body, "<rapi-doc") {
+		t.Error("an unauthenticated /api-docs response disclosed the API reference page")
+	}
+}
+
+// TestEmbeddedOpenAPIMatchesTheDocsCopy pins the two copies of the spec — the
+// one embedded in this package and the one under docs/ that humans and code
+// generators read — as byte-identical. Serving a spec that disagrees with the
+// published one would drift the machine surface from its documentation, which
+// is the failure the drift gate exists for. The docs copy resolves relative to
+// the package directory, which `go test` always uses as the working directory.
+func TestEmbeddedOpenAPIMatchesTheDocsCopy(t *testing.T) {
+	doc, err := os.ReadFile(filepath.Join("..", "..", "docs", "openapi.yaml"))
+	if err != nil {
+		t.Fatalf("reading docs/openapi.yaml: %v", err)
+	}
+	if got := openapiSpec; got != string(doc) {
+		t.Fatalf("internal/web/openapi.yaml differs from docs/openapi.yaml.\n" +
+			"Regenerate with: cp docs/openapi.yaml internal/web/openapi.yaml\n")
+	}
+}
+
+// TestEveryRouteIsDocumentedInTheAPIReference gates docs/API.md against the
+// live route table, the same way surfaces.json gates the machine surfaces: a
+// route added to [consoleRoutes] without a matching `### \`METHOD /path\“
+// heading in the human-readable reference fails here, instead of quietly
+// shipping documentation that enumerates fewer endpoints than the server
+// serves.
+func TestEveryRouteIsDocumentedInTheAPIReference(t *testing.T) {
+	doc, err := os.ReadFile(filepath.Join("..", "..", "docs", "API.md"))
+	if err != nil {
+		t.Fatalf("reading docs/API.md: %v", err)
+	}
+	text := string(doc)
+
+	for _, r := range Routes() {
+		path := r.Path
+		if path == "/{$}" {
+			path = "/"
+		}
+		heading := "### `" + r.Method + " " + path + "`"
+		if !strings.Contains(text, heading) {
+			t.Errorf("route %s %s is not documented in docs/API.md; add a %s section",
+				r.Method, r.Path, heading)
+		}
 	}
 }
 

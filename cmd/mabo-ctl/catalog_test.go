@@ -114,6 +114,9 @@ func TestSchemaCommandsEmitsACatalogue(t *testing.T) {
 		if a, _ := e["auth"].(string); strings.TrimSpace(a) == "" {
 			t.Errorf("route %v has no auth line", e["path"])
 		}
+		if a, _ := e["auth"].(string); a == "unknown guard" {
+			t.Errorf("route %v auth fell through to the default: add a routeAuth case for its kind", e["path"])
+		}
 	}
 }
 

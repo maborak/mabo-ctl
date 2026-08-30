@@ -3,123 +3,38 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
 <title>mabo-ctl — API Reference</title>
 <style>
-  :root {
-    color-scheme: light dark;
-    --bg: #f6f8fa; --fg: #1f2328; --dim: #656d76; --line: #d1d9e0;
-    --card: #fff; --accent: #0969da; --green: #1a7f37; --red: #d1242f;
-    --orange: #bc4c00; --purple: #8250df; --surface-2: #eaeef2;
-    --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  :root { color-scheme: light dark; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    --bar-bg: #ffffff; --bar-border: #d1d9e0; --bar-fg: #1f2328; --bar-dim: #656d76;
+    --bar-link: #0969da;
   }
   @media (prefers-color-scheme: dark) {
-    :root {
-      --bg: #0d1117; --fg: #e6edf3; --dim: #8b949e; --line: #30363d;
-      --card: #161b22; --accent: #58a6ff; --green: #3fb950; --red: #f85149;
-      --orange: #d29922; --purple: #bc8cff; --surface-2: #21262d;
+    body {
+      --bar-bg: #161b22; --bar-border: #30363d; --bar-fg: #e6edf3; --bar-dim: #8b949e;
+      --bar-link: #58a6ff;
     }
   }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body {
-    background: var(--bg); color: var(--fg);
-    font: 14px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  }
-
-  /* --- top bar --- */
   .topbar {
-    position: sticky; top: 0; z-index: 10;
-    background: var(--card); border-bottom: 1px solid var(--line);
-    padding: 12px 24px;
     display: flex; align-items: center; gap: 16px;
+    padding: 10px 24px; background: var(--bar-bg); border-bottom: 1px solid var(--bar-border);
+    color: var(--bar-fg);
   }
-  .topbar h1 { font-size: 16px; font-weight: 600; }
-  .topbar .sub { color: var(--dim); font-size: 13px; }
-  .topbar a { color: var(--accent); text-decoration: none; font-size: 13px; }
-  .topbar a:hover { text-decoration: underline; }
+  .topbar h1 { font-size: 15px; margin: 0; }
+  .topbar .sub { color: var(--bar-dim); font-size: 13px; }
   .topbar .spacer { flex: 1; }
-
-  /* --- layout --- */
-  .container { max-width: 960px; margin: 0 auto; padding: 24px; }
-
-  /* --- info box --- */
-  .info-box {
-    background: var(--card); border: 1px solid var(--line); border-radius: 8px;
-    padding: 16px 20px; margin-bottom: 24px;
+  .topbar a { color: var(--bar-link); text-decoration: none; font-size: 13px; }
+  .topbar a:hover { text-decoration: underline; }
+  .topbar .note { color: var(--bar-dim); font-size: 12px; }
+  #api-reference {
+    display: block;
+    height: calc(100vh - 45px);
+    width: 100%;
   }
-  .info-box p { margin: 4px 0; font-size: 13px; color: var(--dim); }
-  .info-box code {
-    background: var(--surface-2); padding: 2px 6px; border-radius: 4px;
-    font-family: var(--font-mono); font-size: 12px;
-  }
-
-  /* --- search --- */
-  .search-wrap { margin-bottom: 20px; }
-  .search-wrap input {
-    width: 100%; padding: 8px 12px; border: 1px solid var(--line);
-    border-radius: 6px; background: var(--bg); color: var(--fg);
-    font: 14px/1.5 inherit; outline: none;
-  }
-  .search-wrap input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(9,105,218,.2); }
-  @media (prefers-color-scheme: dark) {
-    .search-wrap input:focus { box-shadow: 0 0 0 2px rgba(88,166,255,.2); }
-  }
-
-  /* --- endpoint card --- */
-  .endpoint {
-    background: var(--card); border: 1px solid var(--line); border-radius: 8px;
-    margin-bottom: 12px; overflow: hidden;
-  }
-  .endpoint summary {
-    padding: 10px 16px; cursor: pointer; list-style: none;
-    display: flex; align-items: center; gap: 10px; font-size: 14px;
-    flex-wrap: wrap;
-  }
-  .endpoint summary::-webkit-details-marker { display: none; }
-  .endpoint summary:hover { background: var(--surface-2); }
-  .endpoint[open] summary { border-bottom: 1px solid var(--line); }
-
-  .method {
-    display: inline-block; min-width: 52px; text-align: center;
-    padding: 2px 6px; border-radius: 4px; font-weight: 700;
-    font-family: var(--font-mono); font-size: 11px; text-transform: uppercase;
-  }
-  .method-get { background: #ddf4ff; color: #0969da; }
-  .method-post { background: #dafbe1; color: #1a7f37; }
-  @media (prefers-color-scheme: dark) {
-    .method-get { background: #122a40; color: #58a6ff; }
-    .method-post { background: #12271e; color: #3fb950; }
-  }
-
-  .path-text { font-family: var(--font-mono); font-size: 13px; }
-  .desc-text { color: var(--dim); font-size: 13px; }
-  @media (min-width: 700px) {
-    .desc-text { margin-left: auto; }
-  }
-
-  .ep-body { padding: 16px; font-size: 13px; }
-  .ep-body h4 { font-size: 12px; text-transform: uppercase; color: var(--dim); margin: 12px 0 6px; }
-  .ep-body h4:first-child { margin-top: 0; }
-  .ep-body pre {
-    background: var(--surface-2); border-radius: 6px; padding: 10px 14px;
-    overflow-x: auto; font-family: var(--font-mono); font-size: 12px;
-    line-height: 1.5; white-space: pre-wrap; word-break: break-word;
-  }
-  .ep-body p { margin: 4px 0; }
-
-  .param-table { width: 100%; border-collapse: collapse; margin: 4px 0 8px; }
-  .param-table th { text-align: left; font-size: 11px; text-transform: uppercase; color: var(--dim); padding: 4px 8px; }
-  .param-table td { padding: 4px 8px; border-top: 1px solid var(--line); font-size: 13px; }
-  .param-table code { font-family: var(--font-mono); font-size: 12px; }
-
-  .badge { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 11px; font-weight: 600; }
-  .badge-auth { background: #fff8c5; color: #7d6200; }
-  .badge-unauth { background: #dafbe1; color: #1a7f37; }
-  @media (prefers-color-scheme: dark) {
-    .badge-auth { background: #2d1e00; color: #d29922; }
-    .badge-unauth { background: #12271e; color: #3fb950; }
-  }
-
-  .hidden { display: none; }
 </style>
 </head>
 <body>
@@ -127,166 +42,38 @@
 <div class="topbar">
   <h1>mabo-ctl</h1>
   <span class="sub">API Reference</span>
+  <span class="note" id="authnote" title="The session token is sent with every try-it request as X-Mabo-Ctl-Token">authenticated</span>
   <span class="spacer"></span>
   <a href="/">&larr; Console</a>
 </div>
 
-<div class="container">
-  <div class="info-box">
-    <p><strong>Base URL:</strong> <code>http://HOST:PORT</code> &mdash; bound address shown in the console topbar.</p>
-    <p><strong>Auth:</strong> Session cookie or <code>X-Mabo-Ctl-Token</code> header. Mutating endpoints require the token.</p>
-    <p><strong>Source of truth:</strong> All routes are defined in <code>internal/web/routes.go</code>.
-       Run <code>go run ./tools/surfacemap</code> when routes change.</p>
-  </div>
-
-  <div class="search-wrap">
-    <input type="text" id="search" placeholder="Filter endpoints&hellip;" autocomplete="off">
-  </div>
-
-  <div id="endpoints"></div>
+<!--
+  The playground: RapiDoc API Reference (vendored at /api-docs/rapidoc.js).
+  Every endpoint has an interactive API client. __RAPIDOC_TOKEN__ and
+  __RAPIDOC_SERVER__ are replaced by the server with the session token and
+  the address actually bound, so try-it requests are authenticated and reach
+  this exact console. The spec is loaded from /api/openapi.yaml (a
+  same-origin, session-authenticated request).
+-->
+<div id="api-reference">
+  <rapi-doc
+    spec-url="/api/openapi.yaml"
+    server-url="__RAPIDOC_SERVER__"
+    api-key-name="X-Mabo-Ctl-Token"
+    api-key-value="__RAPIDOC_TOKEN__"
+    api-key-location="header"
+    show-header="false"
+    theme="auto"
+    render-style="view"
+    schema-style="table"
+    schema-description-expanded="true"
+    default-schema-tab="schema"
+    allow-spec-file-download="true"
+  ></rapi-doc>
 </div>
 
-<script>
-(function() {
-  var spec = window.__OPENAPI__;
-  if (!spec || !spec.paths) {
-    document.getElementById("endpoints").textContent = "Failed to load API spec.";
-    return;
-  }
+<noscript><p style="padding:24px">The API reference needs JavaScript to render.</p></noscript>
 
-  var el = document.getElementById("endpoints");
-  var html = "";
-  var paths = spec.paths;
-  var pathKeys = Object.keys(paths).sort();
-
-  for (var i = 0; i < pathKeys.length; i++) {
-    var path = pathKeys[i];
-    var pathObj = paths[path];
-    var methods = Object.keys(pathObj).sort();
-    for (var j = 0; j < methods.length; j++) {
-      var method = methods[j];
-      if (method === "parameters") continue;
-      var op = pathObj[method];
-      if (!op || typeof op !== "object") continue;
-      html += renderEndpoint(method, path, op);
-    }
-  }
-  el.innerHTML = html;
-  bindSearch();
-
-  function renderEndpoint(method, path, op) {
-    var id = method + "-" + path.replace(/[^a-zA-Z0-9]/g, "-");
-    var mc = "method-" + method;
-
-    // Auth badge
-    var authBadge;
-    if (op.security && op.security.length === 0) {
-      authBadge = '<span class="badge badge-unauth">No auth</span>';
-    } else {
-      authBadge = '<span class="badge badge-auth">Auth required</span>';
-    }
-
-    var body = "";
-
-    // Description
-    var desc = op.description || op.summary || "";
-    if (desc) body += "<p>" + esc(desc) + "</p>";
-
-    // Parameters
-    var params = op.parameters || [];
-    // Resolve $ref parameters
-    for (var p = 0; p < params.length; p++) {
-      if (params[p] && params[p].$ref) {
-        params[p] = resolveRef(spec, params[p].$ref);
-      }
-    }
-    if (params.length > 0) {
-      body += "<h4>Parameters</h4>";
-      body += '<table class="param-table"><tr><th>Name</th><th>In</th><th>Type</th><th>Required</th><th>Description</th></tr>';
-      for (var p = 0; p < params.length; p++) {
-        var param = params[p];
-        if (!param) continue;
-        var schema = param.schema || {};
-        body += "<tr><td><code>" + esc(param.name || "") + "</code></td>";
-        body += "<td>" + esc(param.in || "") + "</td>";
-        body += "<td><code>" + esc(schema.type || param.type || "-") + "</code></td>";
-        body += "<td>" + (param.required ? "yes" : "no") + "</td>";
-        body += "<td>" + esc(param.description || "") + "</td></tr>";
-      }
-      body += "</table>";
-    }
-
-    // Request body
-    if (op.requestBody) {
-      var content = op.requestBody.content || {};
-      var jsonContent = content["application/json"];
-      if (jsonContent && jsonContent.schema) {
-        body += "<h4>Request Body</h4>";
-        body += "<pre>" + esc(JSON.stringify(jsonContent.schema, null, 2)) + "</pre>";
-      }
-    }
-
-    // Responses
-    if (op.responses) {
-      var codes = Object.keys(op.responses).sort();
-      body += "<h4>Responses</h4>";
-      for (var c = 0; c < codes.length; c++) {
-        var code = codes[c];
-        var resp = op.responses[code];
-        var rdesc = resp.description || "";
-        body += "<p><strong>" + esc(code) + "</strong> &mdash; " + esc(rdesc) + "</p>";
-        if (resp.content) {
-          var respTypes = Object.keys(resp.content);
-          for (var t = 0; t < respTypes.length; t++) {
-            var respType = resp.content[respTypes[t]];
-            if (respType && respType.schema) {
-              body += "<pre>" + esc(JSON.stringify(respType.schema, null, 2)) + "</pre>";
-            }
-          }
-        }
-      }
-    }
-
-    return '<details class="endpoint" id="' + id + '" data-method="' + esc(method) + '" data-path="' + esc(path) + '">' +
-      '<summary><span class="method ' + mc + '">' + method.toUpperCase() + '</span>' +
-      '<span class="path-text">' + esc(path) + '</span>' +
-      '<span class="desc-text">' + esc(op.summary || "") + '</span>' +
-      authBadge + '</summary>' +
-      '<div class="ep-body">' + body + '</div></details>';
-  }
-
-  function resolveRef(spec, ref) {
-    // "#/components/parameters/svc" -> spec.components.parameters.svc
-    if (!ref || ref[0] !== "#") return {};
-    var parts = ref.substring(2).split("/");
-    var obj = spec;
-    for (var i = 0; i < parts.length; i++) {
-      if (obj && typeof obj === "object") obj = obj[parts[i]];
-      else return {};
-    }
-    return obj || {};
-  }
-
-  function esc(s) {
-    if (s == null) return "";
-    var d = document.createElement("div");
-    d.appendChild(document.createTextNode(String(s)));
-    return d.innerHTML;
-  }
-
-  function bindSearch() {
-    var input = document.getElementById("search");
-    input.addEventListener("input", function() {
-      var q = input.value.toLowerCase();
-      var cards = document.querySelectorAll(".endpoint");
-      for (var i = 0; i < cards.length; i++) {
-        var card = cards[i];
-        var text = (card.getAttribute("data-method") + " " + card.getAttribute("data-path") + " " + card.textContent).toLowerCase();
-        card.classList.toggle("hidden", q !== "" && text.indexOf(q) === -1);
-      }
-    });
-  }
-})();
-</script>
+<script src="/api-docs/rapidoc.js"></script>
 </body>
 </html>

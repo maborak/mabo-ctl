@@ -103,6 +103,8 @@ any subdirectory. `mabo-ctl --config <path>` skips the search.
 stop_grace: 10s       # SIGTERM, wait this long, then SIGKILL the process group
 ready_timeout: 30s    # a probe that has not answered within this is "slow"
                       # before it and "degraded" after it
+console_addr: "127.0.0.1:9000"   # optional: address `mabo-ctl serve` binds when
+                      # no --addr is given (default 127.0.0.1:7999)
 
 services:
   - name: website
@@ -246,7 +248,7 @@ Leave the key out to inherit the global.
 | `mabo-ctl exec <svc> <cmd>...` | Run a command in the service's exact environment and directory; forwards the child's exit code. |
 | `mabo-ctl shell <name>` | Run a declared `shells:` entry, or open `$SHELL` in a service's environment. |
 | `mabo-ctl open` | Hand each running service's URL — its `open:` target when declared, else the derived origin — to `open` (macOS) or `xdg-open` (Linux). |
-| `mabo-ctl serve [--addr] [--open] [--notify] [--i-know-this-is-dangerous]` | Serve the web console on `127.0.0.1:7999` until interrupted; `--notify` announces dying services on the desktop. It can start and stop services — see [Web console](#web-console). |
+| `mabo-ctl serve [--addr] [--open] [--notify] [--i-know-this-is-dangerous]` | Serve the web console on `127.0.0.1:7999` — or the `console_addr` in `mabo-ctl.yaml` — until interrupted; if that port is already taken by another server, it falls back to a kernel-chosen free port and prints the real address. `--notify` announces dying services on the desktop. It can start and stop services — see [Web console](#web-console). |
 | `mabo-ctl init` | Scaffold a fully commented-out `mabo-ctl.yaml` from what the repo looks like (`package.json` + `.nvmrc`, `manage.py`, `pyproject.toml`, `Cargo.toml`). Refuses to overwrite; adds `.dev/` to `.gitignore`; runs nothing it finds. |
 | `mabo-ctl --version` | The full build report: commit, dirty flag, when it was linked, toolchain, platform and dependencies. Paste it whole into bug reports — [SECURITY.md](SECURITY.md) asks for exactly this output. |
 | `mabo-ctl completion <bash\|zsh\|fish\|powershell>` | Print a completion script. |
@@ -600,14 +602,26 @@ view rather than extra rows, so the service list still fits your whole stack on
 one screen; everything in it is redacted by the same rules as the rest of the
 page. `mabo-ctl config` prints the same view in a terminal.
 
+**API** — the button in the top bar opens `/api-docs`, the machine-readable
+catalogue rendered by a vendored RapiDoc bundle into a full interactive API
+browser: every route with its parameters, request bodies and responses, plus a
+working **try-it playground** on each operation. The playground sends real
+same-origin requests with the session token already wired in as the
+`X-Mabo-Ctl-Token` header — reads and mutations authenticate exactly like the
+console buttons — and the try-it server is pinned to the port this console
+actually bound. The same spec is served at `/api/openapi.yaml` for code
+generators, and documented by hand in [`docs/API.md`](docs/API.md).
+
 > **⚠ This is the one mabo-ctl surface that can be driven by something other than
 > you.** Three of its routes start, stop and restart the commands in
 > `mabo-ctl.yaml`, which makes it a local remote-code-execution surface — so it is
 > guarded on four sides, and every guard is on by default:
 >
 > - **Loopback only.** It binds `127.0.0.1:7999`, reachable from this machine and
->   nothing else — `127.0.0.1` on a kernel-chosen free port when it is
->   `mabo-ctl start --web-console` that opened it.
+>   nothing else — and when that port is taken by another server, a plain
+>   `mabo-ctl serve` falls back to `127.0.0.1` on a kernel-chosen free port,
+>   never to a non-loopback address. It is `127.0.0.1` on a kernel-chosen free
+>   port when it was `mabo-ctl start --web-console` that opened it.
 > - **A session token.** 32 random bytes generated per run, printed once in the
 >   URL, and required as an `X-Mabo-Ctl-Token` **header** on every start, stop and
 >   restart. A page on the internet cannot read it, because it cannot read the

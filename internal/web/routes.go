@@ -33,8 +33,11 @@ const (
 	RouteHealth RouteKind = "health"
 	// RouteDocs marks the API reference page. Like [RouteIndex], it handles
 	// its own session check so it can show an unlock form to an unauthenticated
-	// visitor rather than a bare 403. The handler must not leak process state
-	// or credentials — only the API shape.
+	// visitor rather than a bare 403. The unauthenticated branch must not leak
+	// process state or credentials — only the API shape. An authenticated
+	// response carries the session token like the console page does, because
+	// the page's try-it playground issues real same-origin requests and a
+	// mutation needs the token in a header.
 	RouteDocs RouteKind = "docs"
 )
 
@@ -118,6 +121,9 @@ var consoleRoutes = []Route{
 		RouteDocs, false},
 	{http.MethodGet, "/api/openapi.yaml",
 		"the OpenAPI 3.0 specification in YAML",
+		RouteDocs, false},
+	{http.MethodGet, "/api-docs/rapidoc.js",
+		"the embedded RapiDoc bundle that powers the /api-docs try-it playground",
 		RouteDocs, false},
 }
 

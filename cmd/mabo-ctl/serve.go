@@ -58,7 +58,12 @@ commands as you. It is guarded on four sides:
 --i-know-this-is-dangerous is the only way to bind a non-loopback address, and
 it means what it says: every machine that can route to that address can drive
 your dev stack once it has the token. Without it, a non-loopback --addr is a
-usage error and mabo-ctl exits 2 without binding anything.`
+usage error and mabo-ctl exits 2 without binding anything.
+
+With no --addr, the console binds 127.0.0.1:7999; if that port is already taken
+by another server, it falls back to a kernel-chosen free port and prints the
+real address. An address you type explicitly is honoured literally — a taken
+explicit port is an error, never a silent move.`
 
 // serveCmd builds `mabo-ctl serve`.
 func (a *app) serveCmd() *cobra.Command {
@@ -89,6 +94,11 @@ func (a *app) serveCmd() *cobra.Command {
 type serveOptions struct {
 	// Addr is the host:port to bind.
 	Addr string
+	// AddrSet records whether the user passed --addr at all. It distinguishes
+	// the implicit default from the same value typed out, because serve falls
+	// back to a free port only for the former: moving a port a user explicitly
+	// asked for would be surprising.
+	AddrSet bool
 	// Open asks for the platform browser opener once the socket is bound.
 	Open bool
 	// Force is --i-know-this-is-dangerous: permission to bind a non-loopback
@@ -111,8 +121,17 @@ func (a *app) runServe(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return usageError(err)
 	}
+
+	// Precedence for the console address: an explicit --addr wins; otherwise
+	// the config's console_addr decides; otherwise the built-in default.
+	// The returned set flag tracks whether ANY source chose a specific
+	// address, because serve falls back to a free port only when the default
+	// was chosen for the user — never when they asked for a particular port.
+	addr, addrSet := a.consoleAddr(addr, cmd.Flags().Changed("addr"))
+
 	opt := serveOptions{
 		Addr:         addr,
+		AddrSet:      addrSet,
 		Open:         boolFlag(cmd, "open"),
 		Force:        boolFlag(cmd, "i-know-this-is-dangerous"),
 		AllowOrigins: allow,
@@ -122,6 +141,27 @@ func (a *app) runServe(cmd *cobra.Command, _ []string) error {
 	ctx, cancel := interruptible(cmd.Context())
 	defer cancel()
 	return a.serve(ctx, opt)
+}
+
+// consoleAddr resolves the console bind address and whether it was explicitly
+// chosen. Precedence: an explicit --addr wins; otherwise the config's
+// console_addr decides; otherwise the built-in default.
+//
+// set is true when a specific address was chosen — by flag or by config — and
+// false when the default was selected for the user. serve falls back to a free
+// port only when set is false: a port the user asked for, in a file or on the
+// command line, is honoured literally and fails loudly instead of silently
+// moving. The config is read through [app.config], which has already validated
+// console_addr by the time it returns, so an unparseable value cannot reach a
+// listener here.
+func (a *app) consoleAddr(flagAddr string, flagSet bool) (addr string, set bool) {
+	if flagSet {
+		return flagAddr, true
+	}
+	if cfg, err := a.config(); err == nil && cfg.ConsoleAddr != "" {
+		return cfg.ConsoleAddr, true
+	}
+	return flagAddr, false
 }
 
 // serve resolves the stack, binds the socket, prints the URL and serves until
@@ -159,15 +199,18 @@ func (a *app) serve(ctx context.Context, opt serveOptions) error {
 	// captured <NAME>_PORT variables, internal/state is the only package that
 	// may say where `.dev` lives, and only the flag parser knows whether the
 	// config was given with --config or found by walking up.
-	srv, err := web.New(sup, web.Options{
-		Addr:           opt.Addr,
-		Force:          opt.Force,
-		Open:           opt.Open,
-		Origins:        a.origins,
-		StateDir:       a.stateDir(),
-		ExplicitConfig: a.configPath != "",
-		AllowedOrigins: opt.AllowOrigins,
-	})
+	makeConsole := func(addr string) (*web.Server, error) {
+		return web.New(sup, web.Options{
+			Addr:           addr,
+			Force:          opt.Force,
+			Open:           opt.Open,
+			Origins:        a.origins,
+			StateDir:       a.stateDir(),
+			ExplicitConfig: a.configPath != "",
+			AllowedOrigins: opt.AllowOrigins,
+		})
+	}
+	srv, err := makeConsole(opt.Addr)
 	if err != nil {
 		// A non-loopback address offered without the danger flag is a refusal to
 		// expose an RCE surface, not a runtime failure: it is exit 2, and the
@@ -185,7 +228,17 @@ func (a *app) serve(ctx context.Context, opt serveOptions) error {
 		// "bind: address already in use" would make serve the one command that
 		// does not. When the holder is another mabo-ctl serve, the useful
 		// remedy is the free-port form, not the lsof line.
-		if errors.Is(err, syscall.EADDRINUSE) {
+		if !errors.Is(err, syscall.EADDRINUSE) {
+			return err
+		}
+		// The user asked for no specific address, so 7999 was chosen for them
+		// and some other server got there first. Rather than die on a port
+		// nobody requested, keep the one soft guarantee bind order exists for —
+		// the printed URL is the address actually bound — and retry on a
+		// kernel-chosen free port. An explicitly requested address is honoured
+		// literally and fails loudly instead, because silently moving a port a
+		// user asked for would be surprising.
+		if opt.Addr != web.DefaultAddr || opt.AddrSet {
 			msg := fmt.Sprintf("mabo-ctl serve: %s: %v", opt.Addr, err)
 			if _, portStr, perr := net.SplitHostPort(opt.Addr); perr == nil {
 				if port, aerr := strconv.Atoi(portStr); aerr == nil {
@@ -197,7 +250,20 @@ func (a *app) serve(ctx context.Context, opt serveOptions) error {
 			msg += "; start it elsewhere with --addr 127.0.0.1:0"
 			return errors.New(msg)
 		}
-		return err
+		fallback, ferr := makeConsole("127.0.0.1:0")
+		if ferr != nil {
+			return ferr
+		}
+		if ferr = fallback.Listen(); ferr != nil {
+			// The fallback is port 0, so the kernel picks it: this only fails if
+			// no loopback port at all is free, which is a real failure worth
+			// surfacing on its own terms.
+			return ferr
+		}
+		fmt.Fprintf(a.env.Stderr,
+			"Note: %s is already in use; serving the console on %s instead.\n",
+			web.DefaultAddr, fallback.Addr())
+		srv = fallback
 	}
 
 	if opt.Notify {

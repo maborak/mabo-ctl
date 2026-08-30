@@ -13,8 +13,6 @@ import (
 	"sync"
 	"time"
 
-	"gopkg.in/yaml.v3"
-
 	"github.com/maborak/mabo-ctl/internal/redact"
 	"github.com/maborak/mabo-ctl/internal/supervisor"
 	"github.com/maborak/mabo-ctl/internal/ui"
@@ -29,36 +27,30 @@ import (
 //go:embed console.html
 var consoleHTML string
 
-// apiDocsHTML is the self-contained API reference page, embedded in the
-// binary like console.html. It fetches /api/openapi.yaml at load time and
-// renders the spec as browsable endpoint cards.
+// apiDocsHTML is the API reference page: a shell that configures the RapiDoc
+// API Reference web component. It is embedded in the binary like console.html.
+// The RapiDoc bundle itself lives in rapidoc-min.js and is served separately
+// at /api-docs/rapidoc.js, so the page stays small and the vendor bundle is
+// a single cacheable file instead of being inlined into every response.
+//
+// Two markers are replaced at serve time: __RAPIDOC_TOKEN__ becomes the
+// session token (the playground sends it as the X-Mabo-Ctl-Token api-key on
+// every try-it request), and __RAPIDOC_SERVER__ becomes the address mabo-ctl
+// actually bound, so try-it requests reach this console however the port was
+// chosen.
 //
 //go:embed api-docs.html
 var apiDocsHTML string
 
+//go:embed rapidoc-min.js
+var rapidocJS string
+
 // openapiSpec is the OpenAPI 3.0 specification served at /api/openapi.yaml.
 // The canonical copy lives at docs/openapi.yaml; this embedded copy must
-// stay in sync.
+// stay in sync. The /api-docs page fetches it for RapiDoc directly.
 //
 //go:embed openapi.yaml
 var openapiSpec string
-
-// openapiSpecJSON is the same spec converted to JSON at init time. The
-// API docs page receives it as an inline script variable so the browser
-// can render endpoints without a client-side YAML parser.
-var openapiSpecJSON string
-
-func init() {
-	var raw any
-	if err := yaml.Unmarshal([]byte(openapiSpec), &raw); err != nil {
-		panic("web: parsing openapi.yaml: " + err.Error())
-	}
-	b, err := json.Marshal(raw)
-	if err != nil {
-		panic("web: marshaling openapi.yaml to JSON: " + err.Error())
-	}
-	openapiSpecJSON = string(b)
-}
 
 // contentSecurityPolicy is served with the page. It permits the inline style
 // and script the single-file page is made of, and same-origin fetch and
@@ -67,6 +59,23 @@ func init() {
 // It is the mechanical enforcement of "the page makes no external requests".
 const contentSecurityPolicy = "default-src 'none'; " +
 	"script-src 'unsafe-inline'; " +
+	"style-src 'unsafe-inline'; " +
+	"img-src 'self' data:; " +
+	"connect-src 'self'; " +
+	"font-src 'self' data:; " +
+	"base-uri 'none'; " +
+	"form-action 'none'; " +
+	"frame-ancestors 'none'"
+
+// docsCSP is served with the AUTHENTICATED /api-docs page, and differs from
+// [contentSecurityPolicy] in exactly one way: script-src gains 'self'. The
+// docs page loads the RapiDoc bundle from the same origin
+// (/api-docs/rapidoc.js) rather than executing the console's inline-only
+// script, and 'self' admits exactly that file. Everything else stays as
+// locked-down as the console: no remote script, style, font or image, no
+// framing, same-origin connect only.
+const docsCSP = "default-src 'none'; " +
+	"script-src 'unsafe-inline' 'self'; " +
 	"style-src 'unsafe-inline'; " +
 	"img-src 'self' data:; " +
 	"connect-src 'self'; " +
@@ -183,6 +192,24 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 // form rather than a bare 403, because the docs are informational and a
 // developer who followed a bookmark is more likely a colleague than an
 // attacker.
+//
+// An AUTHENTICATED response renders the RapiDoc API Reference and replaces
+// two markers in the embedded shell:
+//
+//   - __RAPIDOC_TOKEN__ → the session token, wired as the X-Mabo-Ctl-Token
+//     api-key so every try-it request — reads AND mutations — is
+//     authenticated exactly like the console buttons. The token is hex, so it
+//     needs no escaping in the HTML attribute (see [Server.renderPage]'s
+//     injectToken for the same decision), and it is delivered only to a caller
+//     who has already proven possession of it: the same contract as the
+//     console page.
+//   - __RAPIDOC_SERVER__ → the address mabo-ctl actually bound, so try-it
+//     requests reach THIS console however the port was chosen, instead of
+//     the spec's 127.0.0.1:7999 default.
+//
+// The page loads the vendor bundle from /api-docs/rapidoc.js and RapiDoc
+// fetches the spec itself from /api/openapi.yaml (both same-origin requests,
+// authenticated by the session cookie or the api-key header).
 func (s *Server) handleDocs(w http.ResponseWriter, r *http.Request) {
 	ok, fromQuery := s.session(r)
 
@@ -194,15 +221,33 @@ func (s *Server) handleDocs(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(unlockHTML))
 		return
 	}
-	w.Header().Set("Content-Security-Policy", contentSecurityPolicy)
+	w.Header().Set("Content-Security-Policy", docsCSP)
 	if fromQuery {
 		s.setSessionCookie(w)
 	}
+	// The markers appear in the <rapi-doc> attributes (and once in a comment),
+	// so every occurrence must be replaced.
+	page := strings.ReplaceAll(apiDocsHTML, "__RAPIDOC_TOKEN__", s.token)
+	page = strings.ReplaceAll(page, "__RAPIDOC_SERVER__", "http://"+s.Addr())
 	w.WriteHeader(http.StatusOK)
-	// Inject the parsed OpenAPI spec as a global JS variable so the page
-	// can render endpoints without a client-side YAML parser or fetch.
-	_, _ = w.Write([]byte("<script>window.__OPENAPI__=" + openapiSpecJSON + ";</script>\n"))
-	_, _ = w.Write([]byte(apiDocsHTML))
+	_, _ = w.Write([]byte(page))
+}
+
+// handleRapidoc serves the embedded RapiDoc bundle that renders the /api-docs
+// page. It is session-gated like the rest of the docs surface: the script
+// defines the <rapi-doc> custom element which the page's markup instantiates,
+// so only a browser that can load the documented page itself may load it. It is
+// a static file — no state, no input — so nothing in this handler can vary.
+func (s *Server) handleRapidoc(w http.ResponseWriter, r *http.Request) {
+	if ok, _ := s.session(r); !ok {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":"unauthorized"}`))
+		return
+	}
+	w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(rapidocJS))
 }
 
 // handleOpenAPI serves the OpenAPI 3.0 specification in YAML. It requires

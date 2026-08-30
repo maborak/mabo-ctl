@@ -39,7 +39,7 @@ func LoadCanonical(path string) (Map, error) {
 // want relative to have. Empty means the maps agree exactly.
 func Diff(have, want Map) []string {
 	var out []string
-	for _, section := range []string{"cli", "config", "json"} {
+	for _, section := range []string{"cli", "config", "json", "http"} {
 		live := index(want.Sections[section])
 		disk := index(have.Sections[section])
 		for id := range live {

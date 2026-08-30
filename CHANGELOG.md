@@ -11,15 +11,23 @@ stable, everything else may still move.
 
 ### Added
 
+- **`console_addr` in `mabo-ctl.yaml`** — the address `mabo-ctl serve` binds
+  when no `--addr` is given (default `127.0.0.1:7999`), e.g.
+  `console_addr: "127.0.0.1:9000"`. An explicit `--addr` still wins; a taken
+  explicit port still fails loudly rather than silently moving.
 - **`GET /health`** — unauthenticated server liveness check on the web console.
-  Returns `{"status": "ok"}` with a 200 status when the server is running.
-- **`GET /api-docs`** — interactive API reference page (Redoc-style endpoint
-  docs) served directly from the binary. Fetches the OpenAPI spec from
-  `/api/openapi.yaml` and renders it as browsable endpoint cards.
+  Returns `{"status": "ok"}` with a 200 status when the server is running. It is
+  the only route that does not require a session token, designed for monitoring
+  tools, load balancers and CI probes.
+- **`GET /api-docs`** — interactive API reference page rendered by a **vendored
+  RapiDoc** bundle (MIT, served at `/api-docs/rapidoc.js`) — a full API browser
+  with a working **try-it playground** on every operation. The session token
+  is wired in automatically as the `X-Mabo-Ctl-Token` api-key, so reads and
+  mutations from the page authenticate exactly like the console buttons; the
+  try-it server is pinned to the address actually bound. No CDN, no external
+  requests.
 - **`GET /api/openapi.yaml`** — the OpenAPI 3.0 specification in YAML, served
   from the binary. Requires a valid session.
-  The only route that does not require a session token, designed for monitoring
-  tools, load balancers and CI probes.
 - **`docs/API.md`** — comprehensive HTTP API reference for the web console:
   every route, authentication model, request/response shapes, SSE stream
   formats, error handling, and curl examples. The machine-readable catalogue

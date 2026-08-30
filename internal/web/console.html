@@ -1026,7 +1026,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     {{with .Root}}<div class="where"><span title="{{.}}"><b>root</b>{{.}}</span></div>{{end}}
     <div class="bar-actions">
       <a href="/api-docs?token={{.Token}}" class="ghost"
-         title="Open the API reference (Redoc-style endpoint docs)">API</a>
+         title="Open the API reference (RapiDoc endpoint docs)">API</a>
       <button type="button" id="btn-config" class="ghost toggle" aria-pressed="false"
               aria-controls="config-view"
               title="Show the resolved configuration: which mabo-ctl.yaml was loaded, and where each port came from">Config</button>
@@ -3140,6 +3140,8 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     fact(dl, "ready timeout", txt(fmtSetting(src.ready_timeout_ms)), !src.ready_timeout_ms)
       .title = "how long a readiness probe polls before a service is reported slow, " +
         "and the point past which a live service that is not answering is degraded";
+    fact(dl, "console addr", txt(src.console_addr || "–"), !src.console_addr)
+      .title = "address `mabo-ctl serve` binds when no --addr is given; blank means the default 127.0.0.1:7999";
     sec.appendChild(dl);
     return sec;
   }
@@ -3671,56 +3673,6 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
   }
 
   boot();
-})();
-</script>
-<script>
-// ---------------------------------------------------------------------------
-// Phase history strip.
-//
-// A compact "what just happened" panel fed by GET /api/history — the same
-// event shape the mutation responses and the event stream already use, so no
-// new parsing. It polls rather than streams on purpose: history is context
-// for the live panes above, not a second realtime channel to keep open. The
-// ring lives only in the server process; a restart of mabo-ctl serve starts
-// a fresh history, and the panel says so rather than pretending otherwise.
-// ---------------------------------------------------------------------------
-(function () {
-  "use strict";
-  var box = document.createElement("aside");
-  box.id = "history-panel";
-  box.style.cssText = "margin:8px 0;padding:6px 10px;border:1px solid var(--line,#444);" +
-    "border-radius:6px;font:12px/1.5 ui-monospace,monospace;max-height:180px;" +
-    "overflow-y:auto;white-space:pre-wrap;";
-  box.textContent = "history: loading…";
-  document.body.appendChild(box);
-
-  function esc(s) {
-    return String(s == null ? "" : s).replace(/[&<>]/g, function (c) {
-      return { "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c];
-    });
-  }
-
-  function render(events) {
-    if (!events.length) {
-      box.textContent = "history: nothing recorded yet this session";
-      return;
-    }
-    var lines = events.map(function (e) {
-      return (e.service || "—") + "  " + (e.phase || "info") + "  " + e.msg +
-        (e.error ? "  [" + e.error + "]" : "");
-    });
-    box.innerHTML = lines.map(function (l) { return esc(l) + "\n"; }).join("");
-  }
-
-  function refresh() {
-    fetch("/api/history", { credentials: "same-origin" })
-      .then(function (r) { return r.ok ? r.json() : null; })
-      .then(function (body) { if (body) { render(body.events || []); } })
-      .catch(function () { /* console offline mid-flight; next tick retries */ });
-  }
-
-  refresh();
-  setInterval(refresh, 10000);
 })();
 </script>
 </body>

@@ -32,6 +32,7 @@ func Schema() ([]byte, error) {
 			"$schema":       stringSchema("A JSON Schema reference for editors; mabo-ctl ignores it."),
 			"stop_grace":    durationSchema("How long Stop waits after SIGTERM before SIGKILL. Default 10s."),
 			"ready_timeout": durationSchema("How long a readiness probe polls before a service is slow, then degraded. Default 30s."),
+			"console_addr":  stringSchema("Address \"host:port\" that `mabo-ctl serve` binds when no --addr is given, e.g. \"127.0.0.1:9000\". Default 127.0.0.1:7999. A non-loopback host still needs --i-know-this-is-dangerous at serve time."),
 			"services": map[string]any{
 				"type":     "array",
 				"minItems": 1,

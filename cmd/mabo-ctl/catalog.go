@@ -223,6 +223,10 @@ func routeAuth(k web.RouteKind) string {
 		return "session required: X-Mabo-Ctl-Token header, ?token=, or the cookie minted by opening the printed URL"
 	case web.RouteMutate:
 		return "X-Mabo-Ctl-Token header required; POST-only"
+	case web.RouteHealth:
+		return "none: unauthenticated liveness check exposing no state beyond uptime"
+	case web.RouteDocs:
+		return "session required: X-Mabo-Ctl-Token header, ?token=, or the cookie minted by opening the printed URL; an unauthenticated browser gets an unlock form (401), not a bare 403"
 	default:
 		return "unknown guard"
 	}

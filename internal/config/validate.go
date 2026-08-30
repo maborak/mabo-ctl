@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -71,6 +72,7 @@ func (c *Config) validate() error {
 	v := &validator{cfg: c}
 
 	v.checkDurations()
+	v.checkConsoleAddr()
 	v.checkServices()
 	v.checkDependencies()
 	v.checkPortCollisions()
@@ -111,6 +113,28 @@ func (v *validator) checkDurations() {
 	}
 	if v.cfg.ReadyTimeout <= 0 {
 		v.addf("ready_timeout must be positive, got %s", v.cfg.ReadyTimeout)
+	}
+}
+
+// checkConsoleAddr enforces the shape of console_addr: a host:port pair.
+//
+// The security decision — that the address is loopback, or that a
+// non-loopback one was explicitly authorised — is the web console's, made at
+// bind time over the same string, because only it knows the force flag. What
+// belongs here is the cheaper and earlier check that the string is even a
+// bindable address, so a typo fails at load time next to the file it came
+// from rather than when serve tries to bind it.
+func (v *validator) checkConsoleAddr() {
+	if v.cfg.ConsoleAddr == "" {
+		return
+	}
+	host, port, err := net.SplitHostPort(v.cfg.ConsoleAddr)
+	if err != nil {
+		v.addf("console_addr %q is not an address of the form host:port: %v", v.cfg.ConsoleAddr, err)
+		return
+	}
+	if host == "" {
+		v.addf("console_addr %q must name a host, not just a port (write e.g. 127.0.0.1:%s)", v.cfg.ConsoleAddr, port)
 	}
 }
 

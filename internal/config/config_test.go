@@ -501,6 +501,28 @@ checks:
 			want: []string{`duplicate check name "pg"`},
 		},
 
+		// ---- console_addr ----
+		{
+			name: "console_addr that is not host:port",
+			yaml: `
+console_addr: 9000
+services:
+  - name: a
+    cmd: [echo, a]
+`,
+			want: []string{`console_addr "9000" is not an address of the form host:port`},
+		},
+		{
+			name: "console_addr with only a port",
+			yaml: `
+console_addr: ":9000"
+services:
+  - name: a
+    cmd: [echo, a]
+`,
+			want: []string{`console_addr ":9000" must name a host`},
+		},
+
 		// ---- shells block ----
 		{
 			name: "shell bound to an unknown service",
@@ -714,6 +736,28 @@ func TestLoadDefaultsAndOverrides(t *testing.T) {
 		}
 		if !strings.Contains(err.Error(), "is not a duration") {
 			t.Errorf("unhelpful error: %v", err)
+		}
+	})
+
+	t.Run("console_addr", func(t *testing.T) {
+		root := t.TempDir()
+		cfg, err := Load(write(t, root, "console_addr: 127.0.0.1:9000\n"+okService))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.ConsoleAddr != "127.0.0.1:9000" {
+			t.Errorf("ConsoleAddr = %q, want 127.0.0.1:9000", cfg.ConsoleAddr)
+		}
+	})
+
+	t.Run("console_addr absent defaults to empty", func(t *testing.T) {
+		root := t.TempDir()
+		cfg, err := Load(write(t, root, okService))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.ConsoleAddr != "" {
+			t.Errorf("ConsoleAddr = %q, want empty default", cfg.ConsoleAddr)
 		}
 	})
 }

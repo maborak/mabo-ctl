@@ -5,22 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"github.com/maborak/mabo-ctl/internal/supervisor"
 )
-
-// TestConsolePageConsumesHistory pins the one frontend dependency of
-// /api/history: the embedded page must actually render it. The route table
-// proves the endpoint exists; this proves the page did not quietly stop
-// using it.
-func TestConsolePageConsumesHistory(t *testing.T) {
-	t.Parallel()
-	if !strings.Contains(consoleHTML, "/api/history") {
-		t.Errorf("embedded console page no longer references /api/history")
-	}
-}
 
 func TestHistoryServesRecordedEventsOldestFirst(t *testing.T) {
 	t.Parallel()

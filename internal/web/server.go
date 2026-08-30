@@ -450,9 +450,9 @@ func (s *Server) routes() *http.ServeMux {
 		"POST /api/{svc}/stop":    s.handleStop,
 		"POST /api/{svc}/restart": s.handleRestart,
 
-		"GET /api-docs":         s.handleDocs,
-		"GET /api-docs/":        s.handleDocs,
-		"GET /api/openapi.yaml": s.handleOpenAPI,
+		"GET /api-docs":            s.handleDocs,
+		"GET /api/openapi.yaml":    s.handleOpenAPI,
+		"GET /api-docs/rapidoc.js": s.handleRapidoc,
 	}
 
 	for _, r := range consoleRoutes {
@@ -485,8 +485,10 @@ func (s *Server) routes() *http.ServeMux {
 		case RouteDocs:
 			// NOT wrapped: like RouteIndex, the handler does its own
 			// session check so it can show an unlock form to unauthenticated
-			// visitors rather than a bare 403. The page contains no token
-			// and no process state.
+			// visitors rather than a bare 403. The UNAUTHENTICATED response
+			// contains no token and no process state; the authenticated one
+			// carries the session token for the page's try-it playground,
+			// exactly as the console page does.
 			wrap = func(pattern string, h http.HandlerFunc) {
 				mux.HandleFunc(pattern, h)
 			}

@@ -8,7 +8,8 @@ info:
 
     ## Authentication
 
-    - **Session**: Cookie (`mabo_session`), `?token=`, or `X-Mabo-Ctl-Token`
+    - **Session**: Cookie (`mabo-ctl_console_<port>` — the name embeds the bound
+      port so two consoles do not clash), `?token=`, or `X-Mabo-Ctl-Token`
       header. Required for all routes.
     - **Token**: `X-Mabo-Ctl-Token` header only (not cookie or query). Required
       for POST routes. This is the CSRF defence: a cross-origin page cannot
@@ -404,10 +405,14 @@ paths:
     get:
       summary: Interactive API reference page
       description: |
-        Self-contained API reference page (Redoc-style endpoint docs)
-        served directly from the binary. Fetches /api/openapi.yaml at
-        load time and renders the spec as browsable endpoint cards.
-        No CDN, no external scripts, no telemetry.
+        API reference page rendered by RapiDoc (vendored, no CDN, no external
+        requests). The spec is loaded from /api/openapi.yaml and the try-it
+        server is pinned to the address mabo-ctl actually bound. Every
+        operation has a working try-it playground: the session token is wired
+        in automatically as the X-Mabo-Ctl-Token api-key (see the api-key
+        attributes on the page's rapi-doc element), so reads and mutations
+        are authenticated exactly like the console buttons. Live SSE streams
+        render as data arrives.
       security:
         - sessionCookie: []
         - sessionHeader: []
@@ -442,13 +447,39 @@ paths:
         "401":
           description: Session token required
 
+  /api-docs/rapidoc.js:
+    get:
+      summary: Vendored RapiDoc bundle
+      description: |
+        The embedded RapiDoc bundle (MIT) that renders /api-docs.
+        A static, session-gated asset: it defines the rapi-doc custom element,
+        so only a browser that can load the documented page may load its
+        renderer.
+      security:
+        - sessionCookie: []
+        - sessionHeader: []
+        - queryToken: []
+      responses:
+        "200":
+          description: JavaScript bundle
+          content:
+            application/javascript:
+              schema:
+                type: string
+        "401":
+          description: Session token required
+
 components:
   securitySchemes:
     sessionCookie:
       type: apiKey
       in: cookie
-      name: mabo_session
-      description: Session cookie set by opening the printed URL with ?token=
+      name: mabo-ctl_console_{port}
+      description: >-
+        Session cookie set by opening the printed URL with ?token=. The name
+        embeds the bound port (mabo-ctl_console_<port>) because cookies are not
+        port-scoped and two consoles on the same loopback host must not
+        overwrite each other.
     sessionHeader:
       type: apiKey
       in: header

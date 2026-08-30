@@ -151,5 +151,14 @@ name and is a complete sentence.
 - `docs/LANDMINES.md` — bugs this codebase actually shipped, each with a
   runnable detector. When you fix a diagnosed bug, adding its row is part of the
   fix. Cross-check findings against it before claiming anything new.
+- `docs/API.md` — the web console's HTTP surface by hand: every route, auth
+  model, response shape and curl example. Machine-checked: a test refuses a
+  route that has no `### METHOD /path` section here.
+- `docs/openapi.yaml` — OpenAPI 3.0 spec for the same surface. The copy
+  embedded at `internal/web/openapi.yaml` is byte-for-byte synced by
+  `TestEmbeddedOpenAPIMatchesTheDocsCopy`; change the spec in one place and
+  `cp` it, never edit the two independently.
+- `SECURITY.md` — the trust boundary and every guard on the console, plus the
+  one surface (the web console) the security tests take the most care over.
 - `examples/mabo-ctl.yaml` — annotated reference config.
 - `README.md` — user-facing everything else.

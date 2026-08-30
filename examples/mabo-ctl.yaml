@@ -28,6 +28,12 @@ stop_grace: 10s
 # "slow" is not "failed": the process is alive, it just is not answering yet.
 ready_timeout: 30s
 
+# Address `mabo-ctl serve` binds when no --addr is given: "host:port".
+# Default 127.0.0.1:7999. Useful when 7999 is already taken on your machine or
+# you want a fixed, memorable console URL. A non-loopback host still needs
+# --i-know-this-is-dangerous at serve time.
+# console_addr: 127.0.0.1:9000
+
 # ---------------------------------------------------------------------------
 # services — the registry. At least one is required.
 # ---------------------------------------------------------------------------

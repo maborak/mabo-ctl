@@ -56,6 +56,9 @@ type ConfigSource struct {
 	// ReadyTimeoutMS is how long a readiness probe polls before a service is
 	// reported slow, and past which it is reported degraded.
 	ReadyTimeoutMS int64 `json:"ready_timeout_ms"`
+	// ConsoleAddr is the address `mabo-ctl serve` binds when no --addr is
+	// given, "" when the built-in default (127.0.0.1:7999) is in force.
+	ConsoleAddr string `json:"console_addr,omitempty"`
 }
 
 // ConfigService is one service as it resolved, not as it was declared.
@@ -151,6 +154,7 @@ func BuildConfigView(in ConfigInput) ConfigView {
 		Explicit:       in.Explicit,
 		StopGraceMS:    in.Config.StopGrace.Milliseconds(),
 		ReadyTimeoutMS: in.Config.ReadyTimeout.Milliseconds(),
+		ConsoleAddr:    in.Config.ConsoleAddr,
 	}
 
 	origins := make(map[string]service.Origin, len(in.Origins))
@@ -269,6 +273,9 @@ func (r *Renderer) configSource(s ConfigSource) string {
 		"stop_grace %s   ready_timeout %s",
 		formatDuration(time.Duration(s.StopGraceMS)*time.Millisecond),
 		formatDuration(time.Duration(s.ReadyTimeoutMS)*time.Millisecond))))
+	if s.ConsoleAddr != "" {
+		lines = append(lines, r.configField("console", s.ConsoleAddr))
+	}
 	return strings.Join(lines, "\n")
 }
 

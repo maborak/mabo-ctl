@@ -3,11 +3,14 @@ package main
 import (
 	"context"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/maborak/mabo-ctl/internal/web"
 )
 
 // serveApp returns an app wired to h, bootstrapped exactly as run would
@@ -162,6 +165,118 @@ func TestServeBindsBeforePrintingTheURL(t *testing.T) {
 func splitURLPort(u *url.URL) (host, port string, ok bool) {
 	h, p := u.Hostname(), u.Port()
 	return h, p, p != ""
+}
+
+// TestServeFallsBackToAFreePortWhenTheDefaultIsTaken checks that a second
+// console started with no --addr does not die on the default port: 7999 is
+// bound by another server, so serve retries on a kernel-chosen free port and
+// prints the real address, keeping the "URL is what was actually bound"
+// guarantee the bind-before-print order exists for.
+func TestServeFallsBackToAFreePortWhenTheDefaultIsTaken(t *testing.T) {
+	h := newHarness(t)
+	a := serveApp(t, h)
+
+	// Occupy the default console port so the fallback has something to dodge.
+	// If it is ALREADY taken (e.g. a live console on this machine) that is just
+	// as good: either way the default port is unavailable when serve runs.
+	blocker, err := net.Listen("tcp", "127.0.0.1:7999")
+	if err == nil {
+		defer blocker.Close()
+	}
+
+	opened := make(chan string, 1)
+	h.env.OpenURL = func(_ context.Context, raw string) error {
+		opened <- raw
+		return nil
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- a.serve(ctx, serveOptions{Addr: web.DefaultAddr, Open: true}) }()
+
+	var raw string
+	select {
+	case raw = <-opened:
+	case err := <-done:
+		t.Fatalf("serve returned instead of falling back: %v", err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("serve never bound a fallback socket")
+	}
+
+	u, err := url.Parse(raw)
+	if err != nil {
+		t.Fatalf("printed URL %q does not parse: %v", raw, err)
+	}
+	if port := u.Port(); port == "7999" || port == "" {
+		t.Errorf("fallback URL %q is on port %q, want a free port other than 7999", raw, port)
+	}
+	if msg := h.stderr.String(); !strings.Contains(msg, "already in use") {
+		t.Errorf("stderr does not say the default was taken:\n%s", msg)
+	}
+
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("serve = %v, want nil after an interrupt", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("serve did not return after its context was cancelled")
+	}
+}
+
+// TestServeHonoursAnExplicitlyRequestedAddress pins that the fallback is only
+// for the IMPLICIT default. A user who types --addr 127.0.0.1:7999 asked for
+// that port, so when it is taken serve fails loudly with the held-port detail
+// instead of silently moving.
+func TestServeHonoursAnExplicitlyRequestedAddress(t *testing.T) {
+	h := newHarness(t)
+	a := serveApp(t, h)
+
+	blocker, err := net.Listen("tcp", "127.0.0.1:7999")
+	if err == nil {
+		defer blocker.Close()
+	}
+
+	err = a.serve(context.Background(), serveOptions{Addr: web.DefaultAddr, AddrSet: true})
+	if err == nil {
+		t.Fatal("an explicitly requested but taken address did not fail")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "already in use") && !strings.Contains(msg, "held by pid") {
+		t.Errorf("error %q does not explain the held port", msg)
+	}
+}
+
+// TestConsoleAddrPrecedence pins how the console bind address is chosen:
+// an explicit --addr beats console_addr in the config, which beats the
+// default. It also pins the `set` flag that decides whether serve falls back
+// to a free port: only an address chosen for the user (set=false) falls back.
+func TestConsoleAddrPrecedence(t *testing.T) {
+	t.Parallel()
+	h := newHarnessWithConfig(t, "console_addr: 127.0.0.1:9000\n"+fixture)
+	a := serveApp(t, h)
+
+	if addr, set := a.consoleAddr(web.DefaultAddr, false); addr != "127.0.0.1:9000" || !set {
+		t.Errorf("config console_addr: got (%q, %v), want (127.0.0.1:9000, true)", addr, set)
+	}
+	if addr, set := a.consoleAddr("127.0.0.1:8123", true); addr != "127.0.0.1:8123" || !set {
+		t.Errorf("explicit --addr beats config: got (%q, %v)", addr, set)
+	}
+}
+
+// TestConsoleAddrPrecedenceDefault pins the unset case: no --addr and no
+// console_addr yields the default with set=false, which is the one case that
+// falls back to a free port when the default is taken.
+func TestConsoleAddrPrecedenceDefault(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	a := serveApp(t, h)
+
+	if addr, set := a.consoleAddr(web.DefaultAddr, false); addr != web.DefaultAddr || set {
+		t.Errorf("no addr/config: got (%q, %v), want (%q, false)", addr, set, web.DefaultAddr)
+	}
 }
 
 // TestExposedToNetwork covers the predicate that decides whether the loud

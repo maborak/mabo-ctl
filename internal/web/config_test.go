@@ -334,7 +334,7 @@ func TestConsolePageHasAConfigPanel(t *testing.T) {
 		"port_source",   // the field it reads
 		"port_override", // and the trap it warns about
 		"port_declared",
-		"state_dir", "stop_grace_ms", "ready_timeout_ms",
+		"state_dir", "stop_grace_ms", "ready_timeout_ms", "console_addr",
 	} {
 		if !strings.Contains(consoleHTML, want) {
 			t.Errorf("console.html does not carry %q; the config panel is not wired", want)

@@ -105,6 +105,34 @@ func TestTheDocumentedRoutesAreTheServedRoutes(t *testing.T) {
 // key2 names one route in failure output.
 func key2(r Route) string { return r.Method + " " + r.Path }
 
+// TestTrailingSlashIsNotServed pins that every documented pattern is exact:
+// a trailing slash on a documented route must 404, never reach a handler. A
+// pattern that swallowed "/api-docs/" while the table documented only
+// "/api-docs" would be exactly the un-documented drift this table exists to
+// prevent.
+func TestTrailingSlashIsNotServed(t *testing.T) {
+	t.Parallel()
+	s, err := NewWith(twoServices(), Options{Addr: recorderAddr})
+	if err != nil {
+		t.Fatalf("NewWith: %v", err)
+	}
+	for _, r := range Routes() {
+		if strings.Contains(r.Path, "{svc}") {
+			continue // {svc} routes are covered by the unknown-service test
+		}
+		path := r.Path
+		if path == "/{$}" {
+			path = "/"
+		}
+		if path == "/" {
+			continue // the root itself carries no trailing slash to test
+		}
+		if code := do(s, r.Method, path+"/", true); code != http.StatusNotFound {
+			t.Errorf("%s %s/ = %d, want 404 (patterns are exact)", r.Method, path, code)
+		}
+	}
+}
+
 // do issues one request through the server's own handler chain, optionally
 // carrying the session token (header or query).
 func do(s *Server, method, path string, withToken bool) int {

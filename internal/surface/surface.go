@@ -1,16 +1,19 @@
 // Package surface enumerates mabo-ctl's LIVE integration surfaces so a
-// committed map can be diffed against reality on every suite run. Three
-// sections exist because three things integrate against us from the outside,
+// committed map can be diffed against reality on every suite run. Four
+// sections exist because four things integrate against us from the outside,
 // and anything else would claim an interface nobody has:
 //
 //	cli     every command AND every long-form flag of it
 //	config  every schema field of mabo-ctl.yaml (+ template forms)
 //	json    every key of the status --json document
+//	http    every web-console route as method+path+guard, from [internal/web.Routes]
 //
 // Everything here is derived FROM THE BUILT BINARY (schema --commands and
-// schema are generated from its live command tree, and the json section is
-// marshalled through ui.StatusJSON itself), so renaming a shipped flag, field
-// or key fails the drift gate rather than drifting silently.
+// schema are generated from its live command tree, the json section is
+// marshalled through ui.StatusJSON itself, and the http section is the served
+// route table), so renaming a shipped flag, field or key — or turning a
+// documented guard into a bare registration — fails the drift gate rather than
+// drifting silently.
 package surface
 
 import (
@@ -21,6 +24,7 @@ import (
 
 	"github.com/maborak/mabo-ctl/internal/supervisor"
 	"github.com/maborak/mabo-ctl/internal/ui"
+	"github.com/maborak/mabo-ctl/internal/web"
 )
 
 // Map is the committed artifact: stable ids grouped by section, sorted.
@@ -52,11 +56,24 @@ func Enumerate(binaryPath string) (Map, error) {
 	m.Sections["cli"] = cli
 	m.Sections["config"] = cfg
 	m.Sections["json"] = jsonKeys
+	m.Sections["http"] = enumerateHTTP()
 
 	for _, s := range m.Sections {
 		sort.Slice(s, func(i, j int) bool { return s[i] < s[j] })
 	}
 	return m, nil
+}
+
+// enumerateHTTP names every web-console route as method + path + guard. The
+// guard is part of the id deliberately: a route whose kind is changed from
+// RouteRead to an unguarded registration is a security-relevant change, and the
+// drift gate must fail on it exactly as it fails on a renamed flag.
+func enumerateHTTP() []Name {
+	out := make([]Name, 0, 32)
+	for _, r := range web.Routes() {
+		out = append(out, Name(fmt.Sprintf("http:%s %s (%s)", r.Method, r.Path, r.Kind)))
+	}
+	return out
 }
 
 func runBinary(bin string, args ...string) ([]byte, error) {

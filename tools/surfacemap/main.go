@@ -47,8 +47,8 @@ func main() {
 	if err := surface.WriteCanonical(m, *out); err != nil {
 		fatal(err)
 	}
-	fmt.Printf("surfaces: cli=%d config=%d json=%d total=%d -> %s\n",
-		len(m.Sections["cli"]), len(m.Sections["config"]), len(m.Sections["json"]), n, *out)
+	fmt.Printf("surfaces: cli=%d config=%d json=%d http=%d total=%d -> %s\n",
+		len(m.Sections["cli"]), len(m.Sections["config"]), len(m.Sections["json"]), len(m.Sections["http"]), n, *out)
 }
 
 func fatal(err error) {
