@@ -73,6 +73,14 @@ The controls, as of the current `main`:
   `SameSite=Strict` `HttpOnly` cookie, or the header — a browser navigation
   cannot send a header and an `EventSource` cannot either. A browser with no
   token gets a box to paste one into, and that page contains no token.
+- **`/api-docs` has the same boundary.** Unauthenticated, it answers the unlock
+  page with no token and no page. Authenticated, the session token is rendered
+  into the page as the `X-Mabo-Ctl-Token` api-key on the `<rapi-doc>` element
+  so its try-it playground can issue real requests (including mutations) under
+  the same session the console buttons use — the equal of the console page, no
+  more. The vendored RapiDoc bundle is served at `/api-docs/rapidoc.js`,
+  session-gated like the rest of the docs surface, and the docs page's CSP adds
+  `'self'` to `script-src` for exactly that file.
 - **`Host` and `Origin` validation** against the bound address. A `Host` that is
   a DNS name other than `localhost` is refused outright: that is the
   DNS-rebinding defence. `--allow-origin` widens it to named hosts or
@@ -97,8 +105,8 @@ Audit these against the code (`internal/web/`), not against this list.
   appear in a failed probe's health URL.** `/api/status` redacts the same value,
   because it answers any local process; the CLI prints to the operator's own
   terminal, where their own credentials are theirs to see. If you pipe
-  `--json` into a shared log, redact it yourself. Tracked in
-  `.claude/tracking/OPEN_ISSUES.md`.
+  `--json` into a shared log, redact it yourself. This is a known, accepted
+  limitation rather than an oversight.
 - **A health URL's query string reaches the supervised service's own log**,
   because mabo-ctl's probe requests it and the service logs the request line.
   Prefer a credential in a header over one in a query.

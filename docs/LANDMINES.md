@@ -125,8 +125,7 @@ go test ./internal/service/ -run 'TestCallerEnvDoesNotInventAPortForAPortlessSer
 ## 4. Redaction applied per output route instead of at the source
 
 **Shape.** A secret is withheld on the channel someone tested, and fans out
-through the three nobody enumerated. This is
-`.claude/discipline/feedback_audit_all_data_channels.md` in the wild.
+through the three nobody enumerated.
 
 **Where it bit us.** `internal/supervisor/supervisor.go` (the `slow` and
 `degraded` events), found 2026-08-17. `GET /api/status` redacted the health URL,
