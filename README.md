@@ -33,6 +33,20 @@ so Windows is explicitly out of scope rather than half-supported.
 ## Install
 
 ```sh
+curl -fsSL https://raw.githubusercontent.com/maborak/mabo-ctl/main/install.sh | sh
+```
+
+The installer downloads the static binary for your OS/arch from the latest
+release, verifies it against the release's `SHA256SUMS`, and installs it to
+`/usr/local/bin` (set `DESTDIR` to install elsewhere). Nothing runs from the
+network: the script is a shell script and the binary is checksum-verified
+before it is written. With `GITHUB_TOKEN` or `GH_TOKEN` set, the same script
+authenticates a private repository — GitHub serves a private repo's release
+assets only through the API.
+
+Or install from source:
+
+```sh
 go install github.com/maborak/mabo-ctl/cmd/mabo-ctl@latest
 ```
 

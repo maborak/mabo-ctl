@@ -47,6 +47,10 @@ check: ## Everything CI would run: format, build, vet, race tests
 	go vet ./...
 	go test ./... -race
 
+.PHONY: install-installer
+install-installer: ## Install via the release installer (like the curl | sh one-liner)
+	./install.sh
+
 .PHONY: lint
 lint: ## Optional linters; skipped with a note when not installed
 	@command -v golangci-lint >/dev/null && golangci-lint run || echo "skip: golangci-lint not installed"
