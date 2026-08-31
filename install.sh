@@ -35,12 +35,17 @@ die() {
 
 # Map the running machine to an asset name. The release ships one static
 # CGO_ENABLED=0 binary per OS/arch; anything else is a refusal, not a guess.
+# uname reports the arch differently across systems (aarch64 on Linux ARM,
+# arm64 on macOS), so normalise before matching.
 machine="$(uname -s)-$(uname -m)"
 case "$machine" in
-  Darwin-arm64)  asset="mabo-ctl-darwin-arm64" ;;
-  Darwin-x86_64) asset="mabo-ctl-darwin-amd64" ;;
-  Linux-arm64)   asset="mabo-ctl-linux-arm64" ;;
-  Linux-x86_64)  asset="mabo-ctl-linux-amd64" ;;
+  Darwin-arm64)   asset="mabo-ctl-darwin-arm64" ;;
+  Darwin-x86_64)  asset="mabo-ctl-darwin-amd64" ;;
+  Darwin-i386)    asset="mabo-ctl-darwin-amd64" ;;
+  Linux-aarch64)  asset="mabo-ctl-linux-arm64" ;;
+  Linux-arm64)    asset="mabo-ctl-linux-arm64" ;;
+  Linux-x86_64)   asset="mabo-ctl-linux-amd64" ;;
+  Linux-i386)     asset="mabo-ctl-linux-amd64" ;;
   *) die "no prebuilt mabo-ctl for $(uname -s) $(uname -m); " \
         "install it with: go install ${repo}/cmd/mabo-ctl@latest" ;;
 esac
