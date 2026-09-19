@@ -3,6 +3,7 @@ package web
 import (
 	"net/http"
 
+	"github.com/maborak/mabo-ctl/internal/service"
 	"github.com/maborak/mabo-ctl/internal/ui"
 )
 
@@ -11,7 +12,7 @@ import (
 // the four precedence levels produced each port.
 //
 // Port precedence has four levels (--ports, then a <NAME>_PORT in the caller's
-// environment, then the persisted .dev/run.env, then the declared default),
+// environment, then the persisted .mabo-ctl/run.env, then the declared default),
 // template expansion rewrites cmd, env and health on the way past, and runtime:
 // rewrites cmd[0] into an absolute interpreter path. Until this route existed
 // nothing showed an operator any of it, so "why is backend on 7999?" was a
@@ -47,14 +48,17 @@ func (s *Server) handleConfig(w http.ResponseWriter, _ *http.Request) {
 // The origins, the state directory and the discovery mode come from Options
 // because none of them is derivable here: the precedence chain ran in
 // cmd/mabo-ctl over the --ports flag and the captured <NAME>_PORT variables that
-// this package never sees, internal/state owns the layout under .dev/, and only
+// this package never sees, internal/state owns the layout under .mabo-ctl/, and only
 // the flag parser knows whether --config was given.
 func (s *Server) configView() ui.ConfigView {
+	s.mu.Lock()
+	origins, stateDir, explicit := append([]service.Origin(nil), s.origins...), s.stateDir, s.explicitConfig
+	s.mu.Unlock()
 	return ui.BuildConfigView(ui.ConfigInput{
-		Config:    s.ctrl.Config(),
-		Instances: s.ctrl.Instances(),
-		Origins:   s.origins,
-		StateDir:  s.stateDir,
-		Explicit:  s.explicitConfig,
+		Config:    s.controller().Config(),
+		Instances: s.controller().Instances(),
+		Origins:   origins,
+		StateDir:  stateDir,
+		Explicit:  explicit,
 	})
 }

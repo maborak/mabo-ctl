@@ -122,12 +122,12 @@ func TestHealthWaitNoDeclaredHealthReturnsImmediately(t *testing.T) {
 func logsWithPaths(t *testing.T, h *harness, modAge time.Duration) {
 	t.Helper()
 	paths := map[string]string{
-		"alpha": filepath.Join(h.root, ".dev", "alpha.log"),
-		"beta":  filepath.Join(h.root, ".dev", "beta.log"),
+		"alpha": filepath.Join(h.root, ".mabo-ctl", "alpha.log"),
+		"beta":  filepath.Join(h.root, ".mabo-ctl", "beta.log"),
 	}
 	for name, p := range paths {
 		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-			t.Fatalf("mkdir .dev: %v", err)
+			t.Fatalf("mkdir .mabo-ctl: %v", err)
 		}
 		if err := os.WriteFile(p, []byte("seed "+name+"\n"), 0o600); err != nil {
 			t.Fatalf("write %s: %v", p, err)

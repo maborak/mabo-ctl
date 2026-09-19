@@ -46,7 +46,7 @@ type ConfigSource struct {
 	// Root is the absolute directory that Path sits in, which every service
 	// dir is resolved against.
 	Root string `json:"root"`
-	// StateDir is the absolute path of the state directory, `.dev`.
+	// StateDir is the absolute path of the state directory, `.mabo-ctl`.
 	StateDir string `json:"state_dir"`
 	// Explicit reports that Path came from --config rather than from walking up
 	// from the working directory.
@@ -75,7 +75,7 @@ type ConfigService struct {
 	// PortDeclared is the port mabo-ctl.yaml declares, which is NOT necessarily
 	// the port in use.
 	PortDeclared int `json:"port_declared"`
-	// PortOverride reports that a persisted .dev/run.env port is outranking a
+	// PortOverride reports that a persisted .mabo-ctl/run.env port is outranking a
 	// declared default that has since changed — the documented trap, where
 	// editing mabo-ctl.yaml appears to do nothing.
 	PortOverride bool `json:"port_override"`
@@ -129,7 +129,7 @@ type ConfigInput struct {
 	// taken rather than recomputed: the precedence chain has one implementation
 	// and this is a reader of it.
 	Origins []service.Origin
-	// StateDir is the absolute path of `.dev`, or "" when it does not exist.
+	// StateDir is the absolute path of `.mabo-ctl`, or "" when it does not exist.
 	StateDir string
 	// Explicit reports that the config path came from --config.
 	Explicit bool
@@ -229,7 +229,7 @@ const configFieldWidth = 9
 // The port line always names the SOURCE beside the number, because the four
 // precedence levels are invisible everywhere else in the tool and "why is this
 // service on 7999?" has no other answer short of reading mabo-ctl.yaml, the
-// environment and .dev/run.env together. An override is called out in the same
+// environment and .mabo-ctl/run.env together. An override is called out in the same
 // line rather than in a footnote: a persisted port beating a changed default is
 // the trap that cost a real debugging round.
 //

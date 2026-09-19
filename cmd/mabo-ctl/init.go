@@ -26,7 +26,7 @@ dev script, a .nvmrc beside it, a manage.py, a pyproject.toml, a Cargo.toml.
 
 EVERY guess lands as a commented-out line with the evidence that produced it,
 so nothing runs until a human uncomments it — a generated cmd that is subtly
-wrong is worse than a blank template. Init writes the file, adds .dev/ to
+wrong is worse than a blank template. Init writes the file, adds .mabo-ctl/ to
 .gitignore, and exits. It never runs a build, an install step, or anything the
 detection found.`,
 		Args:          cobra.NoArgs,
@@ -73,7 +73,7 @@ func (a *app) runInit() error {
 	fmt.Fprintf(a.env.Stdout, "wrote %s\n", target)
 	fmt.Fprintf(a.env.Stdout, "%d service guess(es), all commented out — edit, then run `mabo-ctl preflight`\n", len(guesses))
 	if gitignored {
-		fmt.Fprintln(a.env.Stdout, ".dev/ added to .gitignore")
+		fmt.Fprintln(a.env.Stdout, ".mabo-ctl/ added to .gitignore")
 	}
 	return nil
 }
@@ -264,7 +264,7 @@ func nvmrcVersion(rc string) string {
 }
 
 // sanitizeName maps a directory name onto a legal service name: the rule that
-// guards .dev/logs/<name>.log is applied even to suggestions, so uncommenting
+// guards .mabo-ctl/logs/<name>.log is applied even to suggestions, so uncommenting
 // can never paste an illegal name into the file.
 func sanitizeName(name string) string {
 	var b strings.Builder
@@ -284,7 +284,7 @@ func sanitizeName(name string) string {
 	return out
 }
 
-// ensureGitIgnore adds .dev/ to path, creating the file when missing. It reports
+// ensureGitIgnore adds .mabo-ctl/ to path, creating the file when missing. It reports
 // whether it changed anything; a failure is returned rather than fatal, because
 // a scaffolded config is still a success without the ignore rule.
 func ensureGitIgnore(path string) (bool, error) {
@@ -293,13 +293,13 @@ func ensureGitIgnore(path string) (bool, error) {
 		if !os.IsNotExist(err) {
 			return false, fmt.Errorf("read %s: %w", path, err)
 		}
-		if werr := os.WriteFile(path, []byte(".dev/\n"), 0o644); werr != nil {
+		if werr := os.WriteFile(path, []byte(".mabo-ctl/\n"), 0o644); werr != nil {
 			return false, fmt.Errorf("create %s: %w", path, werr)
 		}
 		return true, nil
 	}
 	for _, line := range strings.Split(string(existing), "\n") {
-		if strings.TrimSpace(line) == ".dev/" {
+		if strings.TrimSpace(line) == ".mabo-ctl/" {
 			return false, nil // already there; say nothing
 		}
 	}
@@ -311,7 +311,7 @@ func ensureGitIgnore(path string) (bool, error) {
 	if len(existing) > 0 && existing[len(existing)-1] != '\n' {
 		fmt.Fprintln(f)
 	}
-	if _, err := fmt.Fprintln(f, ".dev/"); err != nil {
+	if _, err := fmt.Fprintln(f, ".mabo-ctl/"); err != nil {
 		return false, fmt.Errorf("append to %s: %w", path, err)
 	}
 	return true, nil

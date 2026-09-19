@@ -29,10 +29,11 @@ func Schema() ([]byte, error) {
 		"required":             []string{"services"},
 		"additionalProperties": false,
 		"properties": map[string]any{
-			"$schema":       stringSchema("A JSON Schema reference for editors; mabo-ctl ignores it."),
-			"stop_grace":    durationSchema("How long Stop waits after SIGTERM before SIGKILL. Default 10s."),
-			"ready_timeout": durationSchema("How long a readiness probe polls before a service is slow, then degraded. Default 30s."),
-			"console_addr":  stringSchema("Address \"host:port\" that `mabo-ctl serve` binds when no --addr is given, e.g. \"127.0.0.1:9000\". Default 127.0.0.1:7999. A non-loopback host still needs --i-know-this-is-dangerous at serve time."),
+			"$schema":            stringSchema("A JSON Schema reference for editors; mabo-ctl ignores it."),
+			"stop_grace":         durationSchema("How long Stop waits after SIGTERM before SIGKILL. Default 10s."),
+			"ready_timeout":      durationSchema("How long a readiness probe polls before a service is slow, then degraded. Default 30s."),
+			"console_addr":       stringSchema("Address \"host:port\" that `mabo-ctl serve` binds when no --addr is given, e.g. \"127.0.0.1:9000\". Default 127.0.0.1:7999. A non-loopback host still needs --i-know-this-is-dangerous at serve time."),
+			"console_access_key": stringSchema("Access key for `mabo-ctl serve`; must be at least 4 URL-safe characters. `--access-key` overrides it. Empty or absent means generate a random key for this run."),
 			"services": map[string]any{
 				"type":     "array",
 				"minItems": 1,
@@ -84,8 +85,8 @@ var serviceSchema = map[string]any{
 		"name": map[string]any{
 			"type":    "string",
 			"pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$",
-			"description": "Required. Must match the pattern: the name composes .dev/logs/<name>.log and" +
-				" .dev/pids/<name>.pid, so / or .. would write outside .dev/.",
+			"description": "Required. Must match the pattern: the name composes .mabo-ctl/logs/<name>.log and" +
+				" .mabo-ctl/pids/<name>.pid, so / or .. would write outside .mabo-ctl/.",
 		},
 		"dir":    stringSchema("Working directory relative to this file; must exist and stay inside the repo root. Defaults to the repo root."),
 		"port":   map[string]any{"type": "integer", "minimum": 0, "maximum": 65535, "description": "0 (the default) = no port and no port guard."},

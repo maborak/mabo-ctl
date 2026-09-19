@@ -67,7 +67,7 @@ func TestConfigNamesTheLoadedFileAndTheEffectiveTimeouts(t *testing.T) {
 	ctrl.cfg.StopGrace = 7 * time.Second
 	ctrl.cfg.ReadyTimeout = 45 * time.Second
 
-	got := getConfig(t, configServer(t, ctrl, nil, "/repo/.dev"))
+	got := getConfig(t, configServer(t, ctrl, nil, "/repo/.mabo-ctl"))
 
 	if got.Source.Path != "/repo/mabo-ctl.yaml" {
 		t.Errorf("source.path = %q, want /repo/mabo-ctl.yaml", got.Source.Path)
@@ -75,8 +75,8 @@ func TestConfigNamesTheLoadedFileAndTheEffectiveTimeouts(t *testing.T) {
 	if got.Source.Root != "/repo" {
 		t.Errorf("source.root = %q, want /repo", got.Source.Root)
 	}
-	if got.Source.StateDir != "/repo/.dev" {
-		t.Errorf("source.state_dir = %q, want /repo/.dev", got.Source.StateDir)
+	if got.Source.StateDir != "/repo/.mabo-ctl" {
+		t.Errorf("source.state_dir = %q, want /repo/.mabo-ctl", got.Source.StateDir)
 	}
 	if got.Source.StopGraceMS != 7000 {
 		t.Errorf("source.stop_grace_ms = %d, want 7000", got.Source.StopGraceMS)
@@ -111,7 +111,7 @@ func TestConfigReportsThePortSourceForEveryPrecedenceLevel(t *testing.T) {
 				{Service: "backend", Port: 7100, Source: src, Declared: 7100},
 				{Service: "frontend", Port: 7200, Source: service.FromDefault, Declared: 7200},
 			}
-			got := findService(t, getConfig(t, configServer(t, ctrl, origins, "/repo/.dev")), "backend")
+			got := findService(t, getConfig(t, configServer(t, ctrl, origins, "/repo/.mabo-ctl")), "backend")
 
 			if got.PortSource != string(src) {
 				t.Errorf("port_source = %q, want %q", got.PortSource, src)
@@ -127,7 +127,7 @@ func TestConfigReportsThePortSourceForEveryPrecedenceLevel(t *testing.T) {
 }
 
 // TestConfigFlagsAPersistedPortBeatingAChangedDefault covers the documented
-// trap: a port in .dev/run.env outranks the declared default, so editing
+// trap: a port in .mabo-ctl/run.env outranks the declared default, so editing
 // mabo-ctl.yaml does nothing until the state is cleared. That silence cost a real
 // debugging round, which is why the flag travels with the numbers.
 func TestConfigFlagsAPersistedPortBeatingAChangedDefault(t *testing.T) {
@@ -140,7 +140,7 @@ func TestConfigFlagsAPersistedPortBeatingAChangedDefault(t *testing.T) {
 		Declared: 7100,
 		Override: true,
 	}}
-	got := findService(t, getConfig(t, configServer(t, ctrl, origins, "/repo/.dev")), "backend")
+	got := findService(t, getConfig(t, configServer(t, ctrl, origins, "/repo/.mabo-ctl")), "backend")
 
 	if !got.PortOverride {
 		t.Error("port_override is not set, so the console cannot warn about stale state")
@@ -173,7 +173,7 @@ func TestConfigWithoutOriginsSaysSoRatherThanGuessing(t *testing.T) {
 // name written in mabo-ctl.yaml.
 func TestConfigRendersTheResolvedCommandAndRuntime(t *testing.T) {
 	t.Parallel()
-	got := findService(t, getConfig(t, configServer(t, twoServices(), nil, "/repo/.dev")), "backend")
+	got := findService(t, getConfig(t, configServer(t, twoServices(), nil, "/repo/.mabo-ctl")), "backend")
 
 	if got.Runtime != "conda:api" {
 		t.Errorf("runtime = %q, want conda:api", got.Runtime)
@@ -210,7 +210,7 @@ func TestConfigRedactsCredentialsEverywhereServicesDoes(t *testing.T) {
 		"--dsn=postgres://app:hunter2@localhost:5432/app",
 	}
 
-	s := configServer(t, ctrl, nil, "/repo/.dev")
+	s := configServer(t, ctrl, nil, "/repo/.mabo-ctl")
 	req := httptest.NewRequest(http.MethodGet, "http://"+recorderAddr+"/api/config", nil)
 	req.Header.Set(tokenHeader, s.Token())
 	rec := httptest.NewRecorder()
@@ -242,7 +242,7 @@ func TestConfigRedactsCredentialsEverywhereServicesDoes(t *testing.T) {
 // controls the package documentation promises for all of them.
 func TestConfigIsGuardedLikeEveryOtherRoute(t *testing.T) {
 	t.Parallel()
-	s := configServer(t, twoServices(), nil, "/repo/.dev")
+	s := configServer(t, twoServices(), nil, "/repo/.mabo-ctl")
 
 	// A forged Host is refused before the router decides what was asked for.
 	req := httptest.NewRequest(http.MethodGet, "http://"+recorderAddr+"/api/config", nil)
@@ -351,7 +351,7 @@ func TestConsolePageReadsTheSameFieldsTheConfigViewEmits(t *testing.T) {
 	t.Parallel()
 	body, err := ui.ConfigJSON(configServer(t, twoServices(), []service.Origin{
 		{Service: "backend", Port: 7999, Source: service.FromRunEnv, Declared: 7100, Override: true},
-	}, "/repo/.dev").configView())
+	}, "/repo/.mabo-ctl").configView())
 	if err != nil {
 		t.Fatalf("ui.ConfigJSON: %v", err)
 	}

@@ -29,7 +29,7 @@ Three sections, in order:
   file       mabo-ctl.yaml itself, so nothing is hidden behind interpretation
 
 The port source is the reason this command exists. Four levels resolve a port —
---ports, then <NAME>_PORT in the environment, then the persisted .dev/run.env,
+--ports, then <NAME>_PORT in the environment, then the persisted .mabo-ctl/run.env,
 then the value declared in mabo-ctl.yaml — and until now nothing printed which one
 won, so "why is this service on 7999?" could only be answered by reading three
 inputs by hand. A persisted port outranking a changed default is called out on
@@ -98,7 +98,7 @@ func (a *app) runConfig(cmd *cobra.Command, args []string) error {
 		// reader wants here. Print it, then the problems.
 		if path, perr := a.locateConfig(); perr == nil {
 			fmt.Fprintf(a.env.Stdout, "config file  %s\n", path)
-			fmt.Fprintf(a.env.Stdout, "state dir    %s\n\n", filepath.Join(filepath.Dir(path), ".dev"))
+			fmt.Fprintf(a.env.Stdout, "state dir    %s\n\n", filepath.Join(filepath.Dir(path), ".mabo-ctl"))
 		}
 		return err
 	}
@@ -178,7 +178,7 @@ func (a *app) printRawConfig(path string) error {
 	return nil
 }
 
-// stateDir returns the absolute path of `.dev`, or "" when it has not been
+// stateDir returns the absolute path of `.mabo-ctl`, or "" when it has not been
 // created — which is the case before anything has resolved.
 func (a *app) stateDir() string {
 	if a.st == nil {

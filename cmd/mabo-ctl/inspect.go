@@ -219,7 +219,7 @@ func (a *app) logsCmd() *cobra.Command {
 		Use:     "logs [service|all]",
 		Aliases: []string{"tailf"},
 		Short:   "Show the last lines of a service log, optionally following",
-		Long: `Logs prints the tail of a service's log from .dev/logs/<service>.log.
+		Long: `Logs prints the tail of a service's log from .mabo-ctl/logs/<service>.log.
 
 With no argument, or with "all", it interleaves every service's log and prefixes
 each line with the service label so the streams stay distinguishable. Following

@@ -219,7 +219,7 @@ type Supervisor struct {
 	// flag is per-page state and does not exist across tabs.
 	//
 	// This closes the race WITHIN one mabo-ctl process. The one ACROSS
-	// processes — two mabo-ctls racing one .dev/ directory — is closed by the
+	// processes — two mabo-ctls racing one .mabo-ctl/ directory — is closed by the
 	// start claim taken in startOne step 1c: an O_EXCL create in package state,
 	// superseded by the pid record once the child exists.
 	opsMu sync.Mutex
@@ -408,7 +408,7 @@ var ErrStalePID = errors.New("stale pid file")
 // Liveness alone is not ownership, and conflating the two wedged a service
 // permanently. `state.Alive` is a bare kill(pid, 0): it answers "does this
 // number exist", not "is it mine". After a reboot recycles a pid into a stale
-// `.dev/pids/<svc>.pid`, status reported someone else's process as running,
+// `.mabo-ctl/pids/<svc>.pid`, status reported someone else's process as running,
 // start refused with "already running", and stop correctly refused to signal a
 // process it could prove was not ours — and then left the file in place, so the
 // next start refused again. Forever, until the user found `mabo-ctl reset`.
@@ -1044,7 +1044,7 @@ func (s *Supervisor) startOne(ctx context.Context, in service.Instance, ev chan<
 
 	// 1c. Take the cross-process START CLAIM. The per-service mutex above
 	//     serialises this process only; a second mabo-ctl in another terminal
-	//     racing the same .dev/ would sail past it, pass the same already-
+	//     racing the same .mabo-ctl/ would sail past it, pass the same already-
 	//     running check (no pid file yet), and spawn a second copy. For a
 	//     portless service nothing else catches that — two workers, one pid
 	//     file, and a survivor no command can reach. The claim is the one

@@ -36,7 +36,7 @@ per service, and never signals anything:
   pid file  is it present, alive, and still HONEST (not recycled)?
   port      is the declared port free, or held by whoever should hold it?
   crash     did a previous run die on its own, and is that still unsurfaced?
-  state     are the .dev/ file permissions still private?
+  state     are the .mabo-ctl/ file permissions still private?
 
 Exit codes: 0 when every finding is ok or a warning, 1 when any check FAILS.
 A warning wants a look; a failure wants action before the next start.`,
@@ -175,14 +175,14 @@ func (a *app) diagnoseService(inst service.Instance) diagFinding {
 	return f
 }
 
-// diagnoseStateDir checks that nothing under .dev/ grew looser than the modes
+// diagnoseStateDir checks that nothing under .mabo-ctl/ grew looser than the modes
 // mabo-ctl writes: directories 0700, files 0600. A log readable by the group
 // is how a credential a child printed leaves the machine in a backup.
 func diagnoseStateDir(dir string) diagFinding {
 	f := diagFinding{name: "state dir"}
 	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
-			return nil // a missing .dev is fine; doctor says nothing about it
+			return nil // a missing .mabo-ctl is fine; doctor says nothing about it
 		}
 		info, err := d.Info()
 		if err != nil {

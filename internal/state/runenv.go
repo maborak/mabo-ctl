@@ -19,7 +19,7 @@ const portKeyPrefix = "PORT_"
 // dropped by the parser and never mistaken for a preserved key.
 const runEnvHeader = "# mabo-ctl resolved ports. Generated file; safe to delete.\n"
 
-// RunEnv is the parsed contents of `.dev/run.env`, the persisted resolved-port
+// RunEnv is the parsed contents of `.mabo-ctl/run.env`, the persisted resolved-port
 // cache. It is a plain KEY=VALUE file whose port keys are `PORT_<SERVICE>`.
 //
 // A persisted port OUTRANKS the default declared in mabo-ctl.yaml, which makes
@@ -96,7 +96,7 @@ func (r *RunEnv) Unknown() map[string]string {
 // cache can use this count.
 func (r *RunEnv) Malformed() int { return r.malformed }
 
-// ReadRunEnv loads `.dev/run.env`.
+// ReadRunEnv loads `.mabo-ctl/run.env`.
 //
 // A missing file yields an empty RunEnv and no error: nothing has been resolved
 // yet, which is a normal first-run state. Unparseable lines and `PORT_*` keys
@@ -165,7 +165,7 @@ func (r *RunEnv) setUnknown(key, value string) {
 	r.unknown = append(r.unknown, rawEntry{key: key, value: value})
 }
 
-// WriteRunEnv persists re to `.dev/run.env` atomically with mode 0600.
+// WriteRunEnv persists re to `.mabo-ctl/run.env` atomically with mode 0600.
 //
 // Port keys are written sorted so the file has a stable diff. Unknown keys are
 // preserved: those carried by re, unioned with any still on disk that re does

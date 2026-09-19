@@ -51,10 +51,10 @@ func TestDoctorHealthyStackIsAllOk(t *testing.T) {
 // the reboot leftover every laptop accumulates. It wants a look, not a failure.
 func TestDoctorStalePidFileWarnsButExitsZero(t *testing.T) {
 	h := healthyHarness(t, "doctor")
-	mkdir(t, filepath.Join(h.root, ".dev", "pids"))
+	mkdir(t, filepath.Join(h.root, ".mabo-ctl", "pids"))
 	// A pid that is guaranteed dead: one we spawned and waited for.
 	dead := spawnAndReap(t)
-	writeFile(t, filepath.Join(h.root, ".dev", "pids", "alpha.pid"),
+	writeFile(t, filepath.Join(h.root, ".mabo-ctl", "pids", "alpha.pid"),
 		`{"pid":`+strconv.Itoa(dead)+`,"started_at":"`+time.Now().UTC().Format(time.RFC3339Nano)+`"}`)
 
 	if code := h.run(); code != exitOK {
@@ -70,8 +70,8 @@ func TestDoctorStalePidFileWarnsButExitsZero(t *testing.T) {
 // it would be a mistake, and doctor must say so with exit 1.
 func TestDoctorRecycledPidFails(t *testing.T) {
 	h := healthyHarness(t, "doctor")
-	mkdir(t, filepath.Join(h.root, ".dev", "pids"))
-	writeFile(t, filepath.Join(h.root, ".dev", "pids", "alpha.pid"),
+	mkdir(t, filepath.Join(h.root, ".mabo-ctl", "pids"))
+	writeFile(t, filepath.Join(h.root, ".mabo-ctl", "pids", "alpha.pid"),
 		`{"pid":1,"started_at":"`+time.Now().UTC().Format(time.RFC3339Nano)+`"}`)
 
 	if code := h.run(); code != exitFailure {
@@ -87,8 +87,8 @@ func TestDoctorRecycledPidFails(t *testing.T) {
 // looked" is exactly the question doctor exists to answer.
 func TestDoctorCrashEvidenceWarns(t *testing.T) {
 	h := healthyHarness(t, "doctor")
-	mkdir(t, filepath.Join(h.root, ".dev", "exits"))
-	writeFile(t, filepath.Join(h.root, ".dev", "exits", "alpha.json"),
+	mkdir(t, filepath.Join(h.root, ".mabo-ctl", "exits"))
+	writeFile(t, filepath.Join(h.root, ".mabo-ctl", "exits", "alpha.json"),
 		`{"pid":424242,"exit_code":1,"started_at":"`+time.Now().UTC().Format(time.RFC3339Nano)+`","ended_at":"`+time.Now().UTC().Format(time.RFC3339Nano)+`"}`)
 
 	if code := h.run(); code != exitOK {
@@ -103,7 +103,7 @@ func TestDoctorCrashEvidenceWarns(t *testing.T) {
 // credential a child printed leaves the machine in a backup.
 func TestDoctorLooseStatePermissionsWarn(t *testing.T) {
 	h := healthyHarness(t, "doctor")
-	logDir := filepath.Join(h.root, ".dev", "logs")
+	logDir := filepath.Join(h.root, ".mabo-ctl", "logs")
 	mkdir(t, logDir)
 	writeFile(t, filepath.Join(logDir, "alpha.log"), "secret=hunter2\n")
 	if err := os.Chmod(filepath.Join(logDir, "alpha.log"), 0o644); err != nil {

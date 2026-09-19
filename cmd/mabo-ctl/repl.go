@@ -285,6 +285,10 @@ func (a *app) newWebConsole(addr string, force bool) (*web.Server, error) {
 		return nil, err
 	}
 
+	cfg, err := a.config()
+	if err != nil {
+		return nil, err
+	}
 	srv, err := web.New(sup, web.Options{
 		Addr:           addr,
 		Force:          force,
@@ -292,6 +296,7 @@ func (a *app) newWebConsole(addr string, force bool) (*web.Server, error) {
 		StateDir:       a.stateDir(),
 		ExplicitConfig: a.configPath != "",
 		AllowedOrigins: a.allowOrigins,
+		AccessKey:      cfg.ConsoleAccessKey,
 	})
 	if err != nil {
 		if errors.Is(err, web.ErrUnsafeAddr) {

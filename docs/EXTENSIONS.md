@@ -78,7 +78,7 @@ supervisor's own `Status`, so it derives nothing on its own.
 
 The freshness gate reads `Status.LogPath` through `StatusNoPorts` (no probe
 runs because you asked for logs) and stats the file from `cmd` — a read-only
-peek at a path the supervisor itself vouches for; `.dev/` writing stays
+peek at a path the supervisor itself vouches for; `.mabo-ctl/` writing stays
 exclusively in `internal/state`.
 
 ### 3. Lifecycle hooks (`hooks:` per service)
@@ -196,7 +196,7 @@ read (session, not token), and never touches supervisor state. The embedded
 page renders it in a "history" strip, polling rather than streaming on
 purpose — history is context, not a second realtime channel. The ring is
 deliberately not persisted: it is a dev console's "what just happened", and
-`.dev/` writes belong to `internal/state`.
+`.mabo-ctl/` writes belong to `internal/state`.
 
 ---
 
@@ -217,7 +217,7 @@ All verified in this change set, all still binding:
   into a failure, and `pre_stop` cannot block a stop.
 - All output channels redact at the source; hooks write through the same
   log the service writes through.
-- Writes under `.dev/` come only from `internal/state` (the one new writer
+- Writes under `.mabo-ctl/` come only from `internal/state` (the one new writer
   there is `OpenLogAppend`, append-only beside `TruncateLog`, and the state
   package's log-writer checks in `state_test.go` cover both paths).
 - Web mutations stay POST-only and token-gated; the new endpoint is

@@ -50,7 +50,7 @@ written it into their own `mabo-ctl.yaml`:
 |---|---|
 | Config discovery escaping the repo | a `mabo-ctl.yaml` in an unrelated parent directory being loaded and executed |
 | Template expansion | `{{.Port}}` reaching further than the declared data |
-| Path handling of `name` | a service name escaping `.dev/` via `/` or `..` |
+| Path handling of `name` | a service name escaping `.mabo-ctl/` via `/` or `..` |
 | Signal blast radius | mabo-ctl signalling a process it did not start |
 | Secret handling | credentials reaching a log, `--json`, or an HTTP response that a reader would not expect |
 | **The `mabo-ctl serve` web console** | any bypass of its token, `Host`/`Origin`, or method checks |
@@ -110,12 +110,12 @@ Audit these against the code (`internal/web/`), not against this list.
 - **A health URL's query string reaches the supervised service's own log**,
   because mabo-ctl's probe requests it and the service logs the request line.
   Prefer a credential in a header over one in a query.
-- **The start claim trusts `.dev/` itself.** Cross-process double spawns ARE
-  now prevented — an exclusive `.dev/pids/<svc>.pid.claim` taken before any
+- **The start claim trusts `.mabo-ctl/` itself.** Cross-process double spawns ARE
+  now prevented — an exclusive `.mabo-ctl/pids/<svc>.pid.claim` taken before any
   spawn; see [`docs/LANDMINES.md`](docs/LANDMINES.md) §9 — but that claim, like
-  every pid record, means nothing to someone who can write to `.dev/`: anyone
+  every pid record, means nothing to someone who can write to `.mabo-ctl/`: anyone
   with write access there can forge any record or hold a claim. Protecting
-  `.dev/` has always been the boundary.
+  `.mabo-ctl/` has always been the boundary.
 
 ## Past vulnerabilities
 

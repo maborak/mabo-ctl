@@ -90,7 +90,7 @@ services:
 `,
 			want: []string{
 				`invalid name "logs/backend"`,
-				".dev/logs/<name>.log",
+				".mabo-ctl/logs/<name>.log",
 				"path traversal",
 			},
 		},

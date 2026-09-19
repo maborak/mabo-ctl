@@ -25,7 +25,7 @@ nothing is echoed twice — the terminal is switched to raw mode for the session
 and restored on every exit path. Only one attached terminal at a time: a second
 one is told the seat is taken, not silently dropped.
 
-The relay lives at .dev/tty/<service>.sock while the service runs. Attach
+The relay lives at .mabo-ctl/tty/<service>.sock while the service runs. Attach
 refuses a service without tty: in its declaration rather than pretending, and
 names the missing socket when there is nothing to connect to yet.`,
 		Args:          argsExactly(1, "attach needs one service name, e.g. mabo-ctl attach backend"),

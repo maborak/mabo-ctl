@@ -13,7 +13,7 @@ import (
 )
 
 // newDir builds a state directory under a throwaway root. Nothing in this
-// package's tests may touch a real .dev/.
+// package's tests may touch a real .mabo-ctl/.
 func newDir(t *testing.T) *Dir {
 	t.Helper()
 	d, err := New(t.TempDir())
@@ -39,7 +39,7 @@ func TestNewCreatesTreeWithRestrictivePermissions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	if want := filepath.Join(root, ".dev"); d.Path() != want {
+	if want := filepath.Join(root, ".mabo-ctl"); d.Path() != want {
 		t.Errorf("Path() = %q, want %q", d.Path(), want)
 	}
 	for _, p := range []string{d.Path(), d.LogsDir(), d.PIDsDir()} {
@@ -56,7 +56,7 @@ func TestNewIsIdempotentAndTightensLoosePermissions(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 	// Simulate a tree created by an older version with a permissive umask.
-	loose := filepath.Join(root, ".dev", "logs")
+	loose := filepath.Join(root, ".mabo-ctl", "logs")
 	if err := os.Chmod(loose, 0o755); err != nil {
 		t.Fatalf("chmod: %v", err)
 	}
@@ -104,12 +104,12 @@ func TestPathHelpers(t *testing.T) {
 		got  string
 		want string
 	}{
-		{"Path", d.Path(), "/repo/.dev"},
-		{"LogsDir", d.LogsDir(), "/repo/.dev/logs"},
-		{"PIDsDir", d.PIDsDir(), "/repo/.dev/pids"},
-		{"RunEnvPath", d.RunEnvPath(), "/repo/.dev/run.env"},
-		{"LogPath", d.LogPath("backend"), "/repo/.dev/logs/backend.log"},
-		{"PIDPath", d.PIDPath("backend"), "/repo/.dev/pids/backend.pid"},
+		{"Path", d.Path(), "/repo/.mabo-ctl"},
+		{"LogsDir", d.LogsDir(), "/repo/.mabo-ctl/logs"},
+		{"PIDsDir", d.PIDsDir(), "/repo/.mabo-ctl/pids"},
+		{"RunEnvPath", d.RunEnvPath(), "/repo/.mabo-ctl/run.env"},
+		{"LogPath", d.LogPath("backend"), "/repo/.mabo-ctl/logs/backend.log"},
+		{"PIDPath", d.PIDPath("backend"), "/repo/.mabo-ctl/pids/backend.pid"},
 	}
 	for _, c := range cases {
 		if c.got != c.want {
@@ -266,13 +266,13 @@ func TestUnsafeServiceNamesAreRejected(t *testing.T) {
 				t.Errorf("TruncateLog(%q) returned a file", name)
 				_ = f.Close()
 			}
-			// Nothing may have escaped .dev/ — the whole point of the rule.
+			// Nothing may have escaped .mabo-ctl/ — the whole point of the rule.
 			entries, err := os.ReadDir(d.Root)
 			if err != nil {
 				t.Fatalf("read root: %v", err)
 			}
-			if len(entries) != 1 || entries[0].Name() != ".dev" {
-				t.Errorf("root contains %v, want only .dev", entries)
+			if len(entries) != 1 || entries[0].Name() != ".mabo-ctl" {
+				t.Errorf("root contains %v, want only .mabo-ctl", entries)
 			}
 		})
 	}
@@ -455,22 +455,22 @@ func TestTruncateLogKeepsThePreviousRun(t *testing.T) {
 	write("second run\n")
 
 	// The fresh log holds this run; the rotated one holds the run before it.
-	got := readLog(t, filepath.Join(root, ".dev", "logs", "svc.log"))
+	got := readLog(t, filepath.Join(root, ".mabo-ctl", "logs", "svc.log"))
 	if got != "second run\n" {
 		t.Errorf("current log = %q, want this run's output", got)
 	}
-	prev := readLog(t, filepath.Join(root, ".dev", "logs", "svc.log.1"))
+	prev := readLog(t, filepath.Join(root, ".mabo-ctl", "logs", "svc.log.1"))
 	if prev != "first run\n" {
 		t.Errorf("rotated log = %q, want the previous run's output", prev)
 	}
 
 	// A third start overwrites the generation before it rather than growing.
 	write("third run\n")
-	prev = readLog(t, filepath.Join(root, ".dev", "logs", "svc.log.1"))
+	prev = readLog(t, filepath.Join(root, ".mabo-ctl", "logs", "svc.log.1"))
 	if prev != "second run\n" {
 		t.Errorf("rotated log = %q, want the overwritten generation", prev)
 	}
-	entries, err := os.ReadDir(filepath.Join(root, ".dev", "logs"))
+	entries, err := os.ReadDir(filepath.Join(root, ".mabo-ctl", "logs"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -498,7 +498,7 @@ func TestTruncateLogFirstRunHasNoGeneration(t *testing.T) {
 	if err := f.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(root, ".dev", "logs", "fresh.log.1")); !errors.Is(err, fs.ErrNotExist) {
+	if _, err := os.Stat(filepath.Join(root, ".mabo-ctl", "logs", "fresh.log.1")); !errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("a rotated generation exists after a first start: %v", err)
 	}
 }
@@ -516,7 +516,7 @@ func readLog(t *testing.T, path string) string {
 // start claims — the cross-process double-spawn lock
 
 // TestClaimPIDExclusiveCreate: one claim wins, the second is ErrClaimed, and
-// the file on disk is 0600 like everything else under .dev.
+// the file on disk is 0600 like everything else under .mabo-ctl.
 func TestClaimPIDExclusiveCreate(t *testing.T) {
 	d := newDir(t)
 	now := time.Now()

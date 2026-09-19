@@ -143,7 +143,7 @@
             ]
           },
           "name": {
-            "description": "Required. Must match the pattern: the name composes .dev/logs/<name>.log and .dev/pids/<name>.pid, so / or .. would write outside .dev/.",
+            "description": "Required. Must match the pattern: the name composes .mabo-ctl/logs/<name>.log and .mabo-ctl/pids/<name>.pid, so / or .. would write outside .mabo-ctl/.",
             "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$",
             "type": "string"
           },

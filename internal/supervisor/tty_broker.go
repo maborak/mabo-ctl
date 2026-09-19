@@ -180,7 +180,7 @@ func runTTYBrokerFromArgs(argv []string, out *os.File) int {
 	go pumpMasterToHub(master, hub)
 
 	svc := opts.svc
-	// state.New BEFORE the listen: creating .dev/tty and clearing a socket a
+	// state.New BEFORE the listen: creating .mabo-ctl/tty and clearing a socket a
 	// dead broker left behind are state's writes to own, and taking them first
 	// means the only thing between listen and the ownership seal is the kernel
 	// call itself.
@@ -275,7 +275,7 @@ func parseBrokerArgs(argv []string) (o brokerOpts, rest []string, ok bool) {
 	return o, argv, true
 }
 
-// rootOfSocket reverses TTYSockPath: <root>/.dev/tty/<svc>.sock -> <root>.
+// rootOfSocket reverses TTYSockPath: <root>/.mabo-ctl/tty/<svc>.sock -> <root>.
 func rootOfSocket(sockPath string) string {
 	return filepath.Dir(filepath.Dir(filepath.Dir(sockPath)))
 }

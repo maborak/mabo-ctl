@@ -238,9 +238,9 @@ func key(s string) tea.KeyMsg {
 // threeServices is the fixture most tests start from.
 func threeServices() []supervisor.Status {
 	return []supervisor.Status{
-		{Name: "website", Phase: supervisor.PhaseReady, PID: 101, Port: 7100, HTTP: 200, LogPath: "/repo/.dev/logs/website.log"},
-		{Name: "backend", Phase: supervisor.PhaseSlow, PID: 102, Port: 7102, Health: "http://localhost:7102/health", LogPath: "/repo/.dev/logs/backend.log"},
-		{Name: "worker", Phase: supervisor.PhaseStopped, LogPath: "/repo/.dev/logs/worker.log"},
+		{Name: "website", Phase: supervisor.PhaseReady, PID: 101, Port: 7100, HTTP: 200, LogPath: "/repo/.mabo-ctl/logs/website.log"},
+		{Name: "backend", Phase: supervisor.PhaseSlow, PID: 102, Port: 7102, Health: "http://localhost:7102/health", LogPath: "/repo/.mabo-ctl/logs/backend.log"},
+		{Name: "worker", Phase: supervisor.PhaseStopped, LogPath: "/repo/.mabo-ctl/logs/worker.log"},
 	}
 }
 
@@ -821,8 +821,8 @@ func TestDeriveRootFromLogPath(t *testing.T) {
 		sts  []supervisor.Status
 		want string
 	}{
-		{"from a log path", []supervisor.Status{{LogPath: "/srv/repo/.dev/logs/backend.log"}}, "/srv/repo"},
-		{"skips empty paths", []supervisor.Status{{}, {LogPath: "/srv/repo/.dev/logs/web.log"}}, "/srv/repo"},
+		{"from a log path", []supervisor.Status{{LogPath: "/srv/repo/.mabo-ctl/logs/backend.log"}}, "/srv/repo"},
+		{"skips empty paths", []supervisor.Status{{}, {LogPath: "/srv/repo/.mabo-ctl/logs/web.log"}}, "/srv/repo"},
 		{"nothing to derive", []supervisor.Status{{}}, ""},
 		{"no statuses", nil, ""},
 	} {
@@ -1022,7 +1022,7 @@ func TestEveryPhaseRendersInTheServiceList(t *testing.T) {
 		sts = append(sts, supervisor.Status{
 			Name:    string(p) + "-svc",
 			Phase:   p,
-			LogPath: "/repo/.dev/logs/x.log",
+			LogPath: "/repo/.mabo-ctl/logs/x.log",
 		})
 	}
 

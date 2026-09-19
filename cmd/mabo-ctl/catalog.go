@@ -32,7 +32,7 @@ type catalogMeta struct {
 	// Args describes the positional arguments beyond the usage line.
 	Args string
 	// Mutates reports whether the command changes supervised state or the
-	// filesystem: spawning processes, writing .dev/, editing files. Read-only
+	// filesystem: spawning processes, writing .mabo-ctl/, editing files. Read-only
 	// commands set false even when they run probes.
 	Mutates bool
 	// SideEffects lists observable effects a wrapper or sandbox may care about,
@@ -53,13 +53,13 @@ var commandMetas = map[string]catalogMeta{
 	"start": {
 		Args:        "zero or more service names; none means every service with autostart enabled, --all forces every declared one",
 		Mutates:     true,
-		SideEffects: []string{"spawns service processes", "writes .dev/ logs, pid files and exit records", "captures AND unsets caller <NAME>_PORT variables before spawning"},
+		SideEffects: []string{"spawns service processes", "writes .mabo-ctl/ logs, pid files and exit records", "captures AND unsets caller <NAME>_PORT variables before spawning"},
 		ExitCodes:   "adds 4 when any selected service did not become ready inside ready_timeout",
 	},
 	"stop": {
 		Args:        "zero or more service names; none means all",
 		Mutates:     true,
-		SideEffects: []string{"signals each named process GROUP: SIGTERM, grace period, then SIGKILL", "writes .dev/ exit records marked deliberate"},
+		SideEffects: []string{"signals each named process GROUP: SIGTERM, grace period, then SIGKILL", "writes .mabo-ctl/ exit records marked deliberate"},
 	},
 	"restart": {
 		Args:        "zero or more service names; none means all",
@@ -77,12 +77,12 @@ var commandMetas = map[string]catalogMeta{
 	"config": {},
 	"logs": {
 		Args:        "<service> [n]; shows the last n lines, -f follows until interrupted",
-		SideEffects: []string{"reads .dev/logs/ only"},
+		SideEffects: []string{"reads .mabo-ctl/logs/ only"},
 	},
 	"reset": {
 		Args:        "--force reaps whatever still holds a declared port",
 		Mutates:     true,
-		SideEffects: []string{"stops every service", "deletes the whole .dev/ directory", "may kill unknown processes holding declared ports"},
+		SideEffects: []string{"stops every service", "deletes the whole .mabo-ctl/ directory", "may kill unknown processes holding declared ports"},
 	},
 	"preflight": {
 		Mutates:     true,
@@ -120,7 +120,7 @@ var commandMetas = map[string]catalogMeta{
 	},
 	"schema": {},
 	"doctor": {
-		SideEffects: []string{"inspects runtimes, pid files, port holders and .dev/ permissions; read-only plus lsof"},
+		SideEffects: []string{"inspects runtimes, pid files, port holders and .mabo-ctl/ permissions; read-only plus lsof"},
 	},
 	"attach": {
 		SideEffects: []string{"opens a raw-mode terminal relay to the service's tty socket; one session at a time; nothing is signalled"},
@@ -286,11 +286,11 @@ func buildCatalog(root *cobra.Command) ([]byte, error) {
 		Behavior: catalogBehavior{
 			ConfigDiscovery: "walks UP from the working directory, bounded by the repository marker or $HOME; " +
 				"--config skips the search; devctl.yaml is still accepted under its legacy spelling",
-			StateDirectory: ".dev/ under the config root: logs, pid files, run.env persisted ports, exit records",
+			StateDirectory: ".mabo-ctl/ under the config root: logs, pid files, run.env persisted ports, exit records",
 			PortPrecedence: []string{
 				"1. --ports A,B,C,D positional slots, or repeatable --port SERVICE=PORT",
 				"2. caller environment <NAME>_PORT, captured AND unset before anything spawns",
-				"3. .dev/run.env, persisted from the previous run",
+				"3. .mabo-ctl/run.env, persisted from the previous run",
 				"4. the default declared in mabo-ctl.yaml",
 			},
 			BareInvocation: bareDoc{

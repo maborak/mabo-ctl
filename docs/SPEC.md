@@ -124,16 +124,16 @@ Current registry, for reference (the 7100 port convention):
 
 ## State on disk
 
-`$ROOT/.dev/` — git-ignored, safe to delete:
+`$ROOT/.mabo-ctl/` — git-ignored, safe to delete:
 
 ```
-.dev/logs/<svc>.log     this run's output; the previous run is kept as <svc>.log.1
-.dev/pids/<svc>.pid     written after spawn, removed on confirmed death
-.dev/run.env            persisted resolved ports
+.mabo-ctl/logs/<svc>.log     this run's output; the previous run is kept as <svc>.log.1
+.mabo-ctl/pids/<svc>.pid     written after spawn, removed on confirmed death
+.mabo-ctl/run.env            persisted resolved ports
 ```
 
 **`run.env` outranks the compiled defaults.** This is a real trap: changing the
-default ports in source does nothing until `.dev/run.env` is cleared, because a
+default ports in source does nothing until `.mabo-ctl/run.env` is cleared, because a
 persisted value wins. It cost a debugging round during the 7000→7100 move. The
 Go version implements option (b) of the two below, and goes one step further:
 it prints a visible line when a persisted port overrides a default, offers to
@@ -150,7 +150,7 @@ Precedence, highest first:
    `--ports`, and the two flag spellings are rejected together
 2. `--ports=A,B,C,D` (positional; empty slot keeps the default)
 3. caller env — `WEBSITE_PORT`, `FRONTEND_PORT`, `BACKEND_PORT`, `BROWSER_PORT`
-4. persisted `.dev/run.env`
+4. persisted `.mabo-ctl/run.env`
 5. compiled default
 
 The caller-env values must be captured and **unset** before anything else runs,
@@ -168,7 +168,7 @@ to service name, and the error should name **both** services and the port.
 ## Lifecycle
 
 **Start:** skip if already running (pid alive) → take the cross-process START
-CLAIM (an O_EXCL create of `.dev/pids/<svc>.pid.claim`; a fresh claim from
+CLAIM (an O_EXCL create of `.mabo-ctl/pids/<svc>.pid.claim`; a fresh claim from
 another live mabo-ctl refuses the start, stale wreckage is cleared) → refuse if
 the port is already in use by something else → rotate the log (one prior
 generation survives as <log>.1) → spawn detached

@@ -189,10 +189,10 @@ func TestRemoveExitAbsentIsNotAnError(t *testing.T) {
 func TestExitPathHelpers(t *testing.T) {
 	t.Parallel()
 	d := &Dir{Root: "/repo"}
-	if got, want := d.ExitsDir(), "/repo/.dev/exits"; got != want {
+	if got, want := d.ExitsDir(), "/repo/.mabo-ctl/exits"; got != want {
 		t.Errorf("ExitsDir() = %q, want %q", got, want)
 	}
-	if got, want := d.ExitPath("backend"), "/repo/.dev/exits/backend.json"; got != want {
+	if got, want := d.ExitPath("backend"), "/repo/.mabo-ctl/exits/backend.json"; got != want {
 		t.Errorf("ExitPath() = %q, want %q", got, want)
 	}
 }
@@ -213,13 +213,13 @@ func TestUnsafeServiceNamesAreRejectedByTheExitAPI(t *testing.T) {
 			if err := d.RemoveExit(name); !errors.Is(err, ErrInvalidService) {
 				t.Errorf("RemoveExit(%q) error = %v, want ErrInvalidService", name, err)
 			}
-			// The name composes a path; nothing may have escaped `.dev/`.
+			// The name composes a path; nothing may have escaped `.mabo-ctl/`.
 			entries, err := os.ReadDir(d.Root)
 			if err != nil {
 				t.Fatalf("read root: %v", err)
 			}
-			if len(entries) != 1 || entries[0].Name() != ".dev" {
-				t.Errorf("root contains %v, want only .dev", entries)
+			if len(entries) != 1 || entries[0].Name() != ".mabo-ctl" {
+				t.Errorf("root contains %v, want only .mabo-ctl", entries)
 			}
 		})
 	}
@@ -249,7 +249,7 @@ func TestResetClearsExitRecords(t *testing.T) {
 	if _, ok, err := d.ReadExit("backend"); err != nil || ok {
 		t.Errorf("ReadExit after Reset = (%v, %v), want (false, nil)", ok, err)
 	}
-	if entries, err := os.ReadDir(filepath.Join(root, ".dev", exitsDirName)); err != nil {
+	if entries, err := os.ReadDir(filepath.Join(root, ".mabo-ctl", exitsDirName)); err != nil {
 		t.Fatalf("read exits dir: %v", err)
 	} else if len(entries) != 0 {
 		t.Errorf("exits dir contains %v after Reset, want it empty", entries)

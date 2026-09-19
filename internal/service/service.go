@@ -6,7 +6,7 @@
 // This is the package where the predecessor shell script got things wrong, so
 // four behaviours are load-bearing and are not tunable:
 //
-//   - Port precedence is flag > caller env > .dev/run.env > declared default,
+//   - Port precedence is flag > caller env > .mabo-ctl/run.env > declared default,
 //     and an [Origin] is recorded for EVERY service saying which source won.
 //   - [CaptureEnv] reads and UNSETS the caller's <NAME>_PORT variables. Without
 //     the unset a child inherits BACKEND_PORT=7102 while the supervisor resolved
@@ -157,7 +157,7 @@ const (
 	// FromEnv means the port came from a <NAME>_PORT variable in the caller's
 	// environment, captured by [CaptureEnv].
 	FromEnv PortSource = "env"
-	// FromRunEnv means the port came from the persisted .dev/run.env cache.
+	// FromRunEnv means the port came from the persisted .mabo-ctl/run.env cache.
 	FromRunEnv PortSource = "run.env"
 	// FromDefault means the port is the one declared in mabo-ctl.yaml.
 	FromDefault PortSource = "default"
@@ -201,7 +201,7 @@ type Options struct {
 	// <NAME>_PORT variable, which is ignored, this came from a flag aimed at
 	// THIS config and silently doing nothing with it would be a lie.
 	PortOverrides map[string]int
-	// IgnoreRunEnv drops the persisted .dev/run.env level from the precedence
+	// IgnoreRunEnv drops the persisted .mabo-ctl/run.env level from the precedence
 	// chain, so a service falls through to its declared default unless --ports
 	// or a caller variable speaks first. It exists so the CLI can offer to
 	// adopt ports the yaml has since changed: the run.env level exists to keep
@@ -219,7 +219,7 @@ type Options struct {
 // RESOLVED ports; then each service's Dir, Health, Cmd and Env are expanded and
 // its interpreter resolved.
 //
-// st may be nil, in which case the persisted .dev/run.env level is skipped —
+// st may be nil, in which case the persisted .mabo-ctl/run.env level is skipped —
 // useful before the state directory exists. Options.IgnoreRunEnv skips the same
 // level explicitly, for a caller that has a state dir but wants the declared
 // defaults to win this once. Resolve itself writes nothing; see [Persist].

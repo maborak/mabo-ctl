@@ -23,7 +23,7 @@ bug, and several of those are recorded in [LANDMINES.md](LANDMINES.md).
                                  ▼
                     ┌────────────────────────┐
      model + state  │  service    │  state   │
-                    │  ports,     │  .dev/   │
+                    │  ports,     │  .mabo-ctl/   │
                     │  templates  │          │
                     └────────────┬───────────┘
                                  ▼
@@ -44,7 +44,7 @@ bug, and several of those are recorded in [LANDMINES.md](LANDMINES.md).
 | `internal/supervisor` | spawn, signals, process groups, pid files, reaping | format a user-facing string |
 | `internal/health` | readiness probes: HTTP, TCP dial, exec argv | — |
 | `internal/service` | the service model, port precedence, template expansion | — |
-| `internal/state` | everything under `.dev/` — it is the only writer | — |
+| `internal/state` | everything under `.mabo-ctl/` — it is the only writer | — |
 | `internal/redact` | what is withheld from anything shown to a reader | anything else; it is pure |
 | `internal/config` | loading and validating `mabo-ctl.yaml` | any side effect |
 
@@ -57,8 +57,8 @@ Three of those rules are worth their own sentence:
 - **`supervisor` returns state; `ui` renders it.** A phase is derived in exactly
   one place, so a service cannot read `slow` in the terminal and `failed` in the
   browser in the same second.
-- **`state` is the only writer under `.dev/`.** A service `name` composes
-  `.dev/logs/<name>.log`, so a name containing `/` or `..` would write outside
+- **`state` is the only writer under `.mabo-ctl/`.** A service `name` composes
+  `.mabo-ctl/logs/<name>.log`, so a name containing `/` or `..` would write outside
   the state directory — validation lives at load time, and the layout is owned
   by one package.
 
@@ -71,7 +71,7 @@ What `mabo-ctl start` actually does, in order:
    alive and belongs to someone else, so the check also verifies the process is
    its own group leader, which every mabo-ctl child is by construction.
 2. **Take the cross-process start claim** — an `O_EXCL` create of
-   `.dev/pids/<svc>.pid.claim`, recording who is starting and since when. This
+   `.mabo-ctl/pids/<svc>.pid.claim`, recording who is starting and since when. This
    is what stops a second mabo-ctl in another terminal from racing the same
    stack past step 1 and spawning a duplicate; a fresh claim held by a live
    owner refuses the start with `ErrClaimed`, and stale wreckage (dead owner,
@@ -125,7 +125,7 @@ Two distinctions do real work:
   look identical if you only check whether the port answers.
 - **`stopped` vs `exited`.** A process that crashed is simply *not there*, which
   is byte-identical to one that was never started. The exit record in
-  `.dev/exits/` is what makes a crash visible: the reaper keeps the wait status
+  `.mabo-ctl/exits/` is what makes a crash visible: the reaper keeps the wait status
   — the kernel hands it to whoever waits, once — and writes it down.
 
 **`exited` will not grow a restart policy.** It is the phase that will tempt one,
@@ -140,7 +140,7 @@ Five levels, highest first:
    included, and the two spellings are rejected on one command line
 2. `--ports=A,B,C,D` — positional; an empty slot keeps the default
 3. `<NAME>_PORT` in the caller's environment
-4. the persisted `.dev/run.env`
+4. the persisted `.mabo-ctl/run.env`
 5. the port declared in `mabo-ctl.yaml`
 
 Two rules that exist because of specific failures:
@@ -165,16 +165,16 @@ that declares none. That guard was missing on one of the two branches, and a
 stray `WORKER_PORT` in a shell led `reset --force` to kill a process mabo-ctl had
 never started — [LANDMINES.md](LANDMINES.md) §3.
 
-## State on disk — `.dev/`
+## State on disk — `.mabo-ctl/`
 
 Git-ignored, safe to delete, `0700` with `0600` files.
 
 ```
-.dev/logs/<svc>.log     truncated on each start
-.dev/pids/<svc>.pid     {"pid":N,"started_at":"…"} — a legacy bare integer is still read
-.dev/pids/<svc>.pid.claim   a start IN PROGRESS; O_EXCL create, see the supervision path
-.dev/exits/<svc>.json   the last death observed: code or signal, timings, a capped log tail
-.dev/run.env            persisted resolved ports (read-modify-write, under a lock)
+.mabo-ctl/logs/<svc>.log     truncated on each start
+.mabo-ctl/pids/<svc>.pid     {"pid":N,"started_at":"…"} — a legacy bare integer is still read
+.mabo-ctl/pids/<svc>.pid.claim   a start IN PROGRESS; O_EXCL create, see the supervision path
+.mabo-ctl/exits/<svc>.json   the last death observed: code or signal, timings, a capped log tail
+.mabo-ctl/run.env            persisted resolved ports (read-modify-write, under a lock)
 ```
 
 The exit record carries two flags that decide what a *later, different* mabo-ctl

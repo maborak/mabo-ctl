@@ -1,12 +1,12 @@
-// Package state owns `.dev/`, mabo-ctl's on-disk state directory: per-service log
+// Package state owns `.mabo-ctl/`, mabo-ctl's on-disk state directory: per-service log
 // files, per-service pid records, per-service exit records and the persisted
 // resolved-port cache (`run.env`). It is the only package in mabo-ctl that writes
-// under `.dev/`.
+// under `.mabo-ctl/`.
 //
 // Everything here is treated as secrets-adjacent. A supervised service prints
-// whatever it likes on stdout and that stdout lands in `.dev/logs/<svc>.log` —
-// and, truncated, in `.dev/exits/<svc>.json` — so directories are created 0700
-// and files 0600; nothing under `.dev/` is ever created group- or
+// whatever it likes on stdout and that stdout lands in `.mabo-ctl/logs/<svc>.log` —
+// and, truncated, in `.mabo-ctl/exits/<svc>.json` — so directories are created 0700
+// and files 0600; nothing under `.mabo-ctl/` is ever created group- or
 // world-readable.
 package state
 
@@ -25,10 +25,10 @@ import (
 const (
 	// dirPerm is the mode of every directory mabo-ctl creates under the repo root.
 	dirPerm fs.FileMode = 0o700
-	// filePerm is the mode of every file mabo-ctl creates under `.dev/`.
+	// filePerm is the mode of every file mabo-ctl creates under `.mabo-ctl/`.
 	filePerm fs.FileMode = 0o600
 
-	stateDirName = ".dev"
+	stateDirName = ".mabo-ctl"
 	logsDirName  = "logs"
 	pidsDirName  = "pids"
 	exitsDirName = "exits"
@@ -36,7 +36,7 @@ const (
 )
 
 // ErrInvalidService is returned when a service name cannot safely compose a
-// path under `.dev/`. A name containing a path separator or `..` is a path
+// path under `.mabo-ctl/`. A name containing a path separator or `..` is a path
 // traversal that would write outside the state directory, so state rejects it
 // even though config is expected to have caught it at load time.
 var ErrInvalidService = errors.New("invalid service name")
@@ -52,13 +52,13 @@ var ErrMalformedPID = errors.New("malformed pid file")
 // same log file, the same declared port and the same pid path. Test for it
 // with errors.Is.
 //
-// Unlike every other condition under `.dev/`, a fresh claim is not stale state
+// Unlike every other condition under `.mabo-ctl/`, a fresh claim is not stale state
 // to be cleaned up — it is somebody else's work in progress. Only the
 // staleness rules in [Dir.ClaimPID] may break one.
 var ErrClaimed = errors.New("service is being started by another mabo-ctl")
 
-// Dir is the `.dev/` state directory for one repository. Root is the repository
-// root; the state itself lives at Root/.dev. The zero value is not usable —
+// Dir is the `.mabo-ctl/` state directory for one repository. Root is the repository
+// root; the state itself lives at Root/.mabo-ctl. The zero value is not usable —
 // construct a Dir with New.
 type Dir struct {
 	// Root is the absolute path of the repository root that owns this state.
@@ -66,7 +66,7 @@ type Dir struct {
 }
 
 // New creates the state directory tree for the repository rooted at root:
-// `.dev/`, `.dev/logs/`, `.dev/pids/` and `.dev/exits/`, each mode 0700.
+// `.mabo-ctl/`, `.mabo-ctl/logs/`, `.mabo-ctl/pids/` and `.mabo-ctl/exits/`, each mode 0700.
 // Directories that already exist are chmodded back to 0700, because a log file
 // that inherits a world-readable directory from an earlier version is a
 // disclosure of whatever the supervised service printed — and an exit record
@@ -94,42 +94,42 @@ func New(root string) (*Dir, error) {
 	return d, nil
 }
 
-// Path returns the absolute path of the state directory itself (Root/.dev).
+// Path returns the absolute path of the state directory itself (Root/.mabo-ctl).
 func (d *Dir) Path() string { return filepath.Join(d.Root, stateDirName) }
 
-// LogsDir returns the absolute path of the log directory (Root/.dev/logs).
+// LogsDir returns the absolute path of the log directory (Root/.mabo-ctl/logs).
 func (d *Dir) LogsDir() string { return filepath.Join(d.Path(), logsDirName) }
 
-// PIDsDir returns the absolute path of the pid directory (Root/.dev/pids).
+// PIDsDir returns the absolute path of the pid directory (Root/.mabo-ctl/pids).
 func (d *Dir) PIDsDir() string { return filepath.Join(d.Path(), pidsDirName) }
 
 // RunEnvPath returns the absolute path of the resolved-port cache
-// (Root/.dev/run.env).
+// (Root/.mabo-ctl/run.env).
 func (d *Dir) RunEnvPath() string { return filepath.Join(d.Path(), runEnvName) }
 
 // RunEnvLockPath returns the advisory lock guarding run.env's read-modify-write:
-// Root/.dev/run.env.lock.
+// Root/.mabo-ctl/run.env.lock.
 //
 // It is a separate file from run.env because run.env is replaced by an atomic
 // rename, and a lock held on the replaced inode guards nothing. Like every other
-// file under `.dev/`, it is disposable — `mabo-ctl reset` removes the whole tree.
+// file under `.mabo-ctl/`, it is disposable — `mabo-ctl reset` removes the whole tree.
 func (d *Dir) RunEnvLockPath() string { return filepath.Join(d.Path(), runEnvName+".lock") }
 
-// LogPath returns the log file path for svc: Root/.dev/logs/<svc>.log. It does
+// LogPath returns the log file path for svc: Root/.mabo-ctl/logs/<svc>.log. It does
 // not validate svc; callers that create or read the file go through methods
-// that do. Passing an unvalidated name here can escape `.dev/`.
+// that do. Passing an unvalidated name here can escape `.mabo-ctl/`.
 func (d *Dir) LogPath(svc string) string {
 	return filepath.Join(d.LogsDir(), svc+".log")
 }
 
-// PIDPath returns the pid file path for svc: Root/.dev/pids/<svc>.pid. It does
+// PIDPath returns the pid file path for svc: Root/.mabo-ctl/pids/<svc>.pid. It does
 // not validate svc; callers that create or read the file go through methods
-// that do. Passing an unvalidated name here can escape `.dev/`.
+// that do. Passing an unvalidated name here can escape `.mabo-ctl/`.
 func (d *Dir) PIDPath(svc string) string {
 	return filepath.Join(d.PIDsDir(), svc+".pid")
 }
 
-// PIDRecord is what `.dev/pids/<svc>.pid` holds: the process mabo-ctl spawned for
+// PIDRecord is what `.mabo-ctl/pids/<svc>.pid` holds: the process mabo-ctl spawned for
 // a service and the instant it spawned it.
 //
 // StartedAt is on disk rather than in memory because uptime has to outlive the
@@ -261,13 +261,13 @@ func (d *Dir) RemovePID(svc string) error {
 const claimMaxAge = 10 * time.Minute
 
 // TTYSockPath returns the path of svc's terminal-relay socket:
-// Root/.dev/tty/<svc>.sock.
+// Root/.mabo-ctl/tty/<svc>.sock.
 func (d *Dir) TTYSockPath(svc string) string {
 	return filepath.Join(d.Path(), "tty", svc+".sock")
 }
 
 // TTYDir returns the path of the directory holding the terminal-relay
-// sockets: Root/.dev/tty.
+// sockets: Root/.mabo-ctl/tty.
 func (d *Dir) TTYDir() string {
 	return filepath.Join(d.Path(), "tty")
 }
@@ -276,7 +276,7 @@ func (d *Dir) TTYDir() string {
 // path: the tty directory is created if the state dir predates it, and any
 // socket left by a broker that died between listen and cleanup is removed, or
 // the broker's net.Listen would hit "address already in use". It is the
-// state-owned way to write under .dev/tty — the broker never touches the
+// state-owned way to write under .mabo-ctl/tty — the broker never touches the
 // filesystem there itself.
 func (d *Dir) PrepareTTY(svc string) (string, error) {
 	if err := validService(svc); err != nil {
@@ -322,7 +322,7 @@ func (d *Dir) RemoveTTY(svc string) error {
 }
 
 // PIDClaimPath returns the path of svc's start claim:
-// Root/.dev/pids/<svc>.pid.claim.
+// Root/.mabo-ctl/pids/<svc>.pid.claim.
 func (d *Dir) PIDClaimPath(svc string) string {
 	return d.PIDPath(svc) + ".claim"
 }
@@ -355,7 +355,7 @@ type ClaimReport struct {
 // ClaimPID takes svc's cross-process START CLAIM with an exclusive create.
 //
 // The in-process per-service mutex serialises lifecycle operations inside one
-// mabo-ctl; nothing here did the same for TWO of them racing one `.dev/`
+// mabo-ctl; nothing here did the same for TWO of them racing one `.mabo-ctl/`
 // directory, and for a portless service nothing else caught the second spawn
 // either — two shells started two workers while the pid file recorded only the
 // later one, and the survivor was unreachable by every command mabo-ctl has.
@@ -442,7 +442,7 @@ func (d *Dir) ReleaseClaim(svc string) error {
 
 // createClaim performs the exclusive create itself: O_EXCL so exactly one of
 // any number of concurrent callers wins, mode 0600 like everything under
-// `.dev/`. The wrapped error carries fs.ErrExist when the claim already stands,
+// `.mabo-ctl/`. The wrapped error carries fs.ErrExist when the claim already stands,
 // which is the caller's signal to run the staleness rules.
 func (d *Dir) createClaim(p string, rec claimRecord) error {
 	b, err := json.Marshal(rec)
@@ -529,14 +529,14 @@ func (d *Dir) OpenLogAppend(svc string) (*os.File, error) {
 	return f, nil
 }
 
-// Reset removes the entire `.dev/` tree, including logs, pid records, exit
+// Reset removes the entire `.mabo-ctl/` tree, including logs, pid records, exit
 // records and the persisted port cache. A missing tree is not an error. Reset
 // does not stop any process: killing what the pid files describe is the
 // supervisor's job and must happen before the state that names those processes
 // is destroyed.
 //
 // It removes the tree rather than the file families it knows about, so a new
-// family under `.dev/` is cleared by construction and cannot accumulate behind
+// family under `.mabo-ctl/` is cleared by construction and cannot accumulate behind
 // a `reset` that forgot to list it.
 func (d *Dir) Reset() error {
 	p := d.Path()
@@ -547,7 +547,7 @@ func (d *Dir) Reset() error {
 }
 
 // validService rejects any name that cannot safely compose a file name under
-// `.dev/`. It mirrors config's `^[a-zA-Z0-9][a-zA-Z0-9_-]*$` rule; state
+// `.mabo-ctl/`. It mirrors config's `^[a-zA-Z0-9][a-zA-Z0-9_-]*$` rule; state
 // enforces it again as defence in depth, since state is the only package that
 // turns a name into a path.
 func validService(name string) error {
@@ -563,7 +563,7 @@ func validService(name string) error {
 			continue
 		}
 		return fmt.Errorf(
-			"%w: %q must match [a-zA-Z0-9][a-zA-Z0-9_-]* because it composes .dev/logs/<name>.log and .dev/pids/<name>.pid; %q is not allowed",
+			"%w: %q must match [a-zA-Z0-9][a-zA-Z0-9_-]* because it composes .mabo-ctl/logs/<name>.log and .mabo-ctl/pids/<name>.pid; %q is not allowed",
 			ErrInvalidService, name, name[i:i+1])
 	}
 	return nil

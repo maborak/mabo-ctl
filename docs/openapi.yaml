@@ -289,6 +289,30 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /api/config/reload:
+    post:
+      summary: Reload configuration
+      description: Apply the latest validated mabo-ctl.yaml without restarting running services.
+      security:
+        - tokenHeader: []
+      responses:
+        "200":
+          description: Configuration reloaded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                required: [ok]
+        "422":
+          description: Configuration could not be loaded, validated or resolved; the previous snapshot remains active.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /api/start-all:
     post:
       summary: Start all services
@@ -572,7 +596,7 @@ components:
         health: http://localhost:7102/health
         http_status: 200
         detail: HTTP 200
-        log_path: .dev/logs/backend.log
+        log_path: .mabo-ctl/logs/backend.log
         elapsed_ms: 2000
         started_at: "2026-08-28T10:00:00Z"
         uptime_ms: 2000

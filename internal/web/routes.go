@@ -109,6 +109,8 @@ var consoleRoutes = []Route{
 	{http.MethodPost, "/api/origins",
 		"replace the trusted-origin list; body {\"trusted\": [...]}",
 		RouteMutate, false},
+	{http.MethodPost, "/api/config/reload",
+		"apply a newly validated mabo-ctl.yaml without restarting running services", RouteMutate, false},
 	{http.MethodPost, "/api/start-all", "start every service", RouteMutate, false},
 	{http.MethodPost, "/api/stop-all", "stop every service", RouteMutate, false},
 	{http.MethodPost, "/api/{svc}/start", "start one named service", RouteMutate, false},
