@@ -580,14 +580,14 @@ func (m *Model) clampOffset() {
 }
 
 // deriveRoot recovers the config root from a status log path, which is
-// <root>/.dev/logs/<svc>.log. It is the fallback for a caller that did not set
+// <root>/.mabo-ctl/logs/<svc>.log. It is the fallback for a caller that did not set
 // [Options.Root]; it returns "" when no status carries a log path.
 func deriveRoot(sts []supervisor.Status) string {
 	for _, st := range sts {
 		if st.LogPath == "" {
 			continue
 		}
-		// <root>/.dev/logs/<svc>.log → up three levels.
+		// <root>/.mabo-ctl/logs/<svc>.log → up three levels.
 		root := filepath.Dir(filepath.Dir(filepath.Dir(st.LogPath)))
 		if root != "" && root != "." && root != string(filepath.Separator) {
 			return root

@@ -375,9 +375,9 @@ func (s *Server) renderPage() []byte {
 		"Token":    s.token,
 		"Addr":     s.Addr(),
 		"URL":      s.URL(),
-		"Services": s.names,
+		"Services": func() []string { names, _ := s.serviceNames(); return names }(),
 	}
-	if cfg := s.ctrl.Config(); cfg != nil {
+	if cfg := s.controller().Config(); cfg != nil {
 		data["Root"] = cfg.Root
 		data["ConfigPath"] = cfg.Path
 	}
@@ -417,8 +417,9 @@ func injectToken(page []byte, token string) []byte {
 // handleServices renders every declared service: command, directory, runtime,
 // ports, health URL, dependencies and declared environment.
 func (s *Server) handleServices(w http.ResponseWriter, _ *http.Request) {
-	insts := s.ctrl.Instances()
-	cfg := s.ctrl.Config()
+	ctrl := s.controller()
+	insts := ctrl.Instances()
+	cfg := ctrl.Config()
 
 	out := make([]serviceInfo, 0, len(insts))
 	for _, in := range insts {
@@ -453,6 +454,14 @@ func (s *Server) handleServices(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
+func (s *Server) handleReloadConfig(w http.ResponseWriter, r *http.Request) {
+	if err := s.ReloadConfig(r.Context()); err != nil {
+		writeJSON(w, http.StatusUnprocessableEntity, errorResponse{Error: err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
 // handleStatus emits exactly what `mabo-ctl status --json` emits.
 //
 // It calls ui.StatusJSON rather than serialising supervisor.Status here. A
@@ -476,7 +485,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	// tcp …` — so redacting only the Health field would hand out the credential
 	// through the field next to it. Redacting one channel and not the other is
 	// how the first version of this control was got wrong.
-	sts := s.ctrl.Status(ctx)
+	sts := s.controller().Status(ctx)
 	for i := range sts {
 		raw := sts[i].Health
 		safe := redact.URL(raw)
@@ -509,7 +518,7 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 
 	lines := make(chan string, streamBuffer)
 	done := make(chan error, 1)
-	go func() { done <- s.ctrl.Tail(ctx, svc, n, false, lines) }()
+	go func() { done <- s.controller().Tail(ctx, svc, n, false, lines) }()
 
 	collected := make([]string, 0, 64)
 	for line := range lines {
@@ -547,7 +556,8 @@ func (s *Server) handleRestart(w http.ResponseWriter, r *http.Request) {
 // broken control, however true its explanation. Clicking it is as explicit an
 // instruction as typing the names.
 func (s *Server) handleStartAll(w http.ResponseWriter, r *http.Request) {
-	s.mutate(w, r, opStart, append([]string(nil), s.names...))
+	names, _ := s.serviceNames()
+	s.mutate(w, r, opStart, names)
 }
 
 func (s *Server) handleStopAll(w http.ResponseWriter, r *http.Request) {
@@ -622,11 +632,11 @@ func (s *Server) mutate(w http.ResponseWriter, r *http.Request, kind opKind, nam
 	var err error
 	switch kind {
 	case opStart:
-		err = s.ctrl.Start(ctx, names, ev)
+		err = s.controller().Start(ctx, names, ev)
 	case opStop:
-		err = s.ctrl.Stop(ctx, names, ev)
+		err = s.controller().Stop(ctx, names, ev)
 	case opRestart:
-		err = s.ctrl.Restart(ctx, names, ev)
+		err = s.controller().Restart(ctx, names, ev)
 	default:
 		err = fmt.Errorf("web: unknown operation %q", kind)
 	}
@@ -668,12 +678,13 @@ func (s *Server) mutate(w http.ResponseWriter, r *http.Request, kind opKind, nam
 // name is checked against the DECLARED set and nothing else is accepted.
 func (s *Server) serviceParam(w http.ResponseWriter, r *http.Request) (string, bool) {
 	svc := r.PathValue("svc")
-	if _, ok := s.known[svc]; ok {
+	names, known := s.serviceNames()
+	if _, ok := known[svc]; ok {
 		return svc, true
 	}
 	writeJSON(w, http.StatusNotFound, errorResponse{
 		Error: "unknown service",
-		Valid: s.names,
+		Valid: names,
 	})
 	return "", false
 }

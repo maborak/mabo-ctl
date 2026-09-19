@@ -13,7 +13,7 @@ import (
 )
 
 // nameRE is the set of legal service names. It is deliberately narrow: a name
-// composes .dev/logs/<name>.log and .dev/pids/<name>.pid, so anything that can
+// composes .mabo-ctl/logs/<name>.log and .mabo-ctl/pids/<name>.pid, so anything that can
 // change a path element ("/", "..", a leading dot) is rejected outright.
 var nameRE = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]*$`)
 
@@ -159,8 +159,8 @@ func (v *validator) checkServices() {
 			v.addf("%s: name is required", id)
 		case !nameRE.MatchString(s.Name):
 			v.addf("%s: invalid name %q: must match %s. The name composes "+
-				".dev/logs/<name>.log and .dev/pids/<name>.pid, so a name containing %q, %q "+
-				"or a leading %q is a path traversal that would write outside .dev/",
+				".mabo-ctl/logs/<name>.log and .mabo-ctl/pids/<name>.pid, so a name containing %q, %q "+
+				"or a leading %q is a path traversal that would write outside .mabo-ctl/",
 				id, s.Name, nameRE.String(), "/", "..", ".")
 		default:
 			// Rule 1: duplicate names.

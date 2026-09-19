@@ -15,7 +15,7 @@ import (
 // because they are mabo-ctl's interface to any script that calls it.
 const rootLong = `mabo-ctl supervises the long-running local development processes declared in
 mabo-ctl.yaml: it starts, stops, restarts, health-checks, tails and inspects them,
-and keeps enough state in .dev/ that a second terminal knows what the first one
+and keeps enough state in .mabo-ctl/ that a second terminal knows what the first one
 started.
 
 mabo-ctl.yaml is found by walking UP from the current directory, the way git finds
@@ -43,7 +43,7 @@ Port precedence, highest first:
 
   1. --ports=A,B,C,D                positional; an empty slot keeps the default
   2. <NAME>_PORT in the environment captured AND unset before anything spawns
-  3. .dev/run.env                   persisted from the previous run
+  3. .mabo-ctl/run.env                   persisted from the previous run
   4. the port declared in mabo-ctl.yaml
 
 A persisted port that outranks a changed default is announced on stderr; stale
@@ -135,7 +135,7 @@ func (a *app) rootCmd() *cobra.Command {
 	root.PersistentFlags().String("profile", "",
 		"comma-separated profiles to activate (overrides MABO_PROFILE); services whose profiles: list misses all of them stay out of this run")
 	root.PersistentFlags().Bool("refresh-ports", false,
-		"re-resolve every port from the declared defaults, ignoring persisted .dev/run.env, and rewrite the file")
+		"re-resolve every port from the declared defaults, ignoring persisted .mabo-ctl/run.env, and rewrite the file")
 	addStartFlags(root)
 
 	root.AddCommand(
@@ -336,7 +336,7 @@ flag is given as well.`,
 // block, and then either exits, follows the logs, or hands the terminal to one
 // of the front ends.
 //
-// The resolved ports are persisted to .dev/run.env first, so the next
+// The resolved ports are persisted to .mabo-ctl/run.env first, so the next
 // invocation from any terminal resolves the same ports.
 //
 // The mode is parsed BEFORE anything else, because a flag combination mabo-ctl
@@ -408,7 +408,7 @@ func (a *app) startServices(cmd *cobra.Command, sup lifecycle, names []string) e
 	a.printStatus(sts)
 
 	if bad := notReady(sts); len(bad) > 0 {
-		err := fmt.Errorf("%s did not become ready; see the DETAIL column above and .dev/logs/", joinAnd(bad))
+		err := fmt.Errorf("%s did not become ready; see the DETAIL column above and .mabo-ctl/logs/", joinAnd(bad))
 		if startErr != nil {
 			err = errors.Join(startErr, err)
 		}
@@ -509,7 +509,7 @@ Exit code 4 means at least one service failed to become ready.`,
 			a.printStatus(sts)
 
 			if bad := notReady(sts); len(bad) > 0 {
-				err := fmt.Errorf("%s did not become ready; see the DETAIL column above and .dev/logs/", joinAnd(bad))
+				err := fmt.Errorf("%s did not become ready; see the DETAIL column above and .mabo-ctl/logs/", joinAnd(bad))
 				if restartErr != nil {
 					err = errors.Join(restartErr, err)
 				}
@@ -538,8 +538,8 @@ Exit code 4 means at least one service failed to become ready.`,
 func (a *app) resetCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "reset",
-		Short: "Stop everything, reap orphans by port, and delete .dev/",
-		Long: `Reset stops every service and removes the .dev/ state directory.
+		Short: "Stop everything, reap orphans by port, and delete .mabo-ctl/",
+		Long: `Reset stops every service and removes the .mabo-ctl/ state directory.
 
 A declared port that is STILL held once everything has been stopped belongs to a
 process mabo-ctl did not start: an orphan from a previous run whose pid file went

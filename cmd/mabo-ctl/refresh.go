@@ -11,7 +11,7 @@ import (
 )
 
 // reconcilePorts resolves the one drift the precedence chain cannot: the yaml
-// changed a declared port and .dev/run.env still holds the old one. The chain
+// changed a declared port and .mabo-ctl/run.env still holds the old one. The chain
 // itself is fixed — persisted state deliberately outranks the declared default,
 // because ports must stay stable across invocations — so the remedy is consent,
 // not reordering. The operator is asked whether to adopt the declared ports for
@@ -38,7 +38,7 @@ func (a *app) reconcilePorts(cfg *config.Config, st *state.Dir, insts []service.
 		return insts, origins, nil
 	}
 
-	fmt.Fprint(a.env.Stderr, "adopt the declared ports (rewrites .dev/run.env)? [y/N] ")
+	fmt.Fprint(a.env.Stderr, "adopt the declared ports (rewrites .mabo-ctl/run.env)? [y/N] ")
 	answer, err := bufio.NewReader(a.env.Stdin).ReadString('\n')
 	if err != nil && strings.TrimSpace(answer) == "" {
 		// EOF or a read failure is a "no": keeping the persisted ports is the
@@ -69,7 +69,7 @@ func (a *app) canPromptPorts() bool {
 // result, so the adoption outlives this invocation. prev carries the origins
 // the drift was seen in, when it was seen, so the confirmation can name every
 // port that moved; nil means the caller arrived by flag, and the old values are
-// read from .dev/run.env instead.
+// read from .mabo-ctl/run.env instead.
 func (a *app) adoptDeclaredPorts(cfg *config.Config, st *state.Dir, prev []service.Origin) ([]service.Instance, []service.Origin, error) {
 	if prev == nil {
 		if re, err := st.ReadRunEnv(); err == nil {
@@ -100,7 +100,7 @@ func (a *app) adoptDeclaredPorts(cfg *config.Config, st *state.Dir, prev []servi
 		moved = append(moved, fmt.Sprintf("%s %d → %d", fresh.Service, old.Port, fresh.Port))
 	}
 	if len(moved) > 0 {
-		fmt.Fprintf(a.env.Stderr, "adopted declared ports, .dev/run.env updated: %s\n", strings.Join(moved, ", "))
+		fmt.Fprintf(a.env.Stderr, "adopted declared ports, .mabo-ctl/run.env updated: %s\n", strings.Join(moved, ", "))
 	}
 	return adopted, origins, nil
 }

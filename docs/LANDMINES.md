@@ -298,12 +298,12 @@ a second mabo-ctl in another terminal never reaches it. No pid file exists yet
 on either side, so both pass the already-running check and both spawn. For a
 service that declares a port the port guard catches the loser afterwards —
 badly, but caught. For a portless service nothing intervenes at all: two
-workers ran concurrently while `.dev/pids/<svc>.pid` recorded only the later
+workers ran concurrently while `.mabo-ctl/pids/<svc>.pid` recorded only the later
 one, and the survivor was unreachable by every command mabo-ctl has — stop,
 status, logs and exec all address a process through that record.
 
 **Fix.** An exclusive-create START CLAIM taken before the port check:
-`state.ClaimPID` creates `.dev/pids/<svc>.pid.claim` with `O_EXCL` — the one
+`state.ClaimPID` creates `.mabo-ctl/pids/<svc>.pid.claim` with `O_EXCL` — the one
 primitive two independent processes agree on — recording who is starting and
 since when. `WritePIDAt` supersedes the claim with the real record on success;
 every failure path releases it. A claim found standing is refused with
@@ -352,7 +352,7 @@ kept as a fallback.
 ```bash
 go test ./internal/supervisor/ -race -run TestTailFollowsTheLogAcrossARotation
 
-# Structural: any future writer to .dev/logs must be checked against this
+# Structural: any future writer to .mabo-ctl/logs must be checked against this
 # invariant — if it changes the NAME↔INODE mapping of <svc>.log, Tail must see
 # it through path identity, not handle state.
 rg -n 'Rename|O_TRUNC' internal/state/ internal/supervisor/
@@ -442,17 +442,17 @@ rg -n 'LsofLookupErr' internal/ cmd/
 
 **Shape.** Ordering: `net.Listen` created the unix socket at `0777 & ~umask`
 and the `Chmod(0600)` ran after — a brief window in which the socket carried
-group/world bits. The same code also wrote under `.dev/` directly, breaking
+group/world bits. The same code also wrote under `.mabo-ctl/` directly, breaking
 the write-ownership invariant that names `internal/state` as the only writer.
 
 **Where it bit us.** `internal/supervisor/tty_broker.go`, shipped in 95f277c
 (2026-08-26); diagnosed 2026-08-27 by audit M-5. Unreachable in practice
 until the broker's flag bug (§12) was fixed, which is how it survived.
 
-**Fix.** `state.PrepareTTY` (create `.dev/tty`, clear a dead broker's stale
+**Fix.** `state.PrepareTTY` (create `.mabo-ctl/tty`, clear a dead broker's stale
 socket) runs before the listen; `state.SealTTY` runs immediately after it;
 `state.RemoveTTY` replaces the direct remove. The broker no longer touches
-the filesystem under `.dev/` itself.
+the filesystem under `.mabo-ctl/` itself.
 
 **Detector.**
 ```bash

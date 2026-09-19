@@ -25,7 +25,7 @@ for the format the project holds itself to.
 ## Anything touching the supervisor, state, or the web console
 
 - [ ] Signals go to the process **group**, not a bare pid (or the PR explains why not)
-- [ ] Nothing new writes under `.dev/` from outside `internal/state`
+- [ ] Nothing new writes under `.mabo-ctl/` from outside `internal/state`
 - [ ] `internal/ui`, `internal/console`, `internal/repl` and `internal/web` still
       import neither `os/exec` nor `syscall`
 - [ ] A new phase, if any, is in `supervisor.Phases()` **and** every render site

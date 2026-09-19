@@ -128,7 +128,7 @@ func TestConfigReportsThePortSource(t *testing.T) {
 }
 
 // TestConfigFlagsAPersistedOverride covers the trap that cost a real debugging
-// round: a port in .dev/run.env outranks a default that has since changed, so
+// round: a port in .mabo-ctl/run.env outranks a default that has since changed, so
 // editing mabo-ctl.yaml appears to do nothing. The port line has to say so.
 func TestConfigFlagsAPersistedOverride(t *testing.T) {
 	h := newHarnessWithConfig(t, configFixture, "config", "alpha")
@@ -311,9 +311,9 @@ func assertPortLine(t *testing.T, out, want string) {
 // writeRunEnv seeds the persisted port cache the way a previous run would have.
 func writeRunEnv(t *testing.T, root, body string) {
 	t.Helper()
-	dir := filepath.Join(root, ".dev")
+	dir := filepath.Join(root, ".mabo-ctl")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
-		t.Fatalf("create .dev: %v", err)
+		t.Fatalf("create .mabo-ctl: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "run.env"), []byte(body), 0o600); err != nil {
 		t.Fatalf("write run.env: %v", err)

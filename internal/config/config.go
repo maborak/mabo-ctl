@@ -9,8 +9,8 @@
 // Every problem a mabo-ctl.yaml can have is a LOAD-TIME error, never a runtime
 // surprise, and every problem is reported at once through a [ValidationError]
 // rather than first-error-wins. Two of the rules are security controls and are
-// documented as such: a service name composes .dev/logs/<name>.log and
-// .dev/pids/<name>.pid, and a service dir must stay inside the project root.
+// documented as such: a service name composes .mabo-ctl/logs/<name>.log and
+// .mabo-ctl/pids/<name>.pid, and a service dir must stay inside the project root.
 package config
 
 import (
@@ -66,6 +66,9 @@ type Config struct {
 	// --addr is given: "host:port", e.g. "127.0.0.1:9000". Empty means the
 	// built-in default (127.0.0.1:7999).
 	ConsoleAddr string
+	// ConsoleAccessKey is the optional access key for `mabo-ctl serve`. Empty
+	// means serve generates a random key for this run.
+	ConsoleAccessKey string
 	// ActiveProfiles is the profile set in force, when one was requested and
 	// passed validation; nil means "no profile selection", not "no profiles".
 	ActiveProfiles []string
@@ -389,14 +392,15 @@ func Load(path string) (*Config, error) {
 	}
 
 	cfg := &Config{
-		Root:         filepath.Dir(abs),
-		Path:         abs,
-		Services:     make([]Spec, 0, len(doc.Services)),
-		Checks:       doc.Checks,
-		Shells:       doc.Shells,
-		ConsoleAddr:  doc.ConsoleAddr,
-		StopGrace:    DefaultStopGrace,
-		ReadyTimeout: DefaultReadyTimeout,
+		Root:             filepath.Dir(abs),
+		Path:             abs,
+		Services:         make([]Spec, 0, len(doc.Services)),
+		Checks:           doc.Checks,
+		Shells:           doc.Shells,
+		ConsoleAddr:      doc.ConsoleAddr,
+		ConsoleAccessKey: doc.ConsoleAccessKey,
+		StopGrace:        DefaultStopGrace,
+		ReadyTimeout:     DefaultReadyTimeout,
 	}
 	if doc.StopGrace != nil {
 		cfg.StopGrace = time.Duration(*doc.StopGrace)
@@ -563,13 +567,14 @@ type fileDoc struct {
 	// Schema carries the editor's `$schema:` reference. It is parsed so the
 	// strict decoder accepts the key and IGNORED beyond that: it points an
 	// editor at the schema, it says nothing to mabo-ctl.
-	Schema       string         `yaml:"$schema"`
-	StopGrace    *durationValue `yaml:"stop_grace"`
-	ReadyTimeout *durationValue `yaml:"ready_timeout"`
-	ConsoleAddr  string         `yaml:"console_addr"`
-	Services     []specDoc      `yaml:"services"`
-	Checks       []Check        `yaml:"checks"`
-	Shells       []Shell        `yaml:"shells"`
+	Schema           string         `yaml:"$schema"`
+	StopGrace        *durationValue `yaml:"stop_grace"`
+	ReadyTimeout     *durationValue `yaml:"ready_timeout"`
+	ConsoleAddr      string         `yaml:"console_addr"`
+	ConsoleAccessKey string         `yaml:"console_access_key"`
+	Services         []specDoc      `yaml:"services"`
+	Checks           []Check        `yaml:"checks"`
+	Shells           []Shell        `yaml:"shells"`
 }
 
 // specDoc mirrors Spec with a lenient env value type.

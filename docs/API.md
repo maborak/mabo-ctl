@@ -24,6 +24,11 @@ http://127.0.0.1:<port>
 The port is printed when `serve` starts. The URL carries a `?token=…` query
 parameter — treat it as a password.
 
+The key precedence is `mabo-ctl serve --access-key`, then the YAML
+`console_access_key` setting. If neither is supplied, mabo-ctl generates a new
+random key for the run. A configured key is a credential and should not be
+committed to shared configuration.
+
 ## Authentication
 
 Three layers, enforced before the router sees the request:
@@ -206,7 +211,7 @@ curl -s -H 'X-Mabo-Ctl-Token: YOUR_TOKEN' \
     "exit_code": -1,
     "exit_signal": "",
     "exited_at": "",
-    "log_path": ".dev/logs/backend.log"
+    "log_path": ".mabo-ctl/logs/backend.log"
   }
 ]
 ```
@@ -472,6 +477,30 @@ curl -s -X POST \
 
 ---
 
+### `POST /api/config/reload`
+
+Apply the latest validated `mabo-ctl.yaml` without restarting running services.
+
+**Auth:** Token header required.
+
+```bash
+curl -s -X POST \
+  -H 'X-Mabo-Ctl-Token: YOUR_TOKEN' \
+  http://127.0.0.1:7999/api/config/reload | jq
+```
+
+**Request body:** none.
+
+**Response** `200 OK`:
+
+```json
+{"ok": true}
+```
+
+**Errors:** `422` when the edited configuration cannot be loaded, validated or resolved. The previous configuration remains active.
+
+---
+
 ### `POST /api/start-all`
 
 Start every declared service (including `autostart: false`).
@@ -688,7 +717,7 @@ Key distinctions:
   only check whether the port answers. mabo-ctl keeps them distinct.
 - **`stopped` vs `exited`**: A process that crashed is simply *not there*,
   byte-identical to one that was never started. The exit record in
-  `.dev/exits/` is what makes a crash visible.
+  `.mabo-ctl/exits/` is what makes a crash visible.
 - **`exited` will not grow a restart policy.** mabo-ctl exists to make a death
   *visible*, not to silently resurrect it.
 
@@ -710,7 +739,7 @@ version bump.
     "health": "http://localhost:7102/health",
     "http_status": 200,
     "detail": "HTTP 200",
-    "log_path": ".dev/logs/backend.log",
+    "log_path": ".mabo-ctl/logs/backend.log",
     "elapsed_ms": 2000,
     "started_at": "2026-08-28T10:00:00Z",
     "uptime_ms": 2000,
@@ -732,7 +761,7 @@ version bump.
 | `health` | string | Expanded readiness URL; redacted in API responses |
 | `http_status` | int | Last HTTP probe status code; 0 when no probe or no response |
 | `detail` | string | Human-readable detail (e.g. "HTTP 200", "dial tcp …: refused") |
-| `log_path` | string | Path to the service's log file under `.dev/` |
+| `log_path` | string | Path to the service's log file under `.mabo-ctl/` |
 | `elapsed_ms` | int | Milliseconds since spawn; 0 when not started |
 | `started_at` | string | RFC 3339 timestamp, or `""` when unknown |
 | `uptime_ms` | int | Milliseconds the live process has been up; 0 when nothing running |

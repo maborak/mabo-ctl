@@ -458,7 +458,7 @@ func TestPortsFlagOverridesDeclaredPort(t *testing.T) {
 	if code := h.run(); code != exitOK {
 		t.Fatalf("exit code = %d, want %d (stderr: %s)", code, exitOK, h.stderr)
 	}
-	runEnv := readFile(t, filepath.Join(h.root, ".dev", "run.env"))
+	runEnv := readFile(t, filepath.Join(h.root, ".mabo-ctl", "run.env"))
 	for _, want := range []string{"PORT_ALPHA=7100", "PORT_BETA=7101", "PORT_DELTA=7999"} {
 		if !strings.Contains(runEnv, want) {
 			t.Fatalf("run.env is missing %q; empty slots must keep the declared default:\n%s", want, runEnv)
@@ -485,12 +485,12 @@ func TestPortsFlagBadValueIsUsageError(t *testing.T) {
 }
 
 // TestPersistedPortOverrideIsAnnounced is the mitigation for the documented
-// trap: a persisted .dev/run.env value outranking a changed default must be
+// trap: a persisted .mabo-ctl/run.env value outranking a changed default must be
 // visible, and on stderr so `status --json` stays clean.
 func TestPersistedPortOverrideIsAnnounced(t *testing.T) {
 	h := newHarness(t, "status")
-	mkdir(t, filepath.Join(h.root, ".dev"))
-	writeFile(t, filepath.Join(h.root, ".dev", "run.env"), "PORT_ALPHA=7999\n")
+	mkdir(t, filepath.Join(h.root, ".mabo-ctl"))
+	writeFile(t, filepath.Join(h.root, ".mabo-ctl", "run.env"), "PORT_ALPHA=7999\n")
 
 	if code := h.run(); code != exitOK {
 		t.Fatalf("exit code = %d, want %d (stderr: %s)", code, exitOK, h.stderr)
@@ -503,22 +503,22 @@ func TestPersistedPortOverrideIsAnnounced(t *testing.T) {
 	}
 }
 
-// driftedHarness is a harness whose .dev/run.env holds a port the fixture no
+// driftedHarness is a harness whose .mabo-ctl/run.env holds a port the fixture no
 // longer declares: the stale-state trap, ready for a refresh conversation.
 func driftedHarness(t *testing.T, args ...string) *harness {
 	t.Helper()
 	h := newHarness(t, args...)
-	mkdir(t, filepath.Join(h.root, ".dev"))
-	writeFile(t, filepath.Join(h.root, ".dev", "run.env"), "PORT_ALPHA=7999\n")
+	mkdir(t, filepath.Join(h.root, ".mabo-ctl"))
+	writeFile(t, filepath.Join(h.root, ".mabo-ctl", "run.env"), "PORT_ALPHA=7999\n")
 	return h
 }
 
-// runEnvIs reads .dev/run.env and fails the test unless it contains want.
+// runEnvIs reads .mabo-ctl/run.env and fails the test unless it contains want.
 func runEnvIs(t *testing.T, h *harness, want string) {
 	t.Helper()
-	got := readFile(t, filepath.Join(h.root, ".dev", "run.env"))
+	got := readFile(t, filepath.Join(h.root, ".mabo-ctl", "run.env"))
 	if !strings.Contains(got, want) {
-		t.Fatalf(".dev/run.env is missing %q:\n%s", want, got)
+		t.Fatalf(".mabo-ctl/run.env is missing %q:\n%s", want, got)
 	}
 }
 
@@ -532,7 +532,7 @@ func TestRefreshPortsFlagAdoptsDeclaredPorts(t *testing.T) {
 		t.Fatalf("exit code = %d, want %d (stderr: %s)", code, exitOK, h.stderr)
 	}
 	runEnvIs(t, h, "PORT_ALPHA=7100")
-	if got := readFile(t, filepath.Join(h.root, ".dev", "run.env")); strings.Contains(got, "7999") {
+	if got := readFile(t, filepath.Join(h.root, ".mabo-ctl", "run.env")); strings.Contains(got, "7999") {
 		t.Fatalf("the stale port survived --refresh-ports:\n%s", got)
 	}
 	if msg := h.stderr.String(); strings.Contains(msg, "port override") {
@@ -620,7 +620,7 @@ func TestCaptureEnvUnsetsCallerPort(t *testing.T) {
 	if v, ok := os.LookupEnv("BETA_PORT"); ok {
 		t.Fatalf("BETA_PORT is still set to %q; a child would inherit a port the supervisor overrode", v)
 	}
-	runEnv := readFile(t, filepath.Join(h.root, ".dev", "run.env"))
+	runEnv := readFile(t, filepath.Join(h.root, ".mabo-ctl", "run.env"))
 	if !strings.Contains(runEnv, "PORT_BETA=7999") {
 		t.Fatalf("the captured caller port did not win resolution:\n%s", runEnv)
 	}
@@ -1508,20 +1508,20 @@ func TestInitAddsDevToGitIgnore(t *testing.T) {
 		t.Fatalf("init exited %d", code)
 	}
 	body, _ := os.ReadFile(filepath.Join(h.root, ".gitignore"))
-	if !strings.Contains(string(body), ".dev/") {
-		t.Errorf(".gitignore = %q, want .dev/ appended", body)
+	if !strings.Contains(string(body), ".mabo-ctl/") {
+		t.Errorf(".gitignore = %q, want .mabo-ctl/ appended", body)
 	}
 
 	// Second run on a tree whose gitignore already carries it says nothing new,
 	// and the file is not duplicated.
 	h2 := newHarnessAt(t, t.TempDir(), "init")
-	writeFile(t, filepath.Join(h2.root, ".gitignore"), ".dev/\n")
+	writeFile(t, filepath.Join(h2.root, ".gitignore"), ".mabo-ctl/\n")
 	if code := h2.run(); code != 0 {
 		t.Fatalf("second init exited %d", code)
 	}
 	body2, _ := os.ReadFile(filepath.Join(h2.root, ".gitignore"))
-	if strings.Count(string(body2), ".dev/") != 1 {
-		t.Errorf(".gitignore = %q, want exactly one .dev/", body2)
+	if strings.Count(string(body2), ".mabo-ctl/") != 1 {
+		t.Errorf(".gitignore = %q, want exactly one .mabo-ctl/", body2)
 	}
 }
 

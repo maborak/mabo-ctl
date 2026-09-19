@@ -484,7 +484,7 @@ func (r *Renderer) Event(e supervisor.Event) string {
 	return strings.TrimRight(strings.Join(parts, colGap), " ")
 }
 
-// PortOrigins reports ONLY the ports that a persisted .dev/run.env value is
+// PortOrigins reports ONLY the ports that a persisted .mabo-ctl/run.env value is
 // holding away from the value mabo-ctl.yaml now declares, and says how to clear
 // it. It returns "" — printing nothing — when no port is overridden, which is
 // the normal case.
@@ -510,7 +510,7 @@ func (r *Renderer) PortOrigins(origins []service.Origin) string {
 		return ""
 	}
 	lines = append(lines, r.paint(style{"2"},
-		"adopt them with `mabo-ctl --refresh-ports`, or clear .dev/run.env with `mabo-ctl reset`"))
+		"adopt them with `mabo-ctl --refresh-ports`, or clear .mabo-ctl/run.env with `mabo-ctl reset`"))
 	return strings.Join(lines, "\n")
 }
 

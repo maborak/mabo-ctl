@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -28,6 +30,15 @@ buttons.
 
 The console keeps serving until it is interrupted. Ctrl-C stops the console; it
 does not stop the services, which were spawned with setsid and outlive mabo-ctl.
+
+Authentication uses --access-key when supplied, then console_access_key from
+mabo-ctl.yaml, otherwise a new random key is generated for this run. Treat a
+configured key like a password and do not commit it to shared configuration.
+
+While it is serving, edits to mabo-ctl.yaml are detected and announced in the
+browser. The console applies a change only after you choose "Reload
+configuration"; invalid edits are rejected and the last valid configuration
+stays active. Reloading does not restart services already running.
 
 SECURITY: three of this server's routes start, stop and restart the commands in
 mabo-ctl.yaml, so anything that can reach it and satisfy its checks runs those
@@ -78,6 +89,7 @@ func (a *app) serveCmd() *cobra.Command {
 	}
 	f := cmd.Flags()
 	f.String("addr", web.DefaultAddr, "address to bind as host:port; a non-loopback host requires --i-know-this-is-dangerous")
+	f.String("access-key", "", "access key for the web console; overrides console_access_key in YAML; empty generates one")
 	f.Bool("open", false, "open the console in the default browser once the socket is bound")
 	f.Bool("i-know-this-is-dangerous", false,
 		"permit a non-loopback bind, exposing start/stop/restart to every machine that can route to it")
@@ -109,6 +121,8 @@ type serveOptions struct {
 	// Notify is --notify: fire a desktop notification when a service dies
 	// while this console is being served.
 	Notify bool
+	// AccessKey is the optional fixed web-console key.
+	AccessKey string
 }
 
 // runServe parses the flags and serves until the first SIGINT.
@@ -118,6 +132,10 @@ func (a *app) runServe(cmd *cobra.Command, _ []string) error {
 		return usageError(err)
 	}
 	allow, err := cmd.Flags().GetStringArray("allow-origin")
+	if err != nil {
+		return usageError(err)
+	}
+	accessKey, err := cmd.Flags().GetString("access-key")
 	if err != nil {
 		return usageError(err)
 	}
@@ -136,6 +154,7 @@ func (a *app) runServe(cmd *cobra.Command, _ []string) error {
 		Force:        boolFlag(cmd, "i-know-this-is-dangerous"),
 		AllowOrigins: allow,
 		Notify:       boolFlag(cmd, "notify"),
+		AccessKey:    accessKey,
 	}
 
 	ctx, cancel := interruptible(cmd.Context())
@@ -176,6 +195,11 @@ func (a *app) serve(ctx context.Context, opt serveOptions) error {
 	if _, _, err := net.SplitHostPort(opt.Addr); err != nil {
 		return usageErrorf("--addr %q is not an address of the form host:port: %v", opt.Addr, err)
 	}
+	if opt.AccessKey == "" {
+		if cfg, cfgErr := a.config(); cfgErr == nil {
+			opt.AccessKey = cfg.ConsoleAccessKey
+		}
+	}
 
 	insts, err := a.resolve()
 	if err != nil {
@@ -197,7 +221,7 @@ func (a *app) serve(ctx context.Context, opt serveOptions) error {
 	// that command builds one from. None of them is derivable inside
 	// internal/web: the precedence chain ran here over the --ports flag and the
 	// captured <NAME>_PORT variables, internal/state is the only package that
-	// may say where `.dev` lives, and only the flag parser knows whether the
+	// may say where `.mabo-ctl` lives, and only the flag parser knows whether the
 	// config was given with --config or found by walking up.
 	makeConsole := func(addr string) (*web.Server, error) {
 		return web.New(sup, web.Options{
@@ -208,6 +232,11 @@ func (a *app) serve(ctx context.Context, opt serveOptions) error {
 			StateDir:       a.stateDir(),
 			ExplicitConfig: a.configPath != "",
 			AllowedOrigins: opt.AllowOrigins,
+			AccessKey:      opt.AccessKey,
+			Reload: func(ctx context.Context) (web.Controller, []service.Origin, string, bool, error) {
+				next, origins, stateDir, explicit, err := a.reloadForServe()
+				return next, origins, stateDir, explicit, err
+			},
 		})
 	}
 	srv, err := makeConsole(opt.Addr)
@@ -273,6 +302,9 @@ func (a *app) serve(ctx context.Context, opt serveOptions) error {
 	}
 
 	a.announceServe(srv, serveClosing)
+	if cfg, cfgErr := a.config(); cfgErr == nil {
+		go watchConfig(ctx, cfg.Path, srv)
+	}
 	if opt.Open {
 		if err := a.env.OpenURL(ctx, srv.URL()); err != nil {
 			// A missing xdg-open is not a reason to refuse to serve: the URL is
@@ -281,6 +313,34 @@ func (a *app) serve(ctx context.Context, opt serveOptions) error {
 		}
 	}
 	return srv.ListenAndServe(ctx)
+}
+
+// watchConfig reports edits once per file metadata change. It does not reload
+// automatically: editing YAML is often a multi-write operation, and applying
+// an intermediate document could change the stack while the operator is still
+// typing. The browser asks for confirmation and applies the final document.
+func watchConfig(ctx context.Context, path string, srv *web.Server) {
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+	var last os.FileInfo
+	if info, err := os.Stat(path); err == nil {
+		last = info
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			info, err := os.Stat(path)
+			if err != nil {
+				continue
+			}
+			if last == nil || info.ModTime() != last.ModTime() || info.Size() != last.Size() {
+				last = info
+				srv.NotifyConfigChange()
+			}
+		}
+	}
 }
 
 // serveClosing is [app.announceServe]'s last line for `mabo-ctl serve`, whose

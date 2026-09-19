@@ -12,7 +12,7 @@
 as a single static binary with no runtime dependencies. It is `supervisorctl`
 shaped: it starts, stops, restarts, health-checks, tails and inspects N
 long-running local dev services — each with its own working directory, runtime,
-environment and port — and keeps enough state on disk (`.dev/`) that a second
+environment and port — and keeps enough state on disk (`.mabo-ctl/`) that a second
 invocation from a different terminal knows what the first one started.
 
 Services are declared in `mabo-ctl.yaml` at the repo root (discovered by a
@@ -36,7 +36,7 @@ Three front ends over ONE supervisor:
    serving one embedded page plus a JSON/SSE API. Token-gated, POST-only
    mutations, Host+Origin validated. It can start and stop processes, so treat
    every guard on it as security-critical. It is the one TCP listener in the
-   repo; the tty broker additionally holds a `.dev/tty/*.sock` unix-domain
+   repo; the tty broker additionally holds a `.mabo-ctl/tty/*.sock` unix-domain
    socket for local PTY IPC, which is not a network surface.
 
 ### Non-goals — out of scope by declaration, never gaps
@@ -57,7 +57,7 @@ internal/config/      mabo-ctl.yaml load, template expansion, validation, discov
 internal/service/     service model + registry, port precedence
 internal/supervisor/  lifecycle: spawn, signals, process groups, pid files
 internal/health/      readiness probes: http, tcp dial, exec
-internal/state/       .dev/ dir: logs, pid files, start claims, run.env, exit records
+internal/state/       .mabo-ctl/ dir: logs, pid files, start claims, run.env, exit records
 internal/console/     full-screen TUI (bubbletea)
 internal/repl/        interactive prompt + session
 internal/ui/          colour, fixed-width labels, table + status rendering
@@ -77,12 +77,12 @@ tools/surfacemap/     generator whose output must be byte-identical to surfaces.
   only through the supervisor and never opens a browser itself.
 - `supervisor` never formats user-facing strings; it returns state, `ui` renders.
 - `config` is pure: reads files, validates, no process side effects.
-- Writes under `.dev/` come only from `internal/state`.
+- Writes under `.mabo-ctl/` come only from `internal/state`.
 
 ## Behaviours that are load-bearing (do not regress them)
 
 - **Port precedence**: named `--port svc=N` > positional `--ports` > caller env
-  > `.dev/run.env` > declared default; the two flag spellings are rejected
+  > `.mabo-ctl/run.env` > declared default; the two flag spellings are rejected
   together. Caller-env `<NAME>_PORT` variables are captured AND unset before any
   spawn; a service that declares a port also gets it as a bare `PORT`. Collision
   detection is computed pairwise over all services — never a hand-written
@@ -119,7 +119,7 @@ tools/surfacemap/     generator whose output must be byte-identical to surfaces.
   `failed` ≠ `slow` ≠ `exited`, and a deliberate stop must never read as a crash.
 - Every output channel (stdout, logs, JSON, web) redacts through
   `internal/redact` at the SOURCE, not per route. That covers everything
-  mabo-ctl itself composes; a child's stdout in `.dev/logs/*.log` is the
+  mabo-ctl itself composes; a child's stdout in `.mabo-ctl/logs/*.log` is the
   child's own output, stored verbatim and channel-consistently — never
   re-rendered worse on one channel than another.
 

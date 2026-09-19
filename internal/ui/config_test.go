@@ -44,7 +44,7 @@ func configFixture() ConfigInput {
 			{Service: "alpha", Port: 7999, Source: service.FromRunEnv, Declared: 7100, Override: true},
 			{Service: "gamma", Source: service.FromDefault},
 		},
-		StateDir: "/repo/.dev",
+		StateDir: "/repo/.mabo-ctl",
 	}
 }
 
@@ -63,7 +63,7 @@ func TestBuildConfigViewTakesTheOriginItIsGiven(t *testing.T) {
 	if alpha.Port != 7999 || alpha.PortSource != "run.env" || alpha.PortDeclared != 7100 || !alpha.PortOverride {
 		t.Errorf("alpha = %+v, want 7999 from run.env over a declared 7100, flagged", alpha)
 	}
-	if v.Source.Path != "/repo/mabo-ctl.yaml" || v.Source.Root != "/repo" || v.Source.StateDir != "/repo/.dev" {
+	if v.Source.Path != "/repo/mabo-ctl.yaml" || v.Source.Root != "/repo" || v.Source.StateDir != "/repo/.mabo-ctl" {
 		t.Errorf("source = %+v, want the loaded path, root and state dir", v.Source)
 	}
 	if v.Source.StopGraceMS != 5000 || v.Source.ReadyTimeoutMS != 45000 {

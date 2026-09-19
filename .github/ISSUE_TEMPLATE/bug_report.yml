@@ -7,7 +7,7 @@ body:
       value: |
         Before filing: mabo-ctl runs the commands in your `mabo-ctl.yaml` by design.
         "My service did not start" is usually a problem with that command, not
-        with mabo-ctl — check `.dev/logs/<service>.log` first.
+        with mabo-ctl — check `.mabo-ctl/logs/<service>.log` first.
 
         For anything security-related, do **not** open an issue. See
         [SECURITY.md](https://github.com/maborak/mabo-ctl/blob/main/SECURITY.md).

@@ -1,5 +1,5 @@
 # mabo-ctl runtime state — logs, pid files, persisted ports. Safe to delete.
-.dev/
+.mabo-ctl/
 
 # Go build output
 /mabo-ctl

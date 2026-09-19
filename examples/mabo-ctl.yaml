@@ -12,7 +12,7 @@
 # dependency cycle, a duplicate name, a duplicate port or an unknown runtime is
 # an error before anything is spawned. All problems are reported at once.
 #
-# Runtime state lives in .dev/ next to this file (logs, pid files, resolved
+# Runtime state lives in .mabo-ctl/ next to this file (logs, pid files, resolved
 # ports). It is git-ignored and safe to delete; `mabo-ctl reset` deletes it.
 
 # ---------------------------------------------------------------------------
@@ -34,6 +34,10 @@ ready_timeout: 30s
 # --i-know-this-is-dangerous at serve time.
 # console_addr: 127.0.0.1:9000
 
+# Optional fixed web-console credential. Prefer --access-key or the generated
+# per-run key; never commit a real shared secret here.
+# console_access_key: replace-with-at-least-4-characters
+
 # ---------------------------------------------------------------------------
 # services — the registry. At least one is required.
 # ---------------------------------------------------------------------------
@@ -42,8 +46,8 @@ ready_timeout: 30s
 #
 #   name        REQUIRED. Must match ^[a-zA-Z0-9][a-zA-Z0-9_-]*$. This is a
 #               security rule, not a style rule: the name composes
-#               .dev/logs/<name>.log and .dev/pids/<name>.pid, so a "/" or ".."
-#               in it would write outside .dev/.
+#               .mabo-ctl/logs/<name>.log and .mabo-ctl/pids/<name>.pid, so a "/" or ".."
+#               in it would write outside .mabo-ctl/.
 #   dir         Working directory, relative to this file. Must exist, must be a
 #               directory, and must stay inside the repo root. Defaults to the
 #               directory containing mabo-ctl.yaml.
@@ -118,7 +122,7 @@ ready_timeout: 30s
 #   2. --ports=A,B,C,D            (positional; an empty slot keeps the default)
 #   3. <NAME>_PORT in the caller's environment (captured AND unset, so a child
 #      never inherits a value the supervisor overrode)
-#   4. .dev/run.env               (persisted from the last run)
+#   4. .mabo-ctl/run.env               (persisted from the last run)
 #   5. the port declared here
 # A ported service also gets its port injected as a bare PORT (the Procfile
 # convention); a service that declares no port gets no PORT at all.

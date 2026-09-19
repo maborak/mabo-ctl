@@ -49,7 +49,7 @@ type ExitRecord struct {
 	// LogTail is the last few lines the process printed before dying — the
 	// stack trace or bind error that explains the death. It is capped by the
 	// writer, and it is why exit records are mode 0600 like every other file
-	// under `.dev/`: whatever a service prints can include a credential.
+	// under `.mabo-ctl/`: whatever a service prints can include a credential.
 	LogTail string `json:"log_tail"`
 	// Stopped reports whether mabo-ctl took the process down deliberately. A
 	// deliberate stop is not a crash, and conflating the two would make every
@@ -66,12 +66,12 @@ type ExitRecord struct {
 }
 
 // ExitsDir returns the absolute path of the exit-record directory
-// (Root/.dev/exits).
+// (Root/.mabo-ctl/exits).
 func (d *Dir) ExitsDir() string { return filepath.Join(d.Path(), exitsDirName) }
 
-// ExitPath returns the exit record path for svc: Root/.dev/exits/<svc>.json. It
+// ExitPath returns the exit record path for svc: Root/.mabo-ctl/exits/<svc>.json. It
 // does not validate svc; callers that create or read the file go through
-// methods that do. Passing an unvalidated name here can escape `.dev/`.
+// methods that do. Passing an unvalidated name here can escape `.mabo-ctl/`.
 func (d *Dir) ExitPath(svc string) string {
 	return filepath.Join(d.ExitsDir(), svc+".json")
 }

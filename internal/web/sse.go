@@ -36,7 +36,7 @@ type broker struct {
 	// recent is the bounded in-memory phase history: the last
 	// historyCapacity events, oldest first. It is deliberately not
 	// persisted — this is a dev console's "what just happened", not an audit
-	// log, and .dev/ writes belong to internal/state.
+	// log, and .mabo-ctl/ writes belong to internal/state.
 	recent []supervisor.Event
 }
 
@@ -360,7 +360,7 @@ type streamMsg struct {
 // goroutine — a tail blocked mid-send must observe the cancellation through
 // its forwarder, and nothing may outlive the request.
 func (s *Server) handleStreamAll(w http.ResponseWriter, r *http.Request) {
-	insts := s.ctrl.Instances()
+	insts := s.controller().Instances()
 	if len(insts) == 0 {
 		http.Error(w, "no services are declared", http.StatusNotFound)
 		return

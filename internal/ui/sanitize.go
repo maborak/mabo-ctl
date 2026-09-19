@@ -25,7 +25,7 @@ import "strings"
 // pass through for the same reason.
 //
 // Sanitize operates on RENDERED terminal streams only. The bytes on disk in
-// `.dev/logs/` stay verbatim: they are evidence, and a pager can show them.
+// `.mabo-ctl/logs/` stay verbatim: they are evidence, and a pager can show them.
 func Sanitize(s string) string {
 	if !strings.ContainsRune(s, 0x1b) && !hasC1(s) {
 		return s

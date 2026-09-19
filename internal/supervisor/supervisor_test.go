@@ -2289,7 +2289,7 @@ func TestStatusRunningNotReadyForALivePortlessService(t *testing.T) {
 	}
 }
 
-// TestStatusSurfacesAMalformedPidFile: a corrupt byte in .dev/pids must be
+// TestStatusSurfacesAMalformedPidFile: a corrupt byte in .mabo-ctl/pids must be
 // named in Detail rather than silently reading as stopped.
 func TestStatusSurfacesAMalformedPidFile(t *testing.T) {
 	sup, st := fixture(t, service.Instance{

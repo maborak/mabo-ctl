@@ -74,7 +74,7 @@ func PortSlotNames(cfg *config.Config) []string {
 	return names
 }
 
-// Persist writes the resolved ports of insts to .dev/run.env so the next
+// Persist writes the resolved ports of insts to .mabo-ctl/run.env so the next
 // invocation, from any terminal, resolves the same ports.
 //
 // It expects the FULL instance list returned by Resolve, not a selection from

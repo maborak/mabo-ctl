@@ -9,6 +9,13 @@ stable, everything else may still move.
 
 ## [Unreleased]
 
+### Changed
+
+- Renamed the repository state directory from `.dev/` to `.mabo-ctl/`, including
+  logs, PID records, sockets, and persisted ports. Stop services with the old
+  binary before upgrading, rename the directory, and update `.gitignore`;
+  migration is manual.
+
 ### Added
 
 - **`console_addr` in `mabo-ctl.yaml`** — the address `mabo-ctl serve` binds
@@ -74,7 +81,7 @@ stable, everything else may still move.
   what the repo looks like (`package.json` + `.nvmrc`, `manage.py`,
   `pyproject.toml`, `Cargo.toml`). Every guess lands commented with the
   evidence that produced it; nothing runs until a human uncomments it. Refuses
-  to overwrite, adds `.dev/` to `.gitignore`, runs nothing it finds.
+  to overwrite, adds `.mabo-ctl/` to `.gitignore`, runs nothing it finds.
 - **Desktop death notifications** — `--notify`, on any resident front end and
   on `serve`: a dying service announces itself via `osascript`/`notify-send`
   with its name and a truncated log line. The watcher reads on-disk exit
@@ -87,7 +94,7 @@ stable, everything else may still move.
   Generated live from the same cobra tree `--help` renders; a new subcommand
   without catalogue metadata fails loudly instead of shipping undocumented.
 - **`mabo-ctl doctor`** — a read-only stack exam: unresolvable runtimes, stale
-  or recycled pids, foreign port holders, unsurfaced crashes, loose `.dev/`
+  or recycled pids, foreign port holders, unsurfaced crashes, loose `.mabo-ctl/`
   permissions. Warn exits 0, FAIL exits 1; it changes nothing.
 - **JSON Schema for `mabo-ctl.yaml`**, shipped at `schema/mabo-ctl.schema.json`
   and printable via `mabo-ctl schema`. Editor-friendly: the parser accepts a
@@ -96,7 +103,7 @@ stable, everything else may still move.
 - **fish and powershell completions**, alongside bash and zsh.
 - **The previous run's log is kept** as `<svc>.log.1` — restarting no longer
   destroys the evidence you restarted to read. One generation, capped on
-  purpose; `reset` deletes it like everything else under `.dev/`.
+  purpose; `reset` deletes it like everything else under `.mabo-ctl/`.
 - **Per-service `ready_timeout:`** — one slow-warming service sets its own
   window instead of forcing the whole stack to call everything slow for two
   minutes; absent means inherit the global.
@@ -146,7 +153,7 @@ stable, everything else may still move.
   mutex serialises only inside one process; a second terminal passed the same
   already-running check before either pid file existed, and two copies ran —
   for a portless service, unreachably, because the pid record named only the
-  later one. Starts now take an exclusive `.dev/pids/<svc>.pid.claim` first
+  later one. Starts now take an exclusive `.mabo-ctl/pids/<svc>.pid.claim` first
   (`ErrClaimed` refuses a fresh rival; stale wreckage is cleared automatically).
   See [LANDMINES.md §9](docs/LANDMINES.md).
 - **Port-conflict errors stopped at diagnosis.** They now carry the remedy as
@@ -169,7 +176,7 @@ stable, everything else may still move.
   string is built.
 - **`reset` could kill a service mabo-ctl had just started**, treating it as a
   foreign orphan, and then delete the record proving it existed.
-- **Concurrent writes to `.dev/run.env` lost data** — 7 of 8 foreign keys under
+- **Concurrent writes to `.mabo-ctl/run.env` lost data** — 7 of 8 foreign keys under
   8 writers.
 - **A stale pid file wedged a service permanently** — liveness is not ownership.
 - **`mabo-ctl start` returned success when every service failed.**

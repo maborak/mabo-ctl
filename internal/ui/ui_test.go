@@ -46,7 +46,7 @@ func runeIndex(s, sub string) int {
 }
 
 func status(name string, phase supervisor.Phase) supervisor.Status {
-	return supervisor.Status{Name: name, Phase: phase, LogPath: "/repo/.dev/logs/" + name + ".log"}
+	return supervisor.Status{Name: name, Phase: phase, LogPath: "/repo/.mabo-ctl/logs/" + name + ".log"}
 }
 
 // --- colour detection -------------------------------------------------------
@@ -516,7 +516,7 @@ func TestPortOriginsNamesBothPortsAndHowToClearThem(t *testing.T) {
 	if got == "" {
 		t.Fatal("PortOrigins printed nothing for an override")
 	}
-	for _, want := range []string{"backend", "7002", "7102", string(service.FromRunEnv), "mabo-ctl reset", ".dev/run.env"} {
+	for _, want := range []string{"backend", "7002", "7102", string(service.FromRunEnv), "mabo-ctl reset", ".mabo-ctl/run.env"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("PortOrigins output does not mention %q:\n%s", want, got)
 		}
@@ -616,7 +616,7 @@ const goldenStatusJSON = `[
     "health": "http://localhost:7100/robots.txt?probe=1&fast=true",
     "http_status": 200,
     "detail": "",
-    "log_path": "/repo/.dev/logs/website.log",
+    "log_path": "/repo/.mabo-ctl/logs/website.log",
     "elapsed_ms": 1200,
     "started_at": "2024-03-01T09:12:00Z",
     "uptime_ms": 3600000,
@@ -632,7 +632,7 @@ const goldenStatusJSON = `[
     "health": "",
     "http_status": 0,
     "detail": "process died\nlog is empty",
-    "log_path": "/repo/.dev/logs/worker.log",
+    "log_path": "/repo/.mabo-ctl/logs/worker.log",
     "elapsed_ms": 0,
     "started_at": "",
     "uptime_ms": 0,
@@ -648,7 +648,7 @@ const goldenStatusJSON = `[
     "health": "http://localhost:7102/health",
     "http_status": 0,
     "detail": "killed by SIGKILL, 4m ago",
-    "log_path": "/repo/.dev/logs/backend.log",
+    "log_path": "/repo/.mabo-ctl/logs/backend.log",
     "elapsed_ms": 0,
     "started_at": "2024-03-01T09:12:00Z",
     "uptime_ms": 0,
@@ -675,7 +675,7 @@ func goldenStatuses() []supervisor.Status {
 			Port:      7100,
 			Health:    "http://localhost:7100/robots.txt?probe=1&fast=true",
 			HTTP:      200,
-			LogPath:   "/repo/.dev/logs/website.log",
+			LogPath:   "/repo/.mabo-ctl/logs/website.log",
 			Elapsed:   1200 * time.Millisecond,
 			StartedAt: goldenSpawn,
 			Uptime:    time.Hour,
@@ -684,7 +684,7 @@ func goldenStatuses() []supervisor.Status {
 			Name:    "worker",
 			Phase:   supervisor.PhaseFailed,
 			Detail:  "process died\nlog is empty",
-			LogPath: "/repo/.dev/logs/worker.log",
+			LogPath: "/repo/.mabo-ctl/logs/worker.log",
 		},
 		{
 			// The phase that did not exist before this contract carried it: a
@@ -695,7 +695,7 @@ func goldenStatuses() []supervisor.Status {
 			Port:       7102,
 			Health:     "http://localhost:7102/health",
 			Detail:     "killed by SIGKILL, 4m ago",
-			LogPath:    "/repo/.dev/logs/backend.log",
+			LogPath:    "/repo/.mabo-ctl/logs/backend.log",
 			StartedAt:  goldenSpawn,
 			ExitCode:   -1,
 			ExitSignal: "SIGKILL",

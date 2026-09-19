@@ -39,11 +39,13 @@ curl -fsSL https://raw.githubusercontent.com/maborak/mabo-ctl/main/install.sh | 
 
 The installer downloads the static binary for your OS/arch from the latest
 release, verifies it against the release's `SHA256SUMS`, and installs it to
-`/usr/local/bin` (set `DESTDIR` to install elsewhere). Nothing runs from the
-network: the script is a shell script and the binary is checksum-verified
-before it is written. With `GITHUB_TOKEN` or `GH_TOKEN` set, the same script
-authenticates a private repository — GitHub serves a private repo's release
-assets only through the API.
+`/usr/local/bin` when writable, or `~/.local/bin` otherwise. Set `DESTDIR` to
+choose another directory. If the destination is not already on `PATH`, the
+installer adds it to `.zshrc` or `.bashrc` based on your shell. Open a new shell
+after installation. Nothing runs from the network: the script is a shell script
+and the binary is checksum-verified before it is written. With `GITHUB_TOKEN` or
+`GH_TOKEN` set, the same script authenticates a private repository — GitHub
+serves a private repo's release assets only through the API.
 
 Or install from source:
 
@@ -120,6 +122,8 @@ ready_timeout: 30s    # a probe that has not answered within this is "slow"
                       # before it and "degraded" after it
 console_addr: "127.0.0.1:9000"   # optional: address `mabo-ctl serve` binds when
                       # no --addr is given (default 127.0.0.1:7999)
+# console_access_key: "..."      # optional; --access-key overrides it; absent
+                                 # means a random key is generated per run
 
 services:
   - name: website
@@ -256,16 +260,16 @@ Leave the key out to inherit the global.
 | `mabo-ctl health` | The same phases `status` reports, with an exit code: 4 when any declared probe (http, tcp or exec) did not answer. |
 | `mabo-ctl config [svc] [--json] [--raw]` | Where `mabo-ctl.yaml` was loaded from and what it resolved to: the port **and which of the five precedence levels produced it**, the absolute command, the runtime, the expanded health URL, the declared env. `--raw` prints the file verbatim. |
 | `mabo-ctl logs [svc\|all] [--tail=N] [-f] [--timestamps]` | Tail a log, or interleave every log with per-service labels. `tailf` is an alias. With `-f --timestamps` each line carries an HH:MM:SS.mmm READ-time stamp — follow-only by design; historical tails refuse it rather than lie about write times. |
-| `mabo-ctl reset [--force]` | Stop everything and delete `.dev/`. `--force` also kills whatever still holds a declared port. |
+| `mabo-ctl reset [--force]` | Stop everything and delete `.mabo-ctl/`. `--force` also kills whatever still holds a declared port. |
 | `mabo-ctl preflight` | Two blocks: MACHINE (can this machine run what mabo-ctl.yaml declares? runtimes resolve, cmd[0] executable, node_modules present under node:, .nvmrc agreement — detect-and-hint, never fix) then the declared `checks:` block in parallel. `tcp:` takes `expect: free` to require a port be open before start; a failure names its holder. Either block failing exits 1. |
-| `mabo-ctl doctor` | Read-only stack exam: unresolvable runtimes, stale or recycled pids, foreign port holders, unsurfaced crashes, loose `.dev/` permissions. Warn → 0, FAIL → 1. |
+| `mabo-ctl doctor` | Read-only stack exam: unresolvable runtimes, stale or recycled pids, foreign port holders, unsurfaced crashes, loose `.mabo-ctl/` permissions. Warn → 0, FAIL → 1. |
 | `mabo-ctl schema [--commands]` | Print the JSON Schema (draft-07) for `mabo-ctl.yaml`. With `--commands`, print a machine-readable catalogue of the binary itself: every command's flags and argument semantics, which mutate state, the exit-code table, which outputs are stable contracts, every web-console route with its auth level. Generated from the same tree `--help` renders — see [For agents and scripts](#for-agents-and-scripts). |
 | `mabo-ctl exec <svc> <cmd>...` | Run a command in the service's exact environment and directory; forwards the child's exit code. |
 | `mabo-ctl shell <name>` | Run a declared `shells:` entry, or open `$SHELL` in a service's environment. |
 | `mabo-ctl attach <svc>` | Connect your terminal to a service declared `tty: true`, through the broker beside it. Ctrl-Q detaches; one session at a time, and detaching never stops the service. |
 | `mabo-ctl open` | Hand each running service's URL — its `open:` target when declared, else the derived origin — to `open` (macOS) or `xdg-open` (Linux). |
-| `mabo-ctl serve [--addr] [--open] [--notify] [--i-know-this-is-dangerous]` | Serve the web console on `127.0.0.1:7999` — or the `console_addr` in `mabo-ctl.yaml` — until interrupted; if that port is already taken by another server, it falls back to a kernel-chosen free port and prints the real address. `--notify` announces dying services on the desktop. It can start and stop services — see [Web console](#web-console). |
-| `mabo-ctl init` | Scaffold a fully commented-out `mabo-ctl.yaml` from what the repo looks like (`package.json` + `.nvmrc`, `manage.py`, `pyproject.toml`, `Cargo.toml`). Refuses to overwrite; adds `.dev/` to `.gitignore`; runs nothing it finds. |
+| `mabo-ctl serve [--addr] [--access-key] [--open] [--notify] [--i-know-this-is-dangerous]` | Serve the web console on `127.0.0.1:7999` — or the `console_addr` in `mabo-ctl.yaml` — until interrupted; if that port is already taken by another server, it falls back to a kernel-chosen free port and prints the real address. `--access-key` overrides `console_access_key`; absent keys are generated randomly. `--notify` announces dying services on the desktop. It can start and stop services — see [Web console](#web-console). |
+| `mabo-ctl init` | Scaffold a fully commented-out `mabo-ctl.yaml` from what the repo looks like (`package.json` + `.nvmrc`, `manage.py`, `pyproject.toml`, `Cargo.toml`). Refuses to overwrite; adds `.mabo-ctl/` to `.gitignore`; runs nothing it finds. |
 | `mabo-ctl --version` | The full build report: commit, dirty flag, when it was linked, toolchain, platform and dependencies. Paste it whole into bug reports — [SECURITY.md](SECURITY.md) asks for exactly this output. |
 | `mabo-ctl completion <bash\|zsh\|fish\|powershell>` | Print a completion script. |
 | `mabo-ctl upgrade [--force]` | Replace this binary with the latest GitHub release — see [Upgrading](#upgrading). |
@@ -380,7 +384,7 @@ always did: a plain `stopped`, with no detail and no error.
 crashes and it is not going to: a supervisor that silently resurrects a crashing
 service hides the crash loop it exists to show you. What it does instead is
 remember: the exit code or signal, when it happened, and the last lines the
-process printed, in `.dev/exits/<service>.json` and in the status block, until
+process printed, in `.mabo-ctl/exits/<service>.json` and in the status block, until
 you start or stop the service yourself.
 
 How much it can remember depends on whether a mabo-ctl was still running when the
@@ -411,7 +415,7 @@ Highest first. This is the heart of the tool.
 | 1 | `--port SERVICE=PORT` | Named, repeatable: `--port backend=7999 --port web=3000`. Cannot be combined with `--ports`. |
 | 2 | `--ports=A,B,C,D` | Positional. Slot *i* is the *i*-th service that declares a port, in declaration order. An **empty slot keeps the declared default**, so `--ports=,,7999` overrides only the third. |
 | 3 | `<NAME>_PORT` in the caller's environment | e.g. `BACKEND_PORT=7999`. A `-` in a service name becomes `_`. |
-| 4 | `.dev/run.env` | Persisted by the previous `start` or `restart`. |
+| 4 | `.mabo-ctl/run.env` | Persisted by the previous `start` or `restart`. |
 | 5 | `port:` in `mabo-ctl.yaml` | The declared default. |
 
 Two rules are not optional:
@@ -426,10 +430,10 @@ Two rules are not optional:
   works without configuration.
 - **A persisted port that outranks a changed default is announced — and can be
   adopted.** Changing a default port in `mabo-ctl.yaml` appearing to do nothing,
-  because `.dev/run.env` silently won, cost a real debugging round. mabo-ctl
+  because `.mabo-ctl/run.env` silently won, cost a real debugging round. mabo-ctl
   prints a line on stderr saying which service is on which port and where it
   came from, and on an interactive terminal asks whether to adopt the declared
-  ports (answering yes rewrites `.dev/run.env`; Enter keeps them). Scripts and
+  ports (answering yes rewrites `.mabo-ctl/run.env`; Enter keeps them). Scripts and
   the committed yaml-as-truth skip the question with the global
   `--refresh-ports` flag, which adopts the declared defaults and rewrites the
   file in one step. Stderr, so `status --json` on stdout stays a clean machine
@@ -445,7 +449,7 @@ on 7999?" is a command rather than a source-reading exercise:
 $ mabo-ctl config website
   config     /repo/mabo-ctl.yaml  (found by walking up from the working directory)
   root       /repo
-  state      /repo/.dev
+  state      /repo/.mabo-ctl
   timeouts   stop_grace 10.0s   ready_timeout 30.0s
 
 website
@@ -464,11 +468,16 @@ it somewhere.
 
 ## State on disk
 
-Everything mabo-ctl remembers lives in `.dev/`, next to `mabo-ctl.yaml`. Add it to
+Upgrading from a version that used `.dev/`: stop services with the old binary
+before upgrading, then rename `.dev/` to `.mabo-ctl/` and update `.gitignore`.
+Existing state is not migrated automatically. If `.mabo-ctl/` already exists,
+do not overwrite it with the old directory.
+
+Everything mabo-ctl remembers lives in `.mabo-ctl/`, next to `mabo-ctl.yaml`. Add it to
 `.gitignore`; it is safe to delete, and `mabo-ctl reset` deletes it.
 
 ```
-.dev/
+.mabo-ctl/
 ├── logs/<service>.log      stdout+stderr of THIS run, mode 0600
 │   logs/<service>.log.1    the previous run, kept as crash evidence
 ├── pids/<service>.pid    {"pid":…,"started_at":…}, written after spawn,
@@ -502,9 +511,9 @@ logs.
 
 The directories are created `0700` and the files `0600`. A supervised service
 prints whatever it likes on stdout and that lands in a log file — and, truncated,
-in an exit record — so nothing under `.dev/` is ever created group- or
+in an exit record — so nothing under `.mabo-ctl/` is ever created group- or
 world-readable. Secrets in your environment are forwarded to children and can end
-up in those logs — treat `.dev/` as secrets-adjacent, especially on a shared host.
+up in those logs — treat `.mabo-ctl/` as secrets-adjacent, especially on a shared host.
 
 **Escape sequences are sanitised on every terminal render.** Everything
 mabo-ctl composes is redacted at the source, but a service's own stdout is the
@@ -513,7 +522,7 @@ repaint the operator's terminal, hide log lines, or attempt an OSC-52
 clipboard write. `logs`/`tailf` and the console's log panes therefore strip
 OSC (hyperlinks, titles, clipboard), DCS/APC/PM payload channels and bare C1
 controls before printing — while keeping CSI colour, because logs that lose
-their colour lose their usefulness. The bytes on disk in `.dev/logs/` stay
+their colour lose their usefulness. The bytes on disk in `.mabo-ctl/logs/` stay
 verbatim: they are evidence, and a pager can show them raw.
 
 ## Interactive console
@@ -675,7 +684,7 @@ Some consequences worth knowing:
 - Config discovery walks **up** the directory tree, so a `mabo-ctl.yaml` in a
   parent directory you did not intend can be found. Every error prints the
   absolute path of the file that was actually loaded.
-- A service `name` composes `.dev/logs/<name>.log` and `.dev/pids/<name>.pid`,
+- A service `name` composes `.mabo-ctl/logs/<name>.log` and `.mabo-ctl/pids/<name>.pid`,
   so it is restricted to `^[a-zA-Z0-9][a-zA-Z0-9_-]*$` and a `dir` may not escape
   the repository root. Both are load-time errors.
 - `mabo-ctl reset` can reap by port as well as by pid file, because pid files go
@@ -708,7 +717,7 @@ outbound traffic is the HTTP readiness probes to the URLs your config declares.
 cmd/mabo-ctl/           flag wiring, exit codes, the console-vs-status decision
 internal/config/      mabo-ctl.yaml: load and validate. Pure.
 internal/service/     port resolution, template expansion, runtime resolution
-internal/state/       .dev/: logs, pid records, exit records, run.env. The only writer.
+internal/state/       .mabo-ctl/: logs, pid records, exit records, run.env. The only writer.
 internal/health/      readiness probes: http URL, tcp dial, exec argv
 internal/redact/      what is withheld from anything shown a reader. Pure, and the
                       ONLY copy of those rules: both front ends import it.

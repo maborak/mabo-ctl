@@ -260,10 +260,10 @@ func twoServices() *fakeCtrl {
 				Port:    7100,
 				Health:  "http://localhost:7100/health?ready=1&deep=0",
 				HTTP:    200,
-				LogPath: "/repo/.dev/logs/backend.log",
+				LogPath: "/repo/.mabo-ctl/logs/backend.log",
 				Elapsed: 1500 * time.Millisecond,
 			},
-			{Name: "frontend", Phase: supervisor.PhaseStopped, LogPath: "/repo/.dev/logs/frontend.log"},
+			{Name: "frontend", Phase: supervisor.PhaseStopped, LogPath: "/repo/.mabo-ctl/logs/frontend.log"},
 		},
 		lines: []string{"listening on 7100", "ready"},
 	}
@@ -441,6 +441,21 @@ func TestTokensDifferBetweenServers(t *testing.T) {
 	}
 	if a.Token() == b.Token() {
 		t.Fatal("two servers generated the same session token")
+	}
+}
+
+func TestConfiguredAccessKeyOverridesGeneratedToken(t *testing.T) {
+	t.Parallel()
+	const key = "local-development-access-key"
+	s, err := NewWith(twoServices(), Options{AccessKey: key})
+	if err != nil {
+		t.Fatalf("NewWith: %v", err)
+	}
+	if s.Token() != key {
+		t.Errorf("Token() = %q, want configured key", s.Token())
+	}
+	if _, err := NewWith(twoServices(), Options{AccessKey: "abc"}); err == nil {
+		t.Fatal("short access key was accepted")
 	}
 }
 

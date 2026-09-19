@@ -156,8 +156,7 @@ var (
 // it at all. *supervisor.Supervisor satisfies it by construction and the
 // signatures are copied verbatim from the supervisor API.
 type Controller interface {
-	// Instances returns the resolved services in declaration order. The set is
-	// read once, at construction: it is what {svc} is validated against.
+	// Instances returns the current resolved services in declaration order.
 	Instances() []service.Instance
 	// Config returns the parsed mabo-ctl.yaml, or nil when there is none. It is
 	// the source of the DECLARED environment; Instances carries the resolved
@@ -210,9 +209,9 @@ type Options struct {
 	// default mabo-ctl never claimed.
 	Origins []service.Origin
 
-	// StateDir is the absolute path of the .dev/ state directory, for display
+	// StateDir is the absolute path of the .mabo-ctl/ state directory, for display
 	// on /api/config. It is supplied rather than composed from the config root
-	// because internal/state owns the layout under .dev/ and is the only
+	// because internal/state owns the layout under .mabo-ctl/ and is the only
 	// package that may name it.
 	StateDir string
 
@@ -236,6 +235,14 @@ type Options struct {
 	// usually set up AFTER mabo-ctl is already supervising services and
 	// restarting to add a hostname would stop the whole stack.
 	AllowedOrigins []string
+
+	// AccessKey overrides the generated session key. Empty generates a fresh
+	// cryptographically random key.
+	AccessKey string
+
+	// Reload re-reads the configuration and returns a fully resolved controller
+	// only after the new configuration has passed validation.
+	Reload func(context.Context) (Controller, []service.Origin, string, bool, error)
 }
 
 // Server serves the console over HTTP. Construct one with [New] or [NewWith];
@@ -253,9 +260,8 @@ type Server struct {
 	// parsed as a template and must be served verbatim instead.
 	tmpl *template.Template
 
-	// names and known are the declared service names, read once at
-	// construction. {svc} is validated against known before it reaches
-	// anything else.
+	// names and known are the current declared service names. {svc} is validated
+	// against known before it reaches anything else.
 	names []string
 	known map[string]struct{}
 
@@ -270,6 +276,7 @@ type Server struct {
 	// address. Unlike the fields above it is NOT read-only after construction:
 	// /api/origins edits it while the console is running.
 	trusted originSet
+	reload  func(context.Context) (Controller, []service.Origin, string, bool, error)
 
 	h      http.Handler
 	events *broker
@@ -352,8 +359,15 @@ func NewWith(ctrl Controller, opt Options) (*Server, error) {
 		return nil, err
 	}
 
-	token, err := newToken()
+	token := opt.AccessKey
+	var err error
+	if token == "" {
+		token, err = newToken()
+	}
 	if err != nil {
+		return nil, err
+	}
+	if err := validateAccessKey(token); err != nil {
 		return nil, err
 	}
 
@@ -369,6 +383,7 @@ func NewWith(ctrl Controller, opt Options) (*Server, error) {
 		stateDir:  opt.StateDir,
 
 		explicitConfig: opt.ExplicitConfig,
+		reload:         opt.Reload,
 	}
 
 	// Seeded before the socket is bound, and fatal when invalid: a mistyped
@@ -396,6 +411,42 @@ func NewWith(ctrl Controller, opt Options) (*Server, error) {
 
 	s.h = s.guard(s.routes())
 	return s, nil
+}
+
+// NotifyConfigChange publishes a configuration-change notice to connected
+// browsers. It does not apply the change; the operator must confirm it in the
+// console so an edit cannot unexpectedly restart or alter running services.
+func (s *Server) NotifyConfigChange() {
+	s.events.publish(supervisor.Event{Msg: "config change detected; reload configuration?"})
+}
+
+// ReloadConfig applies a validated configuration snapshot returned by the
+// caller. Existing processes are not restarted.
+func (s *Server) ReloadConfig(ctx context.Context) error {
+	s.mu.Lock()
+	reload := s.reload
+	s.mu.Unlock()
+	if reload == nil {
+		return errors.New("web: configuration reload is unavailable")
+	}
+	ctrl, origins, stateDir, explicit, err := reload(ctx)
+	if err != nil {
+		return err
+	}
+	names := make([]string, 0, len(ctrl.Instances()))
+	for _, in := range ctrl.Instances() {
+		names = append(names, in.Name)
+	}
+	known := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		known[name] = struct{}{}
+	}
+	s.mu.Lock()
+	s.ctrl, s.names, s.known = ctrl, names, known
+	s.origins, s.stateDir, s.explicitConfig = append([]service.Origin(nil), origins...), stateDir, explicit
+	s.mu.Unlock()
+	s.events.publish(supervisor.Event{Msg: "configuration reloaded"})
+	return nil
 }
 
 // routes builds the mux FROM [consoleRoutes], the table that is also what
@@ -444,6 +495,7 @@ func (s *Server) routes() *http.ServeMux {
 		"GET /api/history":      s.handleHistory,
 
 		"POST /api/origins":       s.handleSetOrigins,
+		"POST /api/config/reload": s.handleReloadConfig,
 		"POST /api/start-all":     s.handleStartAll,
 		"POST /api/stop-all":      s.handleStopAll,
 		"POST /api/{svc}/start":   s.handleStart,
@@ -510,6 +562,18 @@ func (s *Server) routes() *http.ServeMux {
 // It is exported so the caller can print the URL that carries it. Treat it as a
 // credential: anything holding it can start and stop the services.
 func (s *Server) Token() string { return s.token }
+
+func (s *Server) controller() Controller {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.ctrl
+}
+
+func (s *Server) serviceNames() ([]string, map[string]struct{}) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.names...), s.known
+}
 
 // Addr reports the address actually bound. Before [Server.Listen] it reports
 // the address that will be bound, which differs only when the configured port
@@ -714,4 +778,18 @@ func newToken() (string, error) {
 		return "", fmt.Errorf("web: generating session token: %w", err)
 	}
 	return hex.EncodeToString(b), nil
+}
+
+func validateAccessKey(key string) error {
+	if len(key) < 4 {
+		return fmt.Errorf("web: access key must be at least 4 characters")
+	}
+	for _, r := range key {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
+			(r >= '0' && r <= '9') || strings.ContainsRune("._~-", r) {
+			continue
+		}
+		return errors.New("web: access key may contain only ASCII letters, digits, '.', '_', '~' or '-'")
+	}
+	return nil
 }

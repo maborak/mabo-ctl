@@ -71,7 +71,7 @@ func svc(name string, port int) config.Spec {
 	return config.Spec{Name: name, Port: port, Cmd: []string{"runme"}}
 }
 
-// testState creates a .dev state directory under root, optionally seeded with
+// testState creates a .mabo-ctl state directory under root, optionally seeded with
 // persisted ports.
 func testState(t *testing.T, root string, ports map[string]int) *state.Dir {
 	t.Helper()
@@ -212,7 +212,7 @@ func TestResolvePortPrecedence(t *testing.T) {
 }
 
 // TestOriginOverrideOnChangedDefault is the documented trap: the declared
-// default moved and .dev/run.env still holds the old value. The persisted value
+// default moved and .mabo-ctl/run.env still holds the old value. The persisted value
 // still wins, but Override must make that visible.
 func TestOriginOverrideOnChangedDefault(t *testing.T) {
 	root, _ := testRepo(t)

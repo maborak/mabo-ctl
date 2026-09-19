@@ -89,7 +89,7 @@ type app struct {
 	portOverrides map[string]int
 
 	// refreshPorts records the global --refresh-ports flag: re-resolve every
-	// port from the declared defaults, ignoring the persisted .dev/run.env
+	// port from the declared defaults, ignoring the persisted .mabo-ctl/run.env
 	// level, and rewrite the file so later invocations agree. It is the
 	// non-interactive form of the drift prompt [app.reconcilePorts] asks.
 	refreshPorts bool
@@ -121,6 +121,35 @@ type app struct {
 	// warning line: the web console renders it on /api/config.
 	origins  []service.Origin
 	resolved bool
+	reloadMu sync.Mutex
+}
+
+// reloadForServe builds a fresh validated supervisor snapshot. It intentionally
+// does not stop or restart existing processes; the new snapshot governs later
+// web-console operations only.
+func (a *app) reloadForServe() (*supervisor.Supervisor, []service.Origin, string, bool, error) {
+	a.reloadMu.Lock()
+	defer a.reloadMu.Unlock()
+
+	a.loaded, a.cfg, a.cfgErr = false, nil, nil
+	a.resolved, a.sup, a.lc, a.insts, a.st, a.origins = false, nil, nil, nil, nil, nil
+	a.capturedOnce = false
+	a.load()
+	a.capture()
+	insts, err := a.resolve()
+	if err != nil {
+		return nil, nil, "", false, err
+	}
+	cfg, err := a.config()
+	if err != nil {
+		return nil, nil, "", false, err
+	}
+	sup := supervisor.New(cfg, a.st, insts)
+	if err := service.Persist(a.st, insts); err != nil {
+		return nil, nil, "", false, err
+	}
+	a.sup = sup
+	return sup, append([]service.Origin(nil), a.origins...), a.stateDir(), a.configPath != "", nil
 }
 
 // newApp returns an app bound to e. e must already have been passed through
@@ -355,7 +384,7 @@ func asFile(w io.Writer) *os.File {
 // and expands every template, exactly once per process.
 //
 // It hands the port-override conversation to [app.reconcilePorts], which prints
-// the drift notice to stderr — a persisted .dev/run.env value outranking a
+// the drift notice to stderr — a persisted .mabo-ctl/run.env value outranking a
 // changed default is the trap this tool exists to stop being silent — and, on
 // an interactive terminal, offers to adopt the declared ports. The notice goes
 // to stderr so `status --json` stays a clean machine contract on stdout.

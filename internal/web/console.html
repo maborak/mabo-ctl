@@ -1043,6 +1043,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     <div>
       <strong id="banner-title">disconnected</strong>
       <span class="why" id="banner-why"></span>
+      <button type="button" class="ghost tiny" id="btn-config-apply" hidden>Reload configuration</button>
     </div>
   </div>
 </div>
@@ -1143,20 +1144,22 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
   /* =======================================================================
      Session token
      ---------------------------------------------------------------------
-     The server guarantees the token is somewhere in this document but not
+      The server guarantees the token is somewhere in this document but not
      exactly where: html/template fills the meta above, and if that ever fails
      the server injects its own meta plus a window global right after <head>.
      So collect every candidate and take the first that actually looks like the
-     token, rather than trusting any single delivery route. A console whose
+      token, rather than trusting any single delivery route. A console whose
      buttons all 403 because the two halves disagreed is the failure worth
      guarding against.
      ======================================================================= */
 
-  function isHexToken(s) {
-    if (typeof s !== "string" || s.length !== 64) { return false; }
-    for (var i = 0; i < s.length; i++) {
-      var c = s.charCodeAt(i);
-      if (!((c >= 48 && c <= 57) || (c >= 97 && c <= 102))) { return false; }
+   function isToken(s) {
+     if (typeof s !== "string" || s.length < 4) { return false; }
+     for (var i = 0; i < s.length; i++) {
+       var c = s.charCodeAt(i);
+       var safe = (c >= 48 && c <= 57) || (c >= 65 && c <= 90) ||
+         (c >= 97 && c <= 122) || c === 46 || c === 95 || c === 126 || c === 45;
+       if (!safe) { return false; }
     }
     return true;
   }
@@ -1171,7 +1174,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
       if (q) { out.push(q); }
     } catch (e) { /* URLSearchParams is old enough to assume, but never fatal */ }
     for (var j = 0; j < out.length; j++) {
-      if (isHexToken(out[j])) { return out[j]; }
+       if (isToken(out[j])) { return out[j]; }
     }
     return "";
   }
@@ -2734,6 +2737,27 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
 
   var activityEl   = document.getElementById("activity");
   var activityWrap = document.getElementById("activity-wrap");
+  var configChangeBanner = document.getElementById("banner");
+  var configChangeTitle = document.getElementById("banner-title");
+  var configChangeWhy = document.getElementById("banner-why");
+  var btnConfigApply = document.getElementById("btn-config-apply");
+
+  function showConfigChange() {
+    configChangeTitle.textContent = "configuration change detected";
+    configChangeWhy.textContent = "reload the validated YAML snapshot? running services will not be restarted";
+    btnConfigApply.hidden = false;
+    configChangeBanner.hidden = false;
+  }
+
+  btnConfigApply.addEventListener("click", function () {
+    btnConfigApply.disabled = true;
+    request("POST", "/api/config/reload", MUTATE_TIMEOUT).then(function () {
+      window.location.reload();
+    }).catch(function (err) {
+      activity([{ kind: "err", text: "configuration reload failed: " + err.message }]);
+      btnConfigApply.disabled = false;
+    });
+  });
 
   function activity(lines) {
     for (var i = 0; i < lines.length; i++) {
@@ -2876,7 +2900,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
      Config view
      ---------------------------------------------------------------------
      Port precedence has four levels — --ports, then a <NAME>_PORT variable in
-     the caller's environment, then the persisted .dev/run.env, then the
+     the caller's environment, then the persisted .mabo-ctl/run.env, then the
      declared default — and template expansion rewrites cmd, env and health on
      the way past. Until this panel existed nothing showed any of it, so "why is
      backend on 7999?" was a source-reading exercise. The SOURCE is the point of
@@ -2900,7 +2924,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
   var SOURCES = {
     "flag":    { cls: "src-flag",    hint: "--ports on the command line, which outranks everything else" },
     "env":     { cls: "src-env",     hint: "a <NAME>_PORT variable in the environment mabo-ctl was started from" },
-    "run.env": { cls: "src-runenv",  hint: "the port an earlier run persisted in .dev/run.env" },
+    "run.env": { cls: "src-runenv",  hint: "the port an earlier run persisted in .mabo-ctl/run.env" },
     "default": { cls: "src-default", hint: "the port declared in mabo-ctl.yaml" }
   };
 
@@ -2914,12 +2938,12 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     return b;
   }
 
-  // The trap this panel exists for: a port persisted in .dev/run.env outranks
+  // The trap this panel exists for: a port persisted in .mabo-ctl/run.env outranks
   // the declared default, so editing mabo-ctl.yaml does nothing until run.env is
   // cleared. It cost a real debugging round, so it is never only a colour.
   function overrideBadge(declared, label) {
     var b = el("span", "override", label);
-    b.title = "a port persisted in .dev/run.env is outranking the port declared in " +
+    b.title = "a port persisted in .mabo-ctl/run.env is outranking the port declared in " +
       "mabo-ctl.yaml" + (declared ? " (" + declared + ")" : "") +
       "; the declared value does nothing until the state is cleared with mabo-ctl reset";
     return b;
@@ -3167,7 +3191,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     sec.appendChild(el("p", "why",
       "Precedence, highest first: --ports on the command line, then a " +
       "<NAME>_PORT variable in the environment mabo-ctl was started from, then " +
-      "the port persisted in .dev/run.env, then the port declared in " +
+      "the port persisted in .mabo-ctl/run.env, then the port declared in " +
       "mabo-ctl.yaml. The source column is which of the four won."));
 
     var wrap = el("div", "tbl-wrap");
@@ -3524,6 +3548,12 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
       try { e = JSON.parse(ev.data); } catch (err) { return; }
       health.events = "live";
       paintHealth();
+
+      if (e.msg === "config change detected; reload configuration?") {
+        showConfigChange();
+        activity([{ text: "configuration changed; reload is waiting for confirmation" }]);
+        return;
+      }
 
       // A lifecycle event is the earliest signal that something changed, so
       // take the phase straight away rather than waiting for the next poll.
