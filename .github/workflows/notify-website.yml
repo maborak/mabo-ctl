@@ -1,0 +1,39 @@
+name: Notify website
+
+# The documentation site lives in maborak/private-mabo-ctl and pulls this
+# repository's README.md and docs/ on every build. Without this workflow it only
+# learns about a docs change on its nightly schedule, so an edit here could sit
+# unpublished for a day. This tells it immediately.
+#
+# Requires the WEBSITE_DISPATCH_TOKEN secret: a fine-grained PAT scoped to
+# maborak/private-mabo-ctl with "Contents: read and write", which is what the
+# repository-dispatch endpoint checks. The site build itself still runs on a
+# schedule, so a missing or expired token delays publication rather than
+# breaking it.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'README.md'
+      - 'docs/**'
+      - 'examples/mabo-ctl.yaml'
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Tell the website to rebuild
+        env:
+          GH_TOKEN: ${{ secrets.WEBSITE_DISPATCH_TOKEN }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "WEBSITE_DISPATCH_TOKEN is not set; the site will pick this up on its next scheduled run."
+            exit 0
+          fi
+          gh api repos/maborak/private-mabo-ctl/dispatches \
+            -f event_type=docs-updated \
+            -f "client_payload[sha]=$GITHUB_SHA"

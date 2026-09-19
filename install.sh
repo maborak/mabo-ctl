@@ -7,12 +7,14 @@
 #
 # Nothing runs from the network: the script itself is a shell script, and the
 # binary it downloads is verified against the SHA256SUMS the release shipped
-# before a single byte is written. It installs to /usr/local/bin (or $DESTDIR)
-# and relies on `mabo-ctl upgrade` for everything after that.
+# before a single byte is written. It installs to /usr/local/bin when that is
+# writable, or ~/.local/bin for a normal user (or $DESTDIR when provided), and
+# relies on `mabo-ctl upgrade` for everything after that.
 set -eu
 
 repo="maborak/mabo-ctl"
-dest="${DESTDIR:-/usr/local/bin}"
+dest="${DESTDIR:-}"
+explicit_dest="${DESTDIR+x}"
 
 # A GITHUB_TOKEN (or GH_TOKEN) in the environment authenticates an otherwise
 # private repository: GitHub serves a private repo's release assets ONLY
@@ -32,6 +34,24 @@ die() {
   say "error: $*" >&2
   exit 1
 }
+
+if [ -z "$dest" ]; then
+  if [ "$(id -u)" -eq 0 ]; then
+    dest=/usr/local/bin
+  elif mkdir -p /usr/local/bin 2>/dev/null && [ -w /usr/local/bin ]; then
+    dest=/usr/local/bin
+  elif [ -n "${HOME:-}" ]; then
+    dest="$HOME/.local/bin"
+  else
+    die "cannot find a writable install directory; set DESTDIR to one"
+  fi
+fi
+
+# A caller may pass DESTDIR=~/bin through an environment file rather than as a
+# shell assignment, so expand the common leading-tilde form without eval.
+case "$dest" in
+  '~/'*) [ -n "${HOME:-}" ] || die "DESTDIR starts with ~/ but HOME is not set"; dest="$HOME/${dest#~/}" ;;
+esac
 
 # Map the running machine to an asset name. The release ships one static
 # CGO_ENABLED=0 binary per OS/arch; anything else is a refusal, not a guess.
@@ -62,8 +82,11 @@ fi
 
 mkdir -p "$dest" 2>/dev/null || true
 if [ ! -w "$dest" ]; then
-  die "$dest is not writable; re-run as root, or set DESTDIR=~/.local/bin " \
-      "and add that directory to your PATH"
+  if [ -z "$explicit_dest" ] && [ "$(id -u)" -ne 0 ] && [ -n "${HOME:-}" ]; then
+    dest="$HOME/.local/bin"
+    mkdir -p "$dest" 2>/dev/null || true
+  fi
+  [ -w "$dest" ] || die "$dest is not writable; re-run as root, or set DESTDIR to a writable directory"
 fi
 
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/mabo-ctl.XXXXXX")"
@@ -126,6 +149,33 @@ say "installed $dest/mabo-ctl ($tag)"
 "$dest/mabo-ctl" --version | head -n1 | sed 's/^/  /'
 case ":$PATH:" in
   *":$dest:"*) ;;
-  *) say "note: $dest is not on your PATH; add it, e.g. echo 'export PATH=\"\$PATH:$dest\"' >> ~/.zshrc" ;;
+  *)
+    rc=""
+    case "${SHELL##*/}" in
+      zsh) rc="${ZDOTDIR:-${HOME:-}}/.zshrc" ;;
+      bash) rc="${HOME:-}/.bashrc" ;;
+    esac
+    if [ -z "$rc" ] && [ -n "${HOME:-}" ]; then
+      if [ -f "${HOME}/.zshrc" ]; then
+        rc="${HOME}/.zshrc"
+      elif [ -f "${HOME}/.bashrc" ]; then
+        rc="${HOME}/.bashrc"
+      fi
+    fi
+    if [ -n "$rc" ] && [ -n "${HOME:-}" ]; then
+      mkdir -p "${rc%/*}" 2>/dev/null || true
+      touch "$rc" 2>/dev/null || true
+      if ! grep -Fqx "export PATH=\"\$PATH:$dest\"" "$rc" 2>/dev/null; then
+        printf '\n# mabo-ctl\nexport PATH="\$PATH:%s"\n' "$dest" >> "$rc" 2>/dev/null || true
+      fi
+      if grep -Fqx "export PATH=\"\$PATH:$dest\"" "$rc" 2>/dev/null; then
+        say "added $dest to PATH in $rc (open a new shell)"
+      else
+        say "note: $dest is not on your PATH; add it to $rc"
+      fi
+    else
+      say "note: $dest is not on your PATH; add it to your shell startup file"
+    fi
+    ;;
 esac
 say "next: drop a mabo-ctl.yaml at your repo root and run mabo-ctl"

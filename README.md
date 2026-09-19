@@ -12,6 +12,7 @@ enough state on disk that a second terminal knows what the first one started.
 
 ```
 $ mabo-ctl status
+SERVICE   STATUS      PORT  PID    PROBE  DETAIL
 website   ● ready     7100  41823  1.4s   HTTP 200
 frontend  ● ready     7101  41824  2.1s   HTTP 200
 backend   ⚠ degraded  7102  41825  2.0s   dial tcp 127.0.0.1:7102: connection refused
@@ -261,6 +262,7 @@ Leave the key out to inherit the global.
 | `mabo-ctl schema [--commands]` | Print the JSON Schema (draft-07) for `mabo-ctl.yaml`. With `--commands`, print a machine-readable catalogue of the binary itself: every command's flags and argument semantics, which mutate state, the exit-code table, which outputs are stable contracts, every web-console route with its auth level. Generated from the same tree `--help` renders — see [For agents and scripts](#for-agents-and-scripts). |
 | `mabo-ctl exec <svc> <cmd>...` | Run a command in the service's exact environment and directory; forwards the child's exit code. |
 | `mabo-ctl shell <name>` | Run a declared `shells:` entry, or open `$SHELL` in a service's environment. |
+| `mabo-ctl attach <svc>` | Connect your terminal to a service declared `tty: true`, through the broker beside it. Ctrl-Q detaches; one session at a time, and detaching never stops the service. |
 | `mabo-ctl open` | Hand each running service's URL — its `open:` target when declared, else the derived origin — to `open` (macOS) or `xdg-open` (Linux). |
 | `mabo-ctl serve [--addr] [--open] [--notify] [--i-know-this-is-dangerous]` | Serve the web console on `127.0.0.1:7999` — or the `console_addr` in `mabo-ctl.yaml` — until interrupted; if that port is already taken by another server, it falls back to a kernel-chosen free port and prints the real address. `--notify` announces dying services on the desktop. It can start and stop services — see [Web console](#web-console). |
 | `mabo-ctl init` | Scaffold a fully commented-out `mabo-ctl.yaml` from what the repo looks like (`package.json` + `.nvmrc`, `manage.py`, `pyproject.toml`, `Cargo.toml`). Refuses to overwrite; adds `.dev/` to `.gitignore`; runs nothing it finds. |
