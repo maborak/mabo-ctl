@@ -1472,7 +1472,7 @@ func (s *Supervisor) Reset(ctx context.Context, force bool, ev chan<- Event) err
 		if in.Port <= 0 {
 			continue
 		}
-		if err := s.reapPort(ctx, in, force, ev); err != nil {
+		if err := s.reapPort(ctx, in, force, 0, ev); err != nil {
 			return err
 		}
 	}
@@ -1492,6 +1492,57 @@ func (s *Supervisor) Reset(ctx context.Context, force bool, ev chan<- Event) err
 	}
 	emit(ev, Event{Msg: "state directory cleared"})
 	return nil
+}
+
+// PortConflicts returns the selected declared ports currently held by
+// processes mabo-ctl does not own. An empty selection means every service,
+// matching Stop. The result is a snapshot for an interactive confirmation;
+// [Supervisor.ReapPort] rechecks it before acting.
+func (s *Supervisor) PortConflicts(names []string) ([]PortConflict, error) {
+	sel, err := service.SelectExact(s.insts, names)
+	if err != nil {
+		return nil, err
+	}
+	var conflicts []PortConflict
+	for _, in := range sel {
+		if in.Port <= 0 {
+			continue
+		}
+		m := s.lockService(in.Name)
+		m.Lock()
+		h := s.lookupPortHolder(in.Port)
+		if h.PID > 0 {
+			pid, liveErr := s.livePID(in.Name)
+			if liveErr != nil || pid != h.PID {
+				conflicts = append(conflicts, PortConflict{
+					Service: in.Name,
+					Port:    in.Port,
+					PID:     h.PID,
+					Command: h.Command,
+				})
+			}
+		}
+		m.Unlock()
+	}
+	return conflicts, nil
+}
+
+// ReapPort kills the foreign listener the operator confirmed. It refuses to
+// act if the service, port, or PID no longer matches the supplied snapshot.
+func (s *Supervisor) ReapPort(ctx context.Context, conflict PortConflict, ev chan<- Event) error {
+	sel, err := service.SelectExact(s.insts, []string{conflict.Service})
+	if err != nil {
+		return err
+	}
+	in := sel[0]
+	if in.Port != conflict.Port {
+		return fmt.Errorf("service %q now resolves to port %d, not confirmed port %d",
+			in.Name, in.Port, conflict.Port)
+	}
+	if conflict.PID <= 1 {
+		return fmt.Errorf("%w: refusing to reap confirmed pid %d", ErrUnsafeSignal, conflict.PID)
+	}
+	return s.reapPort(ctx, in, true, conflict.PID, ev)
 }
 
 // autostartNames lists the services a bare `mabo-ctl start` should bring up, in
@@ -1546,7 +1597,7 @@ func (s *Supervisor) withAllServiceLocks(fn func() error) error {
 // The lock closes the window inside one process. The pid-file check closes what
 // the lock cannot see: another mabo-ctl, in another terminal, holds a different
 // mutex entirely, so the only shared evidence of ownership is on disk.
-func (s *Supervisor) reapPort(ctx context.Context, in service.Instance, force bool, ev chan<- Event) error {
+func (s *Supervisor) reapPort(ctx context.Context, in service.Instance, force bool, expectedPID int, ev chan<- Event) error {
 	m := s.lockService(in.Name)
 	m.Lock()
 	defer m.Unlock()
@@ -1557,7 +1608,17 @@ func (s *Supervisor) reapPort(ctx context.Context, in service.Instance, force bo
 	// package's test seam, which is the only way to exercise this path on a
 	// machine whose lsof output no test can arrange.
 	h := s.lookupPortHolder(in.Port)
+	// This uncached answer supersedes anything Status remembered. In particular,
+	// the stop wizard prints Status after a confirmed reap and must not repeat a
+	// holder that is already gone for the remainder of the cache TTL.
+	s.forgetHolder(in.Port)
 	if h.PID <= 0 {
+		return nil
+	}
+	if expectedPID > 0 && h.PID != expectedPID {
+		emit(ev, Event{Service: in.Name, Msg: fmt.Sprintf(
+			"port %d changed holders while awaiting confirmation: pid %d replaced pid %d — left alone",
+			in.Port, h.PID, expectedPID)})
 		return nil
 	}
 

@@ -52,6 +52,9 @@ type fakeSup struct {
 	restart           [][]string
 	resets            int
 	resetForce        bool
+	conflicts         []supervisor.PortConflict
+	conflictNames     [][]string
+	reaped            []supervisor.PortConflict
 	statuses          []supervisor.Status
 	startErr          error
 	lines             map[string][]string
@@ -105,6 +108,22 @@ func (f *fakeSup) Reset(_ context.Context, force bool, _ chan<- supervisor.Event
 	defer f.mu.Unlock()
 	f.resets++
 	f.resetForce = force
+	return nil
+}
+
+// PortConflicts records the selection and returns the canned foreign holders.
+func (f *fakeSup) PortConflicts(names []string) ([]supervisor.PortConflict, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.conflictNames = append(f.conflictNames, append([]string(nil), names...))
+	return append([]supervisor.PortConflict(nil), f.conflicts...), nil
+}
+
+// ReapPort records the exact holder the CLI confirmed.
+func (f *fakeSup) ReapPort(_ context.Context, conflict supervisor.PortConflict, _ chan<- supervisor.Event) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.reaped = append(f.reaped, conflict)
 	return nil
 }
 
@@ -746,6 +765,48 @@ func TestStopAndRestartRouting(t *testing.T) {
 	}
 	if want := [][]string{{"delta"}}; !reflect.DeepEqual(restart.sup.restart, want) {
 		t.Fatalf("restart selections = %v, want %v", restart.sup.restart, want)
+	}
+}
+
+// TestStopOffersForeignPortCleanupOneByOne pins the destructive boundary: only
+// an interactive yes reaps a holder, and each service gets its own decision.
+func TestStopOffersForeignPortCleanupOneByOne(t *testing.T) {
+	h := newHarness(t, "stop", "alpha", "beta")
+	h.env.IsTTY = func() bool { return true }
+	h.env.Stdin = strings.NewReader("yes\nno\n")
+	h.sup.conflicts = []supervisor.PortConflict{
+		{Service: "alpha", Port: 7100, PID: 101, Command: "python"},
+		{Service: "beta", Port: 7101, PID: 202, Command: "node"},
+	}
+	if code := h.run(); code != exitOK {
+		t.Fatalf("stop exit code = %d (stderr: %s)", code, h.stderr)
+	}
+	if want := [][]string{{"alpha", "beta"}}; !reflect.DeepEqual(h.sup.conflictNames, want) {
+		t.Fatalf("conflict selections = %v, want %v", h.sup.conflictNames, want)
+	}
+	if want := h.sup.conflicts[:1]; !reflect.DeepEqual(h.sup.reaped, want) {
+		t.Fatalf("reaped = %+v, want only the confirmed holder %+v", h.sup.reaped, want)
+	}
+	for _, want := range []string{"alpha: port 7100", "pid 101 (python)", "beta: port 7101", "pid 202 (node)"} {
+		if !strings.Contains(h.stderr.String(), want) {
+			t.Errorf("prompt = %q, want it to contain %q", h.stderr, want)
+		}
+	}
+}
+
+// TestStopDoesNotPromptWithoutATerminal keeps scripts deterministic even when
+// stopped services have foreign listeners on their ports.
+func TestStopDoesNotPromptWithoutATerminal(t *testing.T) {
+	h := newHarness(t, "stop", "alpha")
+	h.sup.conflicts = []supervisor.PortConflict{
+		{Service: "alpha", Port: 7100, PID: 101, Command: "python"},
+	}
+	if code := h.run(); code != exitOK {
+		t.Fatalf("stop exit code = %d (stderr: %s)", code, h.stderr)
+	}
+	if len(h.sup.conflictNames) != 0 || len(h.sup.reaped) != 0 {
+		t.Fatalf("non-terminal stop inspected or reaped foreign holders: inspections=%v reaped=%v",
+			h.sup.conflictNames, h.sup.reaped)
 	}
 }
 

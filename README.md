@@ -254,7 +254,7 @@ Leave the key out to inherit the global.
 | `mabo-ctl <service>` | Shorthand for `mabo-ctl start <service>`. |
 | `mabo-ctl repl` | A resident prompt that runs these same commands — see [The prompt](#the-prompt). |
 | `mabo-ctl start [svc...] [-f] [-a] [-i] [--web-console] [--ports=A,B,C,D] [--port svc=N] [--all] [--notify]` | Start services (dependencies first, in parallel within a dependency level) and wait for readiness. `--port` names what it overrides and is repeatable; it cannot be combined with `--ports`. `-f` follows their logs afterwards; `-a`, `-i` and `--web-console` stay instead of exiting — see [Staying after the start](#staying-after-the-start); `--notify` makes a resident session announce a dying service on the desktop. |
-| `mabo-ctl stop [svc...]` | SIGTERM the process **group**, wait `stop_grace`, then SIGKILL. |
+| `mabo-ctl stop [svc...]` | SIGTERM the process **group**, wait `stop_grace`, then SIGKILL. On a terminal, offers to kill each selected service's foreign port holder individually; every answer defaults to no and scripts are never prompted. |
 | `mabo-ctl restart [svc...] [-f]` | Stop, then start. |
 | `mabo-ctl status [--json]` | One line per service. `--json` is the stable machine contract. Always exits 0: a service being down is information. |
 | `mabo-ctl health` | The same phases `status` reports, with an exit code: 4 when any declared probe (http, tcp or exec) did not answer. |

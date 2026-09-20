@@ -1774,7 +1774,7 @@ func TestResetSweepSparesAServiceMaboCtlItselfStarted(t *testing.T) {
 	sup.holderLookup = func(int) Holder { return Holder{PID: pid, Command: "svc"} }
 
 	events, collect := drain(t)
-	if err := sup.reapPort(context.Background(), sup.insts[0], true, events); err != nil {
+	if err := sup.reapPort(context.Background(), sup.insts[0], true, 0, events); err != nil {
 		t.Fatalf("reapPort: %v", err)
 	}
 
@@ -2225,6 +2225,95 @@ func TestResetWithForceKillsTheForeignHolder(t *testing.T) {
 	}
 	if !announced {
 		t.Errorf("the kill was not announced by name; events = %v", msgs(collect()))
+	}
+}
+
+// TestPortConflictsKeepsStopSelectionExact ensures the cleanup wizard never
+// expands through depends_on and offers to kill an unselected service's holder.
+func TestPortConflictsKeepsStopSelectionExact(t *testing.T) {
+	sup, _ := fixture(t,
+		service.Instance{Name: "backend", Port: 7920, Cmd: helperCmd()},
+		service.Instance{Name: "worker", Port: 7921, Cmd: helperCmd(), DependsOn: []string{"backend"}},
+	)
+	sup.holderLookup = func(port int) Holder {
+		return Holder{PID: port + 1000, Command: "stray-server"}
+	}
+
+	got, err := sup.PortConflicts([]string{"worker"})
+	if err != nil {
+		t.Fatalf("PortConflicts: %v", err)
+	}
+	if len(got) != 1 || got[0].Service != "worker" || got[0].Port != 7921 {
+		t.Fatalf("PortConflicts(worker) = %+v, want only worker", got)
+	}
+}
+
+// TestPortConflictsSkipsAnOwnedListener prevents the wizard from describing a
+// service another in-process operation just started as a foreign process.
+func TestPortConflictsSkipsAnOwnedListener(t *testing.T) {
+	sup, st := fixture(t, service.Instance{
+		Name: "svc", Port: 7922, Cmd: helperCmd(), Env: helperEnvFor("sleep"),
+	})
+	if err := sup.Start(context.Background(), nil, nil); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer func() { _ = sup.Stop(context.Background(), nil, nil); sup.Wait() }()
+	pid, _ := st.ReadPID("svc")
+	sup.holderLookup = func(int) Holder { return Holder{PID: pid, Command: "svc"} }
+
+	got, err := sup.PortConflicts([]string{"svc"})
+	if err != nil {
+		t.Fatalf("PortConflicts: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("PortConflicts = %+v, want no prompt for mabo-ctl's own listener", got)
+	}
+}
+
+// TestReapPortKillsTheConfirmedHolder exercises the wizard's destructive path
+// independently of reset --force: an exact current match is terminated.
+func TestReapPortKillsTheConfirmedHolder(t *testing.T) {
+	foreign, foreignDead := spawnForeign(t)
+	sup, _ := fixture(t, service.Instance{Name: "svc", Port: 7923, Cmd: helperCmd()})
+	sup.holderLookup = func(int) Holder { return Holder{PID: foreign, Command: "stray-server"} }
+	conflict := PortConflict{Service: "svc", Port: 7923, PID: foreign, Command: "stray-server"}
+
+	if err := sup.ReapPort(context.Background(), conflict, nil); err != nil {
+		t.Fatalf("ReapPort: %v", err)
+	}
+	if !awaitForeignDeath(foreignDead) {
+		t.Fatalf("confirmed pid %d still holds the port", foreign)
+	}
+}
+
+// TestReapPortRefusesAChangedHolder binds consent to the pid named in the
+// prompt. A replacement arriving while the operator decides must be left alone.
+func TestReapPortRefusesAChangedHolder(t *testing.T) {
+	first, firstDead := spawnForeign(t)
+	replacement, replacementDead := spawnForeign(t)
+	sup, _ := fixture(t, service.Instance{Name: "svc", Port: 7924, Cmd: helperCmd()})
+	var lookups atomic.Int64
+	sup.holderLookup = func(int) Holder {
+		if lookups.Add(1) == 1 {
+			return Holder{PID: first, Command: "first-server"}
+		}
+		return Holder{PID: replacement, Command: "replacement-server"}
+	}
+
+	conflicts, err := sup.PortConflicts([]string{"svc"})
+	if err != nil || len(conflicts) != 1 {
+		t.Fatalf("PortConflicts = %+v, %v; want one conflict", conflicts, err)
+	}
+	events, collect := drain(t)
+	if err := sup.ReapPort(context.Background(), conflicts[0], events); err != nil {
+		t.Fatalf("ReapPort: %v", err)
+	}
+	if firstDead() || replacementDead() {
+		t.Fatalf("stale confirmation killed a process: first dead=%v replacement dead=%v",
+			firstDead(), replacementDead())
+	}
+	if got := strings.Join(msgs(collect()), "\n"); !strings.Contains(got, "changed holders") || !strings.Contains(got, "left alone") {
+		t.Fatalf("events = %q, want changed holder refusal", got)
 	}
 }
 

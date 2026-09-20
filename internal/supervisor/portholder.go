@@ -59,6 +59,17 @@ type Holder struct {
 	Command string
 }
 
+// PortConflict identifies a declared service port held by a process mabo-ctl
+// did not start. PID is a snapshot: callers that act on it must pass the whole
+// value back to [Supervisor.ReapPort], which rechecks the holder before
+// signalling anything.
+type PortConflict struct {
+	Service string
+	Port    int
+	PID     int
+	Command string
+}
+
 // lsofPath resolves the lsof binary once per process. It is resolved
 // explicitly, with the error kept, because the port guard's failure mode is
 // the quiet kind: exec.Command's implicit lookup would surface a missing lsof
