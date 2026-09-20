@@ -53,6 +53,19 @@ func NormalizeOriginAllowingAny(raw string) (string, error) {
 const AnyOrigin = "*"
 
 func normalizeOrigin(raw string, allowAny bool) (string, error) {
+	return normalizeOriginWithPolicy(raw, allowAny, false)
+}
+
+// normalizeBoundOrigin applies the same structural validation as
+// NormalizeOrigin but permits plaintext on a non-loopback host. It is only for
+// comparing an incoming Origin with the server's own explicitly authorised
+// bind address; configured trust entries still go through NormalizeOrigin and
+// therefore still require HTTPS away from loopback.
+func normalizeBoundOrigin(raw string) (string, error) {
+	return normalizeOriginWithPolicy(raw, false, true)
+}
+
+func normalizeOriginWithPolicy(raw string, allowAny, allowNonLoopbackHTTP bool) (string, error) {
 	s := strings.TrimSpace(raw)
 	if s == "" {
 		return "", fmt.Errorf("%w: empty", ErrBadOrigin)
@@ -105,7 +118,7 @@ func normalizeOrigin(raw string, allowAny bool) (string, error) {
 	}
 
 	host := strings.ToLower(u.Host)
-	if scheme == "http" && !isLoopbackHostPort(host) {
+	if scheme == "http" && !allowNonLoopbackHTTP && !isLoopbackHostPort(host) {
 		return "", fmt.Errorf(
 			"%w: %q is plaintext http on a public name — anyone on the network could claim it; use https://",
 			ErrBadOrigin, s)

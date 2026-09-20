@@ -479,3 +479,25 @@ A clean take reports nothing, so "evicted" stays distinguishable from "clean".
 ```bash
 go test ./internal/state/ -run TestClaimPIDReportsTheEviction
 ```
+
+## 16. A forced LAN console loaded, then every button returned 403
+
+**Shape.** A shared validator enforced the stricter rule for configured trust
+entries before checking the implicit origin created by the server's own bind.
+The bind had already required explicit dangerous-mode consent, but its exact
+plain-HTTP origin was rejected as though it were an unrelated allowlist entry.
+
+**Where it bit us.** `internal/web/security.go` (`allowedOrigin`), diagnosed
+2026-09-20. `mabo-ctl serve --i-know-this-is-dangerous` printed and served
+`http://192.168.0.15:9099`, while a same-origin start request returned
+`403 forbidden: cross-origin request`.
+
+**Fix.** The exact bound origin is structurally normalised under a narrow policy
+that permits non-loopback HTTP, then still must pass `allowedHost`'s exact
+host-and-port comparison. Configured `--allow-origin` entries continue through
+the stricter normaliser and still require HTTPS away from loopback.
+
+**Detector.**
+```bash
+go test ./internal/web -run TestExplicitLANBindAcceptsItsOwnHTTPOrigin
+```
