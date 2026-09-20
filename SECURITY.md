@@ -84,7 +84,9 @@ The controls, as of the current `main`:
 - **`Host` and `Origin` validation** against the bound address. A `Host` that is
   a DNS name other than `localhost` is refused outright: that is the
   DNS-rebinding defence. `--allow-origin` widens it to named hosts or
-  `*.`-subdomain patterns, never a bare `*` without the danger flag.
+  `*.`-subdomain patterns, never a bare `*` without the danger flag. An
+  explicitly authorised non-loopback bind accepts its exact matching HTTP
+  origin; configured non-loopback origins still require HTTPS.
 - **POST-only mutations.** A `GET` is reachable from an `<img>` tag.
 - **`GET /health` is unauthenticated** — the only route without a session gate.
   It reveals nothing beyond liveness (`{"status":"ok"}`): no service state,

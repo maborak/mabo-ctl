@@ -1,8 +1,11 @@
 package main
 
 import (
+	"bufio"
+	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -441,7 +444,10 @@ SIGTERM goes to the process GROUP, not the bare pid, and is followed by SIGKILL
 after stop_grace. Signalling the pid alone leaves the child that "npm run dev"
 spawned holding the port, which is how the predecessor accumulated orphans.
 
-The pid file is removed only once the process is confirmed dead.`,
+The pid file is removed only once the process is confirmed dead. On an
+interactive terminal, if a selected service's port is still held by a process
+mabo-ctl did not start, stop offers to kill each foreign listener individually.
+The default answer is no; scripts are never prompted.`,
 		Args:          cobra.ArbitraryArgs,
 		SilenceUsage:  true,
 		SilenceErrors: true,
@@ -460,6 +466,9 @@ The pid file is removed only once the process is confirmed dead.`,
 			ev, wait := a.pumpEvents()
 			stopErr := sup.Stop(ctx, names, ev)
 			wait()
+			if stopErr == nil {
+				stopErr = a.offerPortCleanup(ctx, sup, names)
+			}
 
 			a.printStatus(filterStatus(sup.Status(cmd.Context()), names))
 			return stopErr
@@ -472,6 +481,44 @@ The pid file is removed only once the process is confirmed dead.`,
 	// failed for a reason that had nothing to do with the services.
 	cmd.Flags().Bool("all", false, "stop every declared service (the same as naming none)")
 	return cmd
+}
+
+// offerPortCleanup asks before killing each selected foreign port holder. The
+// supervisor revalidates the exact PID after every answer, so a listener that
+// changes while the operator is deciding is never killed under stale consent.
+func (a *app) offerPortCleanup(ctx context.Context, sup lifecycle, names []string) error {
+	if !a.canPrompt() {
+		return nil
+	}
+	conflicts, err := sup.PortConflicts(names)
+	if err != nil {
+		return err
+	}
+	reader := bufio.NewReader(a.env.Stdin)
+	for _, conflict := range conflicts {
+		command := conflict.Command
+		if command == "" {
+			command = "unknown command"
+		}
+		fmt.Fprintf(a.env.Stderr,
+			"%s: port %d is held by pid %d (%s), which mabo-ctl did not start; kill it? [y/N] ",
+			conflict.Service, conflict.Port, conflict.PID, command)
+		answer, readErr := reader.ReadString('\n')
+		if readErr != nil && strings.TrimSpace(answer) == "" {
+			fmt.Fprintln(a.env.Stderr)
+			return nil
+		}
+		switch strings.ToLower(strings.TrimSpace(answer)) {
+		case "y", "yes":
+			ev, wait := a.pumpEvents()
+			reapErr := sup.ReapPort(ctx, conflict, ev)
+			wait()
+			if reapErr != nil {
+				return reapErr
+			}
+		}
+	}
+	return nil
 }
 
 // restartCmd builds `mabo-ctl restart`.

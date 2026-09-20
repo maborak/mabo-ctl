@@ -59,6 +59,13 @@ func (a *app) reconcilePorts(cfg *config.Config, st *state.Dir, insts []service.
 // interactive prompt, which owns stdin and dispatches back into this same
 // command tree.
 func (a *app) canPromptPorts() bool {
+	return a.canPrompt()
+}
+
+// canPrompt reports whether a one-shot command may read a confirmation from
+// stdin. The resident prompt owns stdin itself, and scripts must never block on
+// a question they cannot answer.
+func (a *app) canPrompt() bool {
 	if a.jsonContract || a.inREPL {
 		return false
 	}

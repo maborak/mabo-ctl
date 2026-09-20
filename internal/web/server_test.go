@@ -617,6 +617,44 @@ func TestSameOriginIsAccepted(t *testing.T) {
 	}
 }
 
+// TestExplicitLANBindAcceptsItsOwnHTTPOrigin covers the URL serve prints after
+// the operator explicitly authorises a non-loopback bind. The page and Host
+// check already accepted this address; rejecting its Origin made every browser
+// mutation fail after the console loaded successfully.
+func TestExplicitLANBindAcceptsItsOwnHTTPOrigin(t *testing.T) {
+	t.Parallel()
+	const addr = "192.168.0.15:9099"
+	s, err := NewWith(twoServices(), Options{Addr: addr, Force: true})
+	if err != nil {
+		t.Fatalf("NewWith: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "http://"+addr+"/api/backend/start", nil)
+	req.Header.Set(tokenHeader, s.Token())
+	req.Header.Set("Origin", "http://"+addr)
+	rec := httptest.NewRecorder()
+	s.h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST from the explicitly bound LAN origin = %d, want 200 (body %s)",
+			rec.Code, rec.Body.String())
+	}
+
+	for _, origin := range []string{
+		"http://192.168.0.16:9099",
+		"http://192.168.0.15:8080",
+		"http://192.168.0.15:9099/path",
+	} {
+		req := httptest.NewRequest(http.MethodGet, "http://"+addr+"/api/services", nil)
+		req.Header.Set(tokenHeader, s.Token())
+		req.Header.Set("Origin", origin)
+		rec := httptest.NewRecorder()
+		s.h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("GET with LAN Origin %q = %d, want 403", origin, rec.Code)
+		}
+	}
+}
+
 func TestMismatchedHostIsRejected(t *testing.T) {
 	t.Parallel()
 	ctrl := twoServices()

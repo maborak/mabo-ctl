@@ -49,7 +49,7 @@ registry compiled in rather than configured.
 
 ```
 mabo-ctl [start] [services...] [-f] [--ports=A,B,C,D] [--with-browser] [--with-worker] [--all]
-mabo-ctl stop    [services...]
+mabo-ctl stop    [services...]        # terminal: offer to reap foreign holders one by one
 mabo-ctl restart [services...] [-f]
  mabo-ctl status  [--json]
  mabo-ctl health   [--wait] [--timeout=D]  probes; --wait blocks for ready

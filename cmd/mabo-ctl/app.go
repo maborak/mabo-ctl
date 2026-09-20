@@ -41,6 +41,10 @@ type lifecycle interface {
 	// Reset stops everything, removes the state directory, and — only when
 	// force is true — kills whatever still holds a declared port.
 	Reset(ctx context.Context, force bool, ev chan<- supervisor.Event) error
+	// PortConflicts finds selected service ports held by foreign processes.
+	PortConflicts(names []string) ([]supervisor.PortConflict, error)
+	// ReapPort kills the exact foreign listener the operator confirmed.
+	ReapPort(ctx context.Context, conflict supervisor.PortConflict, ev chan<- supervisor.Event) error
 	// Tail streams svc's log on out. follow=false returns the last n lines.
 	Tail(ctx context.Context, svc string, n int, follow bool, out chan<- string) error
 }

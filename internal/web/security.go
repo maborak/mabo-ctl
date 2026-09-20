@@ -211,15 +211,21 @@ func (s *Server) allowedHost(hostport string) bool {
 // Origin check is the layer BEHIND that one, and trusting a named https origin
 // keeps it meaningful — unlike a wildcard, which NormalizeOrigin refuses.
 func (s *Server) allowedOrigin(origin string) bool {
+	// The operator explicitly authorised a non-loopback bind before this
+	// server could exist. Its exact browser origin must therefore work even
+	// over HTTP; otherwise the printed LAN URL loads but every button returns
+	// 403. This exception cannot widen configured trust: allowedOriginImplicit
+	// still requires the bound host and port to match.
+	if canon, err := normalizeBoundOrigin(origin); err == nil && s.allowedOriginImplicit(canon) {
+		return true
+	}
+
 	canon, err := NormalizeOrigin(origin)
 	if err != nil {
 		// Not a usable origin at all — "null" from a sandboxed iframe or a
 		// file:// page, a wildcard, anything with a path. Refused with
 		// everything else that is not us.
 		return false
-	}
-	if s.allowedOriginImplicit(canon) {
-		return true
 	}
 	return s.trusted.has(canon)
 }
