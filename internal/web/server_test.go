@@ -2093,6 +2093,54 @@ func TestConsolePageRecoversFromAStalledTransport(t *testing.T) {
 	}
 }
 
+// TestDetailHeaderRepaintsItsButtonsOnEveryStatus is the detector for
+// LANDMINES §20: the detail header's buttons kept the phase they were mounted
+// with, so a running service offered Start and greyed out Stop.
+func TestDetailHeaderRepaintsItsButtonsOnEveryStatus(t *testing.T) {
+	t.Parallel()
+	from := strings.Index(consoleHTML, "    applyStatus: function (st) {")
+	if from < 0 {
+		t.Fatal("console.html has no detail applyStatus")
+	}
+	body := consoleHTML[from:]
+	end := strings.Index(body, "\n    },")
+	if end < 0 || !strings.Contains(body[:end], "this.paintButtons();") {
+		t.Error("detail.applyStatus does not repaint the header buttons from the new phase")
+	}
+}
+
+// TestDetailPaneDoesNotRepeatTheLogTail is the detector for LANDMINES §22: a
+// dead service's JSON detail carries its log tail for the CLI, and the detail
+// pane rendered it while the log pane below showed the same lines.
+func TestDetailPaneDoesNotRepeatTheLogTail(t *testing.T) {
+	t.Parallel()
+	if strings.Contains(consoleHTML, "this.detailLine.textContent = st.detail") {
+		t.Error("detail.applyStatus binds the raw detail; the log pane already owns the tail")
+	}
+	from := strings.Index(consoleHTML, "  function visibleDetail(st) {")
+	if from < 0 {
+		t.Fatal("console.html has no visibleDetail")
+	}
+	body := consoleHTML[from:]
+	end := strings.Index(body, "\n  }")
+	if end < 0 {
+		t.Fatal("visibleDetail is unterminated")
+	}
+	body = body[:end]
+	for _, want := range []string{
+		`st.phase !== "exited" && st.phase !== "failed"`,
+		`st.detail.indexOf("\n")`,
+		`st.detail.slice(0, nl)`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("visibleDetail lost %q", want)
+		}
+	}
+	if !strings.Contains(consoleHTML, "var detail = visibleDetail(st);") {
+		t.Error("detail.applyStatus does not route the detail through visibleDetail")
+	}
+}
+
 // TestConsolePageHasThemeSidebarAndRestartAll is the drift guard for the
 // page's chrome: the inline icon, the three-way theme resolved before first
 // paint, the collapsible sidebar with its hover card, and Restart all wired to
@@ -2112,6 +2160,15 @@ func TestConsolePageHasThemeSidebarAndRestartAll(t *testing.T) {
 		"function paintTip(",
 		`id="btn-restart-all"`,
 		`"/api/restart-all"`,
+		`data-tab="output"`, `data-tab="config"`, `data-tab="api"`, `data-tab="terminal"`,
+		"function showTab(",
+		`id="api-frame"`,
+		`"/assets/xterm.js"`,
+		`"/api/terminals"`,
+		`id="badge-output"`, `id="badge-terminal"`, "function noteUnseenOutput(",
+		"if (!s.replaying)",
+		"linkHandler: {", `/^https?:\/\//i.test(uri)`, // OSC 8 links: http(s) only // replayed queries are never answered (LANDMINES §21)
+		"button.primary:hover:not(:disabled) { background: var(--accent)",
 	} {
 		if !strings.Contains(consoleHTML, want) {
 			t.Errorf("console.html lost %q", want)

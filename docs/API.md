@@ -59,7 +59,11 @@ Cache-Control: no-store
 ```
 
 The console page additionally carries a strict `Content-Security-Policy` that
-permits only inline script/style and same-origin `fetch`/`EventSource`.
+permits only inline script/style, same-origin script (the terminal bundle),
+same-origin `fetch`/`EventSource`, and a same-origin frame (the API tab). The
+one exception to `X-Frame-Options: DENY` is the authenticated `/api-docs` page,
+which sends `SAMEORIGIN` and `frame-ancestors 'self'` so the console's API tab
+can frame it; no other origin can.
 
 ---
 
@@ -700,6 +704,121 @@ curl -s -X POST \
 ```
 
 **Response** — same shape as `/api/{svc}/start` with `operation: "restart"`.
+
+---
+
+## Terminal routes
+
+The console's Terminal tab runs interactive login shells (`$SHELL -l`, falling
+back to `/bin/sh`) on a pty in the repository root, as the user running
+mabo-ctl, with `TERM=xterm-256color`. A shell can run anything, so these
+routes are held to more than the rest of the API:
+
+- **Opt-in.** They exist only when serve was started with `--terminal` or the
+  config sets `console_terminal: true`. Otherwise every one answers `404`.
+- **Loopback only.** `serve --terminal` refuses a non-loopback bind, and each
+  request must name the loopback address itself in `Host` and, when it sends
+  one, in `Origin`, and must carry none of the headers a relaying proxy adds
+  (`Forwarded`, `X-Forwarded-For`, `X-Forwarded-Host`, `X-Real-Ip`,
+  `Cf-Connecting-Ip`). A browser reaching the console through `--allow-origin`
+  (a tunnel, a LAN name) gets `403` here while every other route works.
+- **Bounded.** At most 16 terminals are open at once; opening another answers
+  `429`.
+- The usual guards still apply first: session for reads, token header for
+  POSTs.
+
+A terminal outlives the browser tab that opened it and keeps the last 1 MiB of
+output as scrollback. It ends when its shell exits — even if a process the
+shell detached into its own session still holds the pty — when it is closed,
+or when serve stops (SIGHUP to its session, then SIGKILL after 2 seconds).
+The page follows OSC 8 hyperlinks in terminal output only for `http`/`https`,
+in a window with no handle back to the console.
+
+### `GET /api/terminals`
+
+The open terminals, oldest first.
+
+**Auth:** Session.
+
+**Response** `200 OK`:
+
+```json
+[{"id": "1", "pid": 48121, "started_at": "2026-10-31T20:14:03Z"}]
+```
+
+### `POST /api/terminals`
+
+Open a new shell.
+
+**Auth:** Token header required.
+
+```bash
+curl -s -X POST -H 'X-Mabo-Ctl-Token: YOUR_TOKEN' \
+  -d '{"cols": 120, "rows": 40}' http://127.0.0.1:7999/api/terminals
+```
+
+**Request body:** `{"cols": N, "rows": N}` — clamped to 2–1000 × 2–500.
+
+**Response** `200 OK` — one terminal, shaped as in the list above; `429` when
+16 are already open.
+
+### `GET /api/terminals/{id}/stream`
+
+SSE: the terminal's scrollback as one frame, then its live output, then an end
+frame when its shell exits. Output is base64 because pty output is bytes, not
+necessarily UTF-8 at a frame boundary.
+
+**Auth:** Session.
+
+```sse
+data: {"data": "bWFib0BkZXYgfiAlIA==", "replay": true}
+
+data: {"data": "bHMK"}
+
+data: {"end": true}
+```
+
+Every connection replays the scrollback, so a client resets its screen on
+open. The scrollback frame is marked `"replay": true`, and a client must not
+send anything its emulator generates while rendering it: the scrollback holds
+queries programs sent earlier (device attributes, colour reports, mode
+requests), and answering them again types the answers into the shell. A client that falls far behind is disconnected without an end frame and
+reconnects.
+
+### `POST /api/terminals/{id}/input`
+
+Type into a terminal.
+
+**Auth:** Token header required.
+
+**Request body:** `{"data": "ls -la\r"}` — up to 1 MiB per request.
+
+**Response** `204 No Content`; `404` for an unknown terminal, `410` when it
+has ended. Accepted input is not written to the audit log; refusals are.
+
+### `POST /api/terminals/{id}/resize`
+
+**Auth:** Token header required.
+
+**Request body:** `{"cols": N, "rows": N}`.
+
+**Response** `204 No Content`.
+
+### `POST /api/terminals/{id}/close`
+
+Hang up a terminal: SIGHUP to its session, then SIGKILL if it is still there
+after 2 seconds.
+
+**Auth:** Token header required.
+
+**Response** `204 No Content`; `404` for an unknown terminal.
+
+### `GET /assets/xterm.js`
+
+The embedded terminal emulator the Terminal tab loads: xterm.js 6.0.0 with its
+fit and web-links addons, vendored verbatim under their MIT licence.
+
+**Auth:** Session.
 
 ---
 

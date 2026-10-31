@@ -38,6 +38,12 @@ ready_timeout: 30s
 # per-run key; never commit a real shared secret here.
 # console_access_key: replace-with-at-least-4-characters
 
+# Enable the web console's Terminal tab: interactive login shells in this
+# repository's root, running as you, that survive closing the tab. Refused on
+# a non-loopback console and through --allow-origin. `serve --terminal` does
+# the same for one run. Default false.
+# console_terminal: true
+
 # ---------------------------------------------------------------------------
 # services — the registry. At least one is required.
 # ---------------------------------------------------------------------------

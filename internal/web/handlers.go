@@ -52,27 +52,29 @@ var rapidocJS string
 var openapiSpec string
 
 // contentSecurityPolicy is served with the page. It permits the inline style
-// and script the single-file page is made of, and same-origin fetch and
-// EventSource, and nothing else at all: no remote script, no remote style, no
-// remote font, no image beyond a data: URI, no framing, no form submission.
-// It is the mechanical enforcement of "the page makes no external requests".
+// and script the single-file page is made of, the same-origin terminal bundle
+// (/assets/xterm.js), same-origin fetch and EventSource, and the same-origin
+// API reference in the API tab's frame — and nothing else at all: no remote
+// script, no remote style, no remote font, no image beyond a data: URI, no
+// framing BY anyone, no form submission. It is the mechanical enforcement of
+// "the page makes no external requests".
 const contentSecurityPolicy = "default-src 'none'; " +
-	"script-src 'unsafe-inline'; " +
+	"script-src 'unsafe-inline' 'self'; " +
 	"style-src 'unsafe-inline'; " +
 	"img-src 'self' data:; " +
 	"connect-src 'self'; " +
 	"font-src 'self' data:; " +
+	"frame-src 'self'; " +
 	"base-uri 'none'; " +
 	"form-action 'none'; " +
 	"frame-ancestors 'none'"
 
-// docsCSP is served with the AUTHENTICATED /api-docs page, and differs from
-// [contentSecurityPolicy] in exactly one way: script-src gains 'self'. The
-// docs page loads the RapiDoc bundle from the same origin
-// (/api-docs/rapidoc.js) rather than executing the console's inline-only
-// script, and 'self' admits exactly that file. Everything else stays as
-// locked-down as the console: no remote script, style, font or image, no
-// framing, same-origin connect only.
+// docsCSP is served with the AUTHENTICATED /api-docs page. Its script-src
+// 'self' admits the RapiDoc bundle (/api-docs/rapidoc.js), and it differs from
+// [contentSecurityPolicy] in its frame-ancestors: 'self', because the
+// console's API tab frames this page. Only a page of this same origin may do
+// that — which is to say only the console — so a foreign page still cannot
+// frame it. Everything else stays as locked-down as the console.
 const docsCSP = "default-src 'none'; " +
 	"script-src 'unsafe-inline' 'self'; " +
 	"style-src 'unsafe-inline'; " +
@@ -81,7 +83,7 @@ const docsCSP = "default-src 'none'; " +
 	"font-src 'self' data:; " +
 	"base-uri 'none'; " +
 	"form-action 'none'; " +
-	"frame-ancestors 'none'"
+	"frame-ancestors 'self'"
 
 // unlockCSP is served with the unlock page, and differs from
 // [contentSecurityPolicy] in exactly two ways, both forced by what that page is.
@@ -221,6 +223,9 @@ func (s *Server) handleDocs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Security-Policy", docsCSP)
+	// guard sets DENY on every response; this page alone may be framed, and
+	// only by the console it belongs to.
+	w.Header().Set("X-Frame-Options", "SAMEORIGIN")
 	if fromQuery {
 		s.setSessionCookie(w)
 	}
@@ -376,6 +381,7 @@ func (s *Server) renderPage() []byte {
 		"Addr":     s.Addr(),
 		"URL":      s.URL(),
 		"Services": func() []string { names, _ := s.serviceNames(); return names }(),
+		"Terminal": s.terminals != nil,
 	}
 	if cfg := s.controller().Config(); cfg != nil {
 		data["Root"] = cfg.Root

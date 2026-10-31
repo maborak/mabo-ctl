@@ -124,6 +124,7 @@ console_addr: "127.0.0.1:9000"   # optional: address `mabo-ctl serve` binds when
                       # no --addr is given (default 127.0.0.1:7999)
 # console_access_key: "..."      # optional; --access-key overrides it; absent
                                  # means a random key is generated per run
+# console_terminal: true         # optional; enables the console's Terminal tab
 
 services:
   - name: website
@@ -268,7 +269,7 @@ Leave the key out to inherit the global.
 | `mabo-ctl shell <name>` | Run a declared `shells:` entry, or open `$SHELL` in a service's environment. |
 | `mabo-ctl attach <svc>` | Connect your terminal to a service declared `tty: true`, through the broker beside it. Ctrl-Q detaches; one session at a time, and detaching never stops the service. |
 | `mabo-ctl open` | Hand each running service's URL — its `open:` target when declared, else the derived origin — to `open` (macOS) or `xdg-open` (Linux). |
-| `mabo-ctl serve [--addr] [--access-key] [--open] [--notify] [--i-know-this-is-dangerous]` | Serve the web console on `127.0.0.1:7999` — or the `console_addr` in `mabo-ctl.yaml` — until interrupted; if that port is already taken by another server, it falls back to a kernel-chosen free port and prints the real address. `--access-key` overrides `console_access_key`; absent keys are generated randomly. `--notify` announces dying services on the desktop. It can start and stop services — see [Web console](#web-console). |
+| `mabo-ctl serve [--addr] [--access-key] [--open] [--notify] [--terminal] [--i-know-this-is-dangerous]` | Serve the web console on `127.0.0.1:7999` — or the `console_addr` in `mabo-ctl.yaml` — until interrupted; if that port is already taken by another server, it falls back to a kernel-chosen free port and prints the real address. `--access-key` overrides `console_access_key`; absent keys are generated randomly. `--notify` announces dying services on the desktop. `--terminal` enables the Terminal tab. It can start and stop services — see [Web console](#web-console). |
 | `mabo-ctl init` | Scaffold a fully commented-out `mabo-ctl.yaml` from what the repo looks like (`package.json` + `.nvmrc`, `manage.py`, `pyproject.toml`, `Cargo.toml`). Refuses to overwrite; adds `.mabo-ctl/` to `.gitignore`; runs nothing it finds. |
 | `mabo-ctl --version` | The full build report: commit, dirty flag, when it was linked, toolchain, platform and dependencies. Paste it whole into bug reports — [SECURITY.md](SECURITY.md) asks for exactly this output. |
 | `mabo-ctl completion <bash\|zsh\|fish\|powershell>` | Print a completion script. |
@@ -602,11 +603,25 @@ place. The log pane's **All** toggle streams every service into the same pane,
 each line labelled with its service — and the text filter and level chips then
 search across all of them at once, which is the web form of `mabo-ctl logs all`.
 
-The service list is a sidebar; `b` (or its `«` button) collapses it to a rail of
-phase icons, each with a hover card carrying the port, pid, uptime and probe.
-**Restart all** restarts only the services that are running — stopped ones stay
-stopped. The theme follows the system or is pinned to light or dark; both
-choices are remembered by the browser.
+The page has four tabs. **Output** is the service list and the log pane; the
+list is a sidebar that `b` (or its `«` button) collapses to a rail of phase
+icons, each with a hover card carrying the port, pid, uptime and probe.
+**Config** is the resolved configuration, **API** the interactive API
+reference, and **Terminal** a set of real shells (below). **Restart all**
+restarts only the services that are running — stopped ones stay stopped. The
+theme follows the system or is pinned to light or dark; the theme, the sidebar
+and the open tab are remembered by the browser. The tabs carry badges:
+**Terminal 2** is how many shells are open, and **Output +22** is how many log
+lines arrived while you were on another tab — it clears when you come back.
+
+**Terminal** is opt-in: start the console with `mabo-ctl serve --terminal`, or
+set `console_terminal: true`. Each terminal is a login shell (`$SHELL -l`) in
+the repository root with a full xterm emulator, so Claude Code, OpenCode, vim
+or htop run in it as they would in your own terminal. Shells keep running when
+the tab is closed or reloaded — the page reattaches and replays the scrollback —
+and are hung up when `serve` stops. A shell runs as you, so the terminal is
+refused on a non-loopback console and to a browser arriving through
+`--allow-origin`; see [SECURITY.md](SECURITY.md).
 
 ```sh
 $ mabo-ctl serve

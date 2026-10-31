@@ -35,6 +35,8 @@
     height: calc(100vh - 45px);
     width: 100%;
   }
+  .framed .topbar { display: none; }
+  .framed #api-reference { height: 100vh; }
 </style>
 </head>
 <body>
@@ -69,11 +71,26 @@
     schema-description-expanded="true"
     default-schema-tab="schema"
     allow-spec-file-download="true"
+    load-fonts="false"
   ></rapi-doc>
 </div>
 
 <noscript><p style="padding:24px">The API reference needs JavaScript to render.</p></noscript>
 
+<script>
+  // Framed by the console's API tab: the console's own header already says
+  // where this is, and the Console link would nest the console inside itself.
+  // The tab passes its resolved theme so both halves of the page match.
+  (function () {
+    if (window.self === window.top) { return; }
+    document.body.classList.add("framed");
+    var t = new URLSearchParams(window.location.search).get("theme");
+    if (t === "light" || t === "dark") {
+      document.querySelector("rapi-doc").setAttribute("theme", t);
+      document.documentElement.style.colorScheme = t;
+    }
+  }());
+</script>
 <script src="/api-docs/rapidoc.js"></script>
 </body>
 </html>

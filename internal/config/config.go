@@ -69,6 +69,10 @@ type Config struct {
 	// ConsoleAccessKey is the optional access key for `mabo-ctl serve`. Empty
 	// means serve generates a random key for this run.
 	ConsoleAccessKey string
+	// ConsoleTerminal enables the web console's Terminal tab, which runs
+	// interactive shells as the operator. Off unless set; `serve --terminal`
+	// enables it for one run.
+	ConsoleTerminal bool
 	// ActiveProfiles is the profile set in force, when one was requested and
 	// passed validation; nil means "no profile selection", not "no profiles".
 	ActiveProfiles []string
@@ -405,6 +409,7 @@ func Load(path string) (*Config, error) {
 		Shells:           doc.Shells,
 		ConsoleAddr:      doc.ConsoleAddr,
 		ConsoleAccessKey: doc.ConsoleAccessKey,
+		ConsoleTerminal:  doc.ConsoleTerminal,
 		StopGrace:        DefaultStopGrace,
 		ReadyTimeout:     DefaultReadyTimeout,
 	}
@@ -582,6 +587,7 @@ type fileDoc struct {
 	ReadyTimeout     *durationValue `yaml:"ready_timeout"`
 	ConsoleAddr      string         `yaml:"console_addr"`
 	ConsoleAccessKey string         `yaml:"console_access_key"`
+	ConsoleTerminal  bool           `yaml:"console_terminal"`
 	Services         []specDoc      `yaml:"services"`
 	Checks           []Check        `yaml:"checks"`
 	Shells           []Shell        `yaml:"shells"`

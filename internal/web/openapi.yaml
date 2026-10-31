@@ -496,6 +496,186 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorWithValid"
 
+  /api/terminals:
+    get:
+      summary: List terminals
+      description: >-
+        The open Terminal-tab shells, oldest first. 404 unless serve runs with
+        --terminal (or console_terminal true); 403 unless the request comes from
+        a browser on this machine at the loopback address.
+      security:
+        - sessionCookie: []
+        - sessionHeader: []
+        - queryToken: []
+      responses:
+        "200":
+          description: Open terminals
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Terminal"
+        "403":
+          $ref: "#/components/responses/TerminalNotLocal"
+        "404":
+          $ref: "#/components/responses/TerminalOff"
+    post:
+      summary: Open a terminal
+      description: Start a login shell on a pty in the repository root, running as you.
+      security:
+        - tokenHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TerminalSize"
+      responses:
+        "200":
+          description: The new terminal
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Terminal"
+        "429":
+          description: 16 terminals are already open
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          $ref: "#/components/responses/TerminalNotLocal"
+        "404":
+          $ref: "#/components/responses/TerminalOff"
+
+  "/api/terminals/{id}/stream":
+    get:
+      summary: Terminal output (SSE)
+      description: >-
+        The scrollback as one frame marked "replay": true, then live output,
+        then {"end": true} when the shell exits. data is base64-encoded pty
+        output. A client must not answer terminal queries found in the replay
+        frame.
+      security:
+        - sessionCookie: []
+        - sessionHeader: []
+        - queryToken: []
+      parameters:
+        - $ref: "#/components/parameters/terminalId"
+      responses:
+        "200":
+          description: Server-sent events of {"data":"<base64>"} or {"end":true}
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        "403":
+          $ref: "#/components/responses/TerminalNotLocal"
+        "404":
+          description: Unknown terminal, or the terminal is off
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  "/api/terminals/{id}/input":
+    post:
+      summary: Type into a terminal
+      security:
+        - tokenHeader: []
+      parameters:
+        - $ref: "#/components/parameters/terminalId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data]
+              properties:
+                data:
+                  type: string
+                  description: Text to write to the shell, up to 1 MiB
+      responses:
+        "204":
+          description: Delivered
+        "403":
+          $ref: "#/components/responses/TerminalNotLocal"
+        "404":
+          description: Unknown terminal, or the terminal is off
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "410":
+          description: The terminal has ended
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  "/api/terminals/{id}/resize":
+    post:
+      summary: Resize a terminal
+      security:
+        - tokenHeader: []
+      parameters:
+        - $ref: "#/components/parameters/terminalId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TerminalSize"
+      responses:
+        "204":
+          description: Resized
+        "403":
+          $ref: "#/components/responses/TerminalNotLocal"
+        "404":
+          description: Unknown terminal, or the terminal is off
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  "/api/terminals/{id}/close":
+    post:
+      summary: Close a terminal
+      description: SIGHUP to the shell's session, then SIGKILL after 2 seconds.
+      security:
+        - tokenHeader: []
+      parameters:
+        - $ref: "#/components/parameters/terminalId"
+      responses:
+        "204":
+          description: Closed
+        "403":
+          $ref: "#/components/responses/TerminalNotLocal"
+        "404":
+          description: Unknown terminal, or the terminal is off
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /assets/xterm.js:
+    get:
+      summary: Terminal emulator bundle
+      description: xterm.js 6.0.0 with its fit and web-links addons, vendored (MIT).
+      security:
+        - sessionCookie: []
+        - sessionHeader: []
+        - queryToken: []
+      responses:
+        "200":
+          description: JavaScript
+          content:
+            application/javascript:
+              schema:
+                type: string
+
   /api-docs:
     get:
       summary: Interactive API reference page
@@ -600,8 +780,51 @@ components:
         type: string
         pattern: "^[a-zA-Z0-9][a-zA-Z0-9_-]*$"
       description: Declared service name
+    terminalId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Terminal id from GET /api/terminals
+
+  responses:
+    TerminalOff:
+      description: The terminal is off; serve was started without --terminal
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    TerminalNotLocal:
+      description: Not a browser on this machine at the loopback address
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
 
   schemas:
+    Terminal:
+      type: object
+      required: [id, pid, started_at]
+      properties:
+        id:
+          type: string
+        pid:
+          type: integer
+        started_at:
+          type: string
+          format: date-time
+    TerminalSize:
+      type: object
+      properties:
+        cols:
+          type: integer
+          minimum: 2
+          maximum: 1000
+        rows:
+          type: integer
+          minimum: 2
+          maximum: 500
     ServiceInfo:
       type: object
       properties:

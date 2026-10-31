@@ -37,7 +37,10 @@ Three front ends over ONE supervisor:
    mutations, Host+Origin validated. It can start and stop processes, so treat
    every guard on it as security-critical. It is the one TCP listener in the
    repo; the tty broker additionally holds a `.mabo-ctl/tty/*.sock` unix-domain
-   socket for local PTY IPC, which is not a network surface.
+   socket for local PTY IPC, which is not a network surface. Its opt-in
+   Terminal tab (`serve --terminal`, `supervisor.Terminals`) runs interactive
+   shells: loopback bind and loopback Host/Origin only, never through
+   `--allow-origin` — keep that gate in `internal/web/terminal.go`.
 
 ### Non-goals — out of scope by declaration, never gaps
 

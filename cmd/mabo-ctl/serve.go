@@ -73,6 +73,13 @@ guarded on four sides:
     credential-shaped values redacted. The inherited environment mabo-ctl forwards
     to children is never sent to the browser.
 
+--terminal (or console_terminal: true) adds a Terminal tab: interactive login
+shells in the repository root, running as you, that keep running while the
+tab is closed and are hung up when serve stops. A shell can run anything, so it
+is opt-in and held to a stricter rule than every other route: it is refused on a
+non-loopback bind, and served only to a browser on this machine using the
+loopback address — a console reached through --allow-origin does not get it.
+
 --i-know-this-is-dangerous is the only way to bind a non-loopback address, and
 it means what it says: every machine that can route to that address can drive
 your dev stack once it has the token. Without it, a non-loopback --addr is a
@@ -102,6 +109,9 @@ func (a *app) serveCmd() *cobra.Command {
 		"permit a non-loopback bind, exposing start/stop/restart to every machine that can route to it")
 	f.Bool("notify", false,
 		"show a desktop notification when a service dies while this console is served")
+	f.Bool("terminal", false,
+		"enable the console's Terminal tab: interactive shells in the repository root, running as you; "+
+			"loopback consoles only. console_terminal: true in mabo-ctl.yaml does the same")
 	f.StringArray("allow-origin", nil,
 		"additional browser origin to accept, e.g. https://dev.tunnel.example; repeatable. "+
 			"Needed when the console is reached through a tunnel or port forward, where the browser's "+
@@ -130,6 +140,8 @@ type serveOptions struct {
 	Notify bool
 	// AccessKey is the optional fixed web-console key.
 	AccessKey string
+	// Terminal is --terminal: enable the Terminal tab for this run.
+	Terminal bool
 }
 
 // runServe parses the flags and serves until the first SIGINT.
@@ -162,6 +174,7 @@ func (a *app) runServe(cmd *cobra.Command, _ []string) error {
 		AllowOrigins: allow,
 		Notify:       boolFlag(cmd, "notify"),
 		AccessKey:    accessKey,
+		Terminal:     boolFlag(cmd, "terminal"),
 	}
 
 	ctx, cancel := interruptible(cmd.Context())
@@ -206,10 +219,20 @@ func (a *app) serve(ctx context.Context, opt serveOptions) error {
 	// that changes console_access_key rotates it. An --access-key on the
 	// command line outranks the file for the whole run.
 	keyFromConfig := opt.AccessKey == ""
-	if keyFromConfig {
-		if cfg, cfgErr := a.config(); cfgErr == nil {
-			opt.AccessKey = cfg.ConsoleAccessKey
+	cfg, cfgErr := a.config()
+	if keyFromConfig && cfgErr == nil {
+		opt.AccessKey = cfg.ConsoleAccessKey
+	}
+	// The terminal is opt-in, by flag or by file, and lives exactly as long as
+	// this console: every shell it opened is hung up when serve returns.
+	var terminals *supervisor.Terminals
+	if opt.Terminal || (cfgErr == nil && cfg.ConsoleTerminal) {
+		dir := "."
+		if cfgErr == nil {
+			dir = cfg.Root
 		}
+		terminals = supervisor.NewTerminals(dir)
+		defer terminals.CloseAll()
 	}
 
 	insts, err := a.resolve()
@@ -247,6 +270,7 @@ func (a *app) serve(ctx context.Context, opt serveOptions) error {
 			ExplicitConfig: a.configPath != "",
 			AllowedOrigins: opt.AllowOrigins,
 			AccessKey:      opt.AccessKey,
+			Terminals:      terminals,
 			Reload: func(ctx context.Context, ev chan<- supervisor.Event) (*web.Reloaded, error) {
 				return a.reloadServe(ctx, ev, srv, keyFromConfig)
 			},
@@ -315,6 +339,9 @@ func (a *app) serve(ctx context.Context, opt serveOptions) error {
 		fmt.Fprintln(a.env.Stderr, "Desktop notifications on: a dying service will announce itself.")
 	}
 
+	if terminals != nil {
+		fmt.Fprintln(a.env.Stderr, "Terminal tab on: the console can open shells in the repository root, running as you.")
+	}
 	a.announceServe(srv, serveClosing)
 	if opt.Open {
 		if err := a.env.OpenURL(ctx, srv.URL()); err != nil {
@@ -346,6 +373,11 @@ func (a *app) reloadServe(ctx context.Context, ev chan<- supervisor.Event, srv *
 		notify(ev, supervisor.Event{Msg: fmt.Sprintf(
 			"console_addr changed in %s; this console keeps listening on %s until serve is restarted",
 			filepath.Base(cfg.Path), srv.Addr())})
+	}
+	if cfg.ConsoleTerminal != prev.ConsoleTerminal {
+		notify(ev, supervisor.Event{Msg: fmt.Sprintf(
+			"console_terminal changed in %s; the Terminal tab follows it when serve is restarted",
+			filepath.Base(cfg.Path))})
 	}
 	if cfg.ConsoleAccessKey != prev.ConsoleAccessKey {
 		switch {

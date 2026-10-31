@@ -119,6 +119,31 @@ var consoleRoutes = []Route{
 	{http.MethodPost, "/api/{svc}/stop", "stop one named service", RouteMutate, false},
 	{http.MethodPost, "/api/{svc}/restart", "restart one named service", RouteMutate, false},
 
+	// The Terminal tab: opt-in, loopback-only interactive shells. Every route
+	// also answers 404 while the terminal is off and 403 to a request that did
+	// not come from a browser on this machine at the loopback address.
+	{http.MethodGet, "/api/terminals",
+		"the open terminals, oldest first",
+		RouteRead, false},
+	{http.MethodPost, "/api/terminals",
+		"open a new shell in the repository root; body {\"cols\": N, \"rows\": N}",
+		RouteMutate, false},
+	{http.MethodGet, "/api/terminals/{id}/stream",
+		"SSE: a terminal's scrollback, then its live output, base64; an end frame when its shell exits",
+		RouteRead, true},
+	{http.MethodPost, "/api/terminals/{id}/input",
+		"type into a terminal; body {\"data\": \"…\"}",
+		RouteMutate, false},
+	{http.MethodPost, "/api/terminals/{id}/resize",
+		"tell a terminal its window size; body {\"cols\": N, \"rows\": N}",
+		RouteMutate, false},
+	{http.MethodPost, "/api/terminals/{id}/close",
+		"hang up a terminal: SIGHUP to its session, then SIGKILL",
+		RouteMutate, false},
+	{http.MethodGet, "/assets/xterm.js",
+		"the embedded xterm.js bundle the Terminal tab renders with",
+		RouteRead, false},
+
 	// API reference and OpenAPI spec — documentation routes, not process state.
 	{http.MethodGet, "/api-docs",
 		"interactive API reference page",

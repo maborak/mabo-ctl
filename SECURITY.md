@@ -54,6 +54,7 @@ written it into their own `mabo-ctl.yaml`:
 | Signal blast radius | mabo-ctl signalling a process it did not start |
 | Secret handling | credentials reaching a log, `--json`, or an HTTP response that a reader would not expect |
 | **The `mabo-ctl serve` web console** | any bypass of its token, `Host`/`Origin`, or method checks |
+| **The console's Terminal tab** | a shell reachable when the terminal is off, through a non-loopback bind, or from an origin other than the loopback address |
 
 ### `mabo-ctl serve` deserves particular attention
 
@@ -101,6 +102,25 @@ The controls, as of the current `main`:
   inherited environment mabo-ctl forwards to children is never sent to a browser.
 - **No CORS header is ever set**, so a cross-origin reader cannot see a body
   even on the read-only routes.
+- **The Terminal tab is opt-in and loopback-only.** Its routes run interactive
+  shells — strictly more than the declared commands — so they exist only under
+  `serve --terminal` or `console_terminal: true` (404 otherwise), the terminal
+  refuses a non-loopback bind even with `--i-know-this-is-dangerous`, and every
+  terminal request must name the bound loopback address in `Host` and in any
+  `Origin` it sends, and carry no proxy-forwarding header. An origin trusted
+  through `--allow-origin` drives the rest of the console but gets 403 here.
+  At most 16 shells are open at once, and they are hung up when serve stops.
+  Terminal output is untrusted: the page follows OSC 8 links only for
+  http(s), with `noopener`, because a `javascript:` link opened from the
+  console would run with the console's session.
+- **Known limit of the loopback rule:** a tunnel daemon on this machine that
+  rewrites `Host` to the loopback address and strips every forwarding header
+  is indistinguishable from a local browser. Do not run `--terminal` behind
+  such a tunnel.
+- **Framing.** Every response sends `X-Frame-Options: DENY` except the
+  authenticated `/api-docs` page, which sends `SAMEORIGIN` and
+  `frame-ancestors 'self'` so the console's API tab can frame it. The console
+  page itself still sends `frame-ancestors 'none'`.
 
 Audit these against the code (`internal/web/`), not against this list.
 

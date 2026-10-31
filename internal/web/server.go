@@ -236,6 +236,12 @@ type Options struct {
 	// restarting to add a hostname would stop the whole stack.
 	AllowedOrigins []string
 
+	// Terminals backs the Terminal tab. Nil turns it off: every terminal route
+	// answers 404 and the page says how to enable it. A non-nil value needs a
+	// loopback Addr — an interactive shell is never served to the network,
+	// whatever Force says.
+	Terminals *supervisor.Terminals
+
 	// AccessKey overrides the generated session key. Empty generates a fresh
 	// cryptographically random key.
 	AccessKey string
@@ -302,6 +308,9 @@ type Server struct {
 	// /api/origins edits it while the console is running.
 	trusted originSet
 	reload  func(ctx context.Context, ev chan<- supervisor.Event) (*Reloaded, error)
+
+	// terminals backs the Terminal tab; nil means it is off.
+	terminals *supervisor.Terminals
 
 	h      http.Handler
 	events *broker
@@ -387,6 +396,13 @@ func NewWith(ctrl Controller, opt Options) (*Server, error) {
 	if err := CheckAddr(opt.Addr, opt.Force); err != nil {
 		return nil, err
 	}
+	if opt.Terminals != nil {
+		if loopback, err := isLoopbackAddr(opt.Addr); err != nil || !loopback {
+			return nil, fmt.Errorf("%w: the terminal runs a shell as you and is served only on a loopback "+
+				"address, not %s; drop --terminal (and console_terminal) or bind 127.0.0.1",
+				ErrUnsafeAddr, opt.Addr)
+		}
+	}
 
 	token := opt.AccessKey
 	var err error
@@ -414,6 +430,7 @@ func NewWith(ctrl Controller, opt Options) (*Server, error) {
 
 		explicitConfig: opt.ExplicitConfig,
 		reload:         opt.Reload,
+		terminals:      opt.Terminals,
 	}
 	s.tokenLife, s.endTokenLife = context.WithCancel(context.Background())
 
@@ -497,6 +514,14 @@ func (s *Server) routes() *http.ServeMux {
 		"POST /api/{svc}/start":   s.handleStart,
 		"POST /api/{svc}/stop":    s.handleStop,
 		"POST /api/{svc}/restart": s.handleRestart,
+
+		"GET /api/terminals":              s.handleTerminals,
+		"POST /api/terminals":             s.handleOpenTerminal,
+		"GET /api/terminals/{id}/stream":  s.handleTerminalStream,
+		"POST /api/terminals/{id}/input":  s.handleTerminalInput,
+		"POST /api/terminals/{id}/resize": s.handleTerminalResize,
+		"POST /api/terminals/{id}/close":  s.handleCloseTerminal,
+		"GET /assets/xterm.js":            s.handleXterm,
 
 		"GET /api-docs":            s.handleDocs,
 		"GET /api/openapi.yaml":    s.handleOpenAPI,

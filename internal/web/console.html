@@ -351,7 +351,10 @@ button:disabled { opacity: .42; cursor: not-allowed; }
 
 button.primary { color: #fff; background: var(--accent); border-color: transparent; }
 :root[data-theme="dark"] button.primary { color: #08111f; }
-button.primary:hover:not(:disabled) { filter: brightness(1.08); }
+/* Restated on hover: the generic hover rule above repaints the background
+   with a surface colour, which left the label white-on-grey in light mode and
+   dark-on-grey in dark mode. */
+button.primary:hover:not(:disabled) { background: var(--accent); filter: brightness(1.1); }
 
 button.ghost, a.ghost {
   background: transparent; border-color: var(--border); color: var(--text-dim);
@@ -444,11 +447,50 @@ main {
   display: flex; flex-direction: column; gap: var(--sp-3);
 }
 
+/* The app: the services sidebar, full height on the left, and one column
+   holding everything else. */
 .split {
   flex: 1 1 auto; min-height: 0;
-  display: grid; gap: var(--sp-3);
+  display: grid;
   grid-template-columns: 1fr;
 }
+.main-col { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+
+.sidebar {
+  display: flex; flex-direction: column; min-width: 0; min-height: 0;
+  background: var(--surface); border-right: 1px solid var(--border);
+  z-index: 21;
+}
+/* Heights match the header's two rows, so the sidebar's rules line up with
+   the header's: brand beside the first bar, Services beside the tabs. */
+.side-brand {
+  flex: none; height: 45px; padding: 0 var(--sp-3);
+  display: flex; align-items: center; gap: var(--sp-2);
+  border-bottom: 1px solid var(--border);
+}
+.mark {
+  flex: none; width: 20px; height: 20px; border-radius: 5px;
+  background: no-repeat center/100% url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231f5fd0'/%3E%3Ccircle cx='9' cy='9.5' r='2.7' fill='%2358d07c'/%3E%3Crect x='14' y='8' width='11' height='3' rx='1.5' fill='%23fff'/%3E%3Ccircle cx='9' cy='16' r='2.7' fill='%2358d07c'/%3E%3Crect x='14' y='14.5' width='11' height='3' rx='1.5' fill='%23fff'/%3E%3Ccircle cx='9' cy='22.5' r='2.7' fill='%23e5a53a'/%3E%3Crect x='14' y='21' width='8' height='3' rx='1.5' fill='%23fff'/%3E%3C/svg%3E");
+}
+.sidebar .master {
+  flex: 1 1 auto; border: 0; border-radius: 0; box-shadow: none; background: transparent;
+}
+.sidebar .master > .panel-head { height: 41px; }
+.topbar .bar:first-child { min-height: 44px; }
+.topbar .tabs-bar { min-height: 41px; }
+/* Both header rows stay one line, so they keep lining up with the sidebar:
+   the paths give way first (they ellipsise, with the full value on hover),
+   and the phase tiles scroll sideways rather than wrapping. */
+@media (min-width: 760px) {
+  .topbar .bar { flex-wrap: nowrap; }
+  .topbar .where { flex: 1 1 0; }
+  .tabs-bar .tiles { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .tabs-bar .tiles::-webkit-scrollbar { display: none; }
+  .tabs-bar .tile { flex: none; }
+}
+/* Right of the sidebar: one tab's view at a time, filling the column. */
+.stage { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.stage > .panel { flex: 1 1 auto; min-height: 0; }
 
 .panel {
   background: var(--surface);
@@ -628,8 +670,12 @@ main {
 .side-toggle { flex: none; font-family: var(--mono); width: 24px; padding: 2px 0; }
 
 .split.rail .master .panel-head { justify-content: center; padding: var(--sp-2) 0; }
+.split.rail .side-brand { justify-content: center; padding: 0; }
+.split.rail .side-brand h1,
+.split.rail .side-brand .sub { display: none; }
 .split.rail .master .panel-head h2,
 .split.rail .master .filter-wrap,
+.split.rail .master .side-refresh,
 .split.rail .master .row-head,
 .split.rail .master .hints,
 .split.rail .master .list-empty { display: none; }
@@ -666,7 +712,112 @@ main {
 
 /* --- theme toggle --------------------------------------------------------- */
 
+.theme-toggle { flex: none; }
 .theme-toggle .g { font-family: var(--mono); margin-right: 4px; }
+
+.side-refresh { flex: none; font-family: var(--mono); width: 24px; padding: 2px 0; }
+
+/* --- tabs ----------------------------------------------------------------- */
+
+.tabs-bar { padding-top: 0; padding-bottom: 0; align-items: stretch; }
+.tabs { display: flex; gap: 2px; flex: none; align-self: stretch; }
+.tab {
+  border: 0; border-bottom: 2px solid transparent; border-radius: 0;
+  background: transparent; color: var(--text-dim);
+  padding: var(--sp-2) var(--sp-3); font-size: var(--fs-sm); font-weight: 650;
+  letter-spacing: .04em; text-transform: uppercase;
+}
+.tab:hover:not(:disabled) { background: var(--surface-2); color: var(--text); }
+.tab[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); }
+.tab-badge {
+  display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 999px;
+  font-family: var(--mono); font-size: 10px; font-weight: 700; line-height: 16px;
+  letter-spacing: 0; text-transform: none; vertical-align: 1px;
+  color: var(--accent); background: var(--accent-soft);
+}
+#badge-output { color: var(--warn); background: var(--warn-bg); }
+.tabs-bar .tiles, .tabs-bar .total, .tabs-bar .where { align-self: center; }
+.tabs-bar .tiles { padding: 4px 0; }
+
+.tabview { flex: 1 1 auto; min-height: 0; }
+.api-frame { flex: 1 1 auto; width: 100%; min-height: 70vh; border: 0; background: var(--surface); }
+@media (min-width: 760px) and (min-height: 560px) {
+  .api-frame, .term-body { min-height: 0; }
+}
+
+/* --- terminal ------------------------------------------------------------- */
+
+.term-head { gap: var(--sp-1); flex-wrap: wrap; }
+.term-tabs { display: flex; gap: 3px; flex-wrap: wrap; min-width: 0; }
+.term-tab {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-family: var(--mono); font-size: var(--fs-xs); font-weight: 600;
+  padding: 2px 4px 2px 9px; border-radius: var(--r-md);
+  border: 1px solid var(--border); background: var(--surface-2); color: var(--text-dim);
+}
+.term-tab[aria-selected="true"] { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+.term-tab.dead { text-decoration: line-through; opacity: .7; }
+.term-tab .x {
+  border: 0; background: transparent; padding: 0 4px; font-size: 13px; line-height: 1;
+  color: inherit; opacity: .7;
+}
+.term-tab .x:hover:not(:disabled) { opacity: 1; background: var(--surface-3); }
+.term-body { position: relative; flex: 1 1 auto; min-height: 360px; background: #1e1b4b; }
+/* Inset, never padded: xterm's fit addon sizes the grid from the parent's
+   height without subtracting the parent's padding, so a padded pane got a
+   grid 16px taller than its box and the last row — the prompt — was clipped
+   below the panel where no scroll could reach it. */
+.term-pane { position: absolute; inset: var(--sp-2); }
+.term-pane[hidden] { display: none; }
+.term-empty { margin: auto; padding: var(--sp-6); text-align: center; color: #a5b4fc; font-size: var(--fs-sm); }
+
+/* xterm.js's own stylesheet (@xterm/xterm 6.0.0, MIT), inlined because the
+   CSP admits no external sheet. */
+.xterm{cursor: text;position: relative;user-select: none;-ms-user-select: none;-webkit-user-select: none;}
+.xterm.focus, .xterm:focus{outline: none;}
+.xterm .xterm-helpers{position: absolute;top: 0;z-index: 5;}
+.xterm .xterm-helper-textarea{padding: 0;border: 0;margin: 0;position: absolute;opacity: 0;left: -9999em;top: 0;width: 0;height: 0;z-index: -5;white-space: nowrap;overflow: hidden;resize: none;}
+.xterm .composition-view{background: #000;color: #FFF;display: none;position: absolute;white-space: nowrap;z-index: 1;}
+.xterm .composition-view.active{display: block;}
+.xterm .xterm-viewport{background-color: #000;overflow-y: scroll;cursor: default;position: absolute;right: 0;left: 0;top: 0;bottom: 0;}
+.xterm .xterm-screen{position: relative;}
+.xterm .xterm-screen canvas{position: absolute;left: 0;top: 0;}
+.xterm-char-measure-element{display: inline-block;visibility: hidden;position: absolute;top: 0;left: -9999em;line-height: normal;}
+.xterm.enable-mouse-events{cursor: default;}
+.xterm.xterm-cursor-pointer, .xterm .xterm-cursor-pointer{cursor: pointer;}
+.xterm.column-select.focus{cursor: crosshair;}
+.xterm .xterm-accessibility:not(.debug), .xterm .xterm-message{position: absolute;left: 0;top: 0;bottom: 0;right: 0;z-index: 10;color: transparent;pointer-events: none;}
+.xterm .xterm-accessibility-tree:not(.debug) *::selection{color: transparent;}
+.xterm .xterm-accessibility-tree{font-family: monospace;user-select: text;white-space: pre;}
+.xterm .xterm-accessibility-tree > div{transform-origin: left;width: fit-content;}
+.xterm .live-region{position: absolute;left: -9999px;width: 1px;height: 1px;overflow: hidden;}
+.xterm-dim{opacity: 1 !important;}
+.xterm-underline-1{text-decoration: underline;}
+.xterm-underline-2{text-decoration: double underline;}
+.xterm-underline-3{text-decoration: wavy underline;}
+.xterm-underline-4{text-decoration: dotted underline;}
+.xterm-underline-5{text-decoration: dashed underline;}
+.xterm-overline{text-decoration: overline;}
+.xterm-overline.xterm-underline-1{text-decoration: overline underline;}
+.xterm-overline.xterm-underline-2{text-decoration: overline double underline;}
+.xterm-overline.xterm-underline-3{text-decoration: overline wavy underline;}
+.xterm-overline.xterm-underline-4{text-decoration: overline dotted underline;}
+.xterm-overline.xterm-underline-5{text-decoration: overline dashed underline;}
+.xterm-strikethrough{text-decoration: line-through;}
+.xterm-screen .xterm-decoration-container .xterm-decoration{z-index: 6;position: absolute;}
+.xterm-screen .xterm-decoration-container .xterm-decoration.xterm-decoration-top-layer{z-index: 7;}
+.xterm-decoration-overview-ruler{z-index: 8;position: absolute;top: 0;right: 0;pointer-events: none;}
+.xterm-decoration-top{z-index: 2;position: relative;}
+.xterm .xterm-scrollable-element > .scrollbar{cursor: default;}
+.xterm .xterm-scrollable-element > .scrollbar > .scra{cursor: pointer;font-size: 11px !important;}
+.xterm .xterm-scrollable-element > .visible{opacity: 1;background:rgba(0,0,0,0);transition: opacity 100ms linear;z-index: 11;}
+.xterm .xterm-scrollable-element > .invisible{opacity: 0;pointer-events: none;}
+.xterm .xterm-scrollable-element > .invisible.fade{transition: opacity 800ms linear;}
+.xterm .xterm-scrollable-element > .shadow{position: absolute;display: none;}
+.xterm .xterm-scrollable-element > .shadow.top{display: block;top: 0;left: 3px;height: 3px;width: 100%;box-shadow: var(--vscode-scrollbar-shadow, #000) 0 6px 6px -6px inset;}
+.xterm .xterm-scrollable-element > .shadow.left{display: block;top: 3px;left: 0;height: 100%;width: 3px;box-shadow: var(--vscode-scrollbar-shadow, #000) 6px 0 6px -6px inset;}
+.xterm .xterm-scrollable-element > .shadow.top-left-corner{display: block;top: 0;left: 0;height: 3px;width: 3px;}
+.xterm .xterm-scrollable-element > .shadow.top.left{box-shadow: var(--vscode-scrollbar-shadow, #000) 6px 0 6px -6px inset;}
 
 /* --- detail pane --------------------------------------------------------- */
 
@@ -791,9 +942,11 @@ ol.argv-list li code { color: var(--text); }
 }
 .alert b { color: var(--danger); }
 
-/* A detail is one line for most phases and a whole log tail for a service that
-   died, so newlines are preserved and the block is capped and scrolls rather
-   than pushing the log pane off the bottom of the page. */
+/* The detail is the explanation of the service's state, and for a dead service
+   that is only the first line: the log tail in the JSON belongs to the CLI,
+   and the log pane below is the console's one owner of it. Newlines are still
+   preserved in case an error message carries one, and the block is capped and
+   scrolls rather than pushing the log pane off the bottom of the page. */
 .detail-line {
   margin-top: var(--sp-2); padding: var(--sp-2) var(--sp-3);
   border-left: 2px solid var(--border-strong); background: var(--surface-2);
@@ -887,13 +1040,13 @@ ol.argv-list li code { color: var(--text); }
    A SEPARATE view, not more rows in the service list. The master/detail layout
    exists so a five-service stack fits on one screen, and "why is backend on
    7999?" is a different question from "is backend up?" — answering both in one
-   list costs the answer to the second one. The Config button swaps the two
-   views; nothing about the default view moves.
+   list costs the answer to the second one. The Config tab swaps it in beside
+   the list; nothing about the list moves.
 
-   .split and .panel both set a display, and an author `display` beats the user
-   agent's [hidden] rule, so hiding either one needs saying explicitly. This is
-   the same reason .banner[hidden] exists above. */
-.split[hidden], .panel[hidden] { display: none; }
+   .panel sets a display, and an author `display` beats the user agent's
+   [hidden] rule, so hiding a tab's panel needs saying explicitly. This is the
+   same reason .banner[hidden] exists above. */
+.panel[hidden] { display: none; }
 
 .config { flex: 1 1 auto; }
 .cfg-body { flex: 1 1 auto; min-height: 0; overflow: auto; }
@@ -1008,6 +1161,8 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
 @media (min-width: 760px) {
   .split { grid-template-columns: var(--side-w) minmax(0, 1fr); }
   .split.rail { grid-template-columns: var(--side-rail-w) minmax(0, 1fr); }
+  /* A short window scrolls the page; the sidebar stays in view. */
+  .sidebar { position: sticky; top: 0; height: 100vh; }
 }
 
 @media (min-width: 760px) and (min-height: 560px) {
@@ -1057,8 +1212,11 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
   .log-bar .log-filter { flex: 1 1 100%; width: auto; }
 }
 
-/* Stacked, the rail is a strip of glyphs rather than a column. */
+/* Stacked, the sidebar sits above everything and the rail is a strip of
+   glyphs rather than a column. */
 @media (max-width: 759px) {
+  .sidebar { border-right: 0; border-bottom: 1px solid var(--border); }
+  .sidebar .svc-list { max-height: 40vh; }
   .split.rail .svc-list { display: flex; flex-wrap: wrap; }
   .split.rail .row { width: 40px; border-bottom: none; }
 }
@@ -1068,43 +1226,97 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
 
 <a class="skip" href="#svc-list">Skip to the service list</a>
 
+<!-- The app is two columns for the whole height of the window: the services
+     sidebar, and everything else. Header, banners, the activity strip and the
+     tabs all live in the right-hand column, so nothing pushes the list down. -->
+<div class="split app" id="split">
+<aside class="sidebar" aria-label="services">
+  <div class="brand side-brand">
+    <span class="mark" aria-hidden="true"></span>
+    <h1>mabo-ctl</h1>
+    <span class="sub">console</span>
+  </div>
+  <section class="panel master" aria-labelledby="services-heading">
+    <div class="panel-head">
+      <button type="button" id="btn-sidebar" class="ghost tiny side-toggle"
+              aria-expanded="true" aria-controls="svc-list"
+              title="Collapse the service list to status icons (b)">«</button>
+      <h2 id="services-heading">Services</h2>
+      <div class="filter-wrap">
+        <input type="search" id="filter" placeholder="filter by name  /"
+               aria-label="filter services by name" autocomplete="off" spellcheck="false">
+      </div>
+      <button type="button" id="btn-refresh" class="ghost tiny side-refresh"
+              aria-label="refresh status now"
+              title="Re-read every service's status now. The list already refreshes on its own every 2 seconds (10 in a background tab).">⟳</button>
+    </div>
+
+    <div class="row-head" aria-hidden="true">
+      <span class="cell"></span>
+      <span class="cell">service</span>
+      <span class="cell c-port">port</span>
+      <span class="cell c-pid">pid</span>
+      <span class="cell c-up">uptime</span>
+      <span class="cell">probe</span>
+    </div>
+
+    <div class="svc-list" id="svc-list" role="grid" aria-multiselectable="false"
+         aria-labelledby="services-heading" tabindex="-1"></div>
+
+    <div class="hints">
+      <span><kbd>j</kbd><kbd>k</kbd> select</span>
+      <span><kbd>s</kbd> start</span>
+      <span><kbd>x</kbd> stop</span>
+      <span><kbd>r</kbd> restart</span>
+      <span><kbd>/</kbd> filter</span>
+      <span><kbd>b</kbd> sidebar</span>
+      <span><kbd>c</kbd> config</span>
+      <span id="sort-note">declaration order</span>
+    </div>
+  </section>
+</aside>
+
+<div class="main-col">
 <header class="topbar">
   <div class="bar">
-    <div class="brand">
-      <h1>mabo-ctl</h1>
-      <span class="sub">console</span>
-    </div>
     <div class="where">
       <span class="keep" title="the address mabo-ctl serve is bound to"><b>bound</b>{{.Addr}}</span>
       {{with .ConfigPath}}<span title="{{.}}"><b>config</b>{{.}}</span>{{end}}
     </div>
+    <div class="bar-actions">
+      <button type="button" id="btn-start-all" class="primary">Start all</button>
+      <button type="button" id="btn-restart-all">Restart all</button>
+      <button type="button" id="btn-stop-all">Stop all</button>
+    </div>
     <span id="link-state" class="link-state wait" role="status">
       <span class="dot" aria-hidden="true"></span><span id="link-text">connecting</span>
     </span>
+    <button type="button" id="btn-theme" class="ghost tiny theme-toggle"
+            title="Colour theme: follow the system, light or dark"><span class="g" aria-hidden="true">◐</span><span id="theme-word">System</span></button>
     <span class="token" id="token-chip" title="the per-run session token; every start, stop and restart carries it">
       <b>token</b><span class="val" id="token-val">…</span>
       <button type="button" class="ghost tiny" id="btn-copy-token">Copy</button>
     </span>
   </div>
 
-  <div class="bar">
+  <div class="bar tabs-bar">
+    <nav class="tabs" role="tablist" aria-label="console views">
+      <button type="button" role="tab" class="tab" id="tab-output" data-tab="output"
+              aria-selected="true" aria-controls="detail">Output<span class="tab-badge" id="badge-output" hidden></span></button>
+      <button type="button" role="tab" class="tab" id="btn-config" data-tab="config"
+              aria-selected="false" aria-controls="config-view"
+              title="The resolved configuration: which mabo-ctl.yaml was loaded, and where each port came from (c)">Config</button>
+      <button type="button" role="tab" class="tab" id="tab-api" data-tab="api"
+              aria-selected="false" aria-controls="api-view"
+              title="The HTTP API reference, with a try-it playground">API</button>
+      <button type="button" role="tab" class="tab" id="tab-terminal" data-tab="terminal"
+              aria-selected="false" aria-controls="terminal-view"
+              title="Interactive shells in the repository root">Terminal<span class="tab-badge" id="badge-terminal" hidden></span></button>
+    </nav>
     <div class="tiles" id="tiles" role="group" aria-label="services by phase"></div>
     <span class="total" id="total"><b id="total-n">0</b> services</span>
     <div class="spacer"></div>
     {{with .Root}}<div class="where"><span title="{{.}}"><b>root</b>{{.}}</span></div>{{end}}
-    <div class="bar-actions">
-      <a href="/api-docs?token={{.Token}}" class="ghost"
-         title="Open the API reference (RapiDoc endpoint docs)">API</a>
-      <button type="button" id="btn-config" class="ghost toggle" aria-pressed="false"
-              aria-controls="config-view"
-              title="Show the resolved configuration: which mabo-ctl.yaml was loaded, and where each port came from">Config</button>
-      <button type="button" id="btn-refresh" class="ghost" title="Fetch status now">Refresh</button>
-      <button type="button" id="btn-theme" class="ghost theme-toggle"
-              title="Colour theme: follow the system, light or dark"><span class="g" aria-hidden="true">◐</span><span id="theme-word">System</span></button>
-      <button type="button" id="btn-start-all" class="primary">Start all</button>
-      <button type="button" id="btn-restart-all">Restart all</button>
-      <button type="button" id="btn-stop-all">Stop all</button>
-    </div>
   </div>
 </header>
 
@@ -1149,62 +1361,53 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     </div>
   </noscript>
 
-  <div class="split" id="split">
-    <section class="panel master" aria-labelledby="services-heading">
+  <!-- The stage is everything right of the sidebar. The tabs swap what it
+       shows; the service list stays put, so a terminal and the stack it is
+       driving are on screen together. -->
+  <div class="stage">
+    <section class="panel detail" id="detail" aria-live="off" aria-label="selected service"></section>
+
+    <section class="panel config" id="config-view" aria-labelledby="config-heading" hidden>
       <div class="panel-head">
-        <button type="button" id="btn-sidebar" class="ghost tiny side-toggle"
-                aria-expanded="true" aria-controls="svc-list"
-                title="Collapse the service list to status icons (b)">«</button>
-        <h2 id="services-heading">Services</h2>
-        <div class="filter-wrap">
-          <input type="search" id="filter" placeholder="filter by name  /"
-                 aria-label="filter services by name" autocomplete="off" spellcheck="false">
-        </div>
+        <h2 id="config-heading">Configuration</h2>
+        <span class="cfg-note" id="cfg-note"></span>
+        <div class="spacer"></div>
+        <button type="button" class="ghost tiny" id="btn-config-reload"
+                title="Re-read /api/config">Reload</button>
       </div>
-
-      <div class="row-head" aria-hidden="true">
-        <span class="cell"></span>
-        <span class="cell">service</span>
-        <span class="cell c-port">port</span>
-        <span class="cell c-pid">pid</span>
-        <span class="cell c-up">uptime</span>
-        <span class="cell">probe</span>
-      </div>
-
-      <div class="svc-list" id="svc-list" role="grid" aria-multiselectable="false"
-           aria-labelledby="services-heading" tabindex="-1"></div>
-
-      <div class="hints">
-        <span><kbd>j</kbd><kbd>k</kbd> select</span>
-        <span><kbd>s</kbd> start</span>
-        <span><kbd>x</kbd> stop</span>
-        <span><kbd>r</kbd> restart</span>
-        <span><kbd>/</kbd> filter</span>
-        <span><kbd>b</kbd> sidebar</span>
-        <span><kbd>c</kbd> config</span>
-        <span id="sort-note">declaration order</span>
-      </div>
+      <div class="cfg-body" id="cfg-body" tabindex="-1"></div>
     </section>
 
-    <section class="panel detail" id="detail" aria-live="off" aria-label="selected service"></section>
-  </div>
+    <!-- The API reference is its own page; the tab frames it, same-origin only,
+         and loads it the first time the tab is opened. -->
+    <section class="panel tabview" id="api-view" aria-label="API reference" hidden>
+      <iframe id="api-frame" class="api-frame" title="mabo-ctl HTTP API reference"></iframe>
+    </section>
 
-  <!-- The config view REPLACES the split rather than joining it. Keeping both
-       on screen would push the service list off it, and the whole point of the
-       master/detail layout is that every service fits on one screen. -->
-  <section class="panel config" id="config-view" aria-labelledby="config-heading" hidden>
-    <div class="panel-head">
-      <h2 id="config-heading">Configuration</h2>
-      <span class="cfg-note" id="cfg-note"></span>
-      <div class="spacer"></div>
-      <button type="button" class="ghost tiny" id="btn-config-reload"
-              title="Re-read /api/config">Reload</button>
-      <button type="button" class="ghost tiny" id="btn-config-close"
-              title="Back to the service list (Escape)">Close</button>
-    </div>
-    <div class="cfg-body" id="cfg-body" tabindex="-1"></div>
-  </section>
+    <section class="panel tabview" id="terminal-view" aria-label="terminals" hidden>
+      {{if .Terminal}}
+      <div class="panel-head term-head">
+        <div class="term-tabs" id="term-tabs" role="tablist" aria-label="terminal sessions"></div>
+        <button type="button" class="ghost tiny" id="btn-term-new"
+                title="Open a new shell in the repository root">+ New</button>
+        <div class="spacer"></div>
+        <span class="cfg-note" id="term-note"></span>
+      </div>
+      <div class="term-body" id="term-body"></div>
+      {{else}}
+      <div class="placeholder">
+        <h3>Terminal is off</h3>
+        <p>The terminal runs a real shell with your permissions, so it is opt-in.
+          Restart the console with <code>mabo-ctl serve --terminal</code>, or set
+          <code>console_terminal: true</code> in <code>mabo-ctl.yaml</code>.
+          It is only available on a loopback console.</p>
+      </div>
+      {{end}}
+    </section>
+  </div>
 </main>
+</div>
+</div>
 
 <div class="svc-tip" id="svc-tip" role="tooltip" hidden></div>
 
@@ -1272,6 +1475,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
   var FOLLOW_SLACK_PX  = 28;
   var RECONNECT_MIN    = 2000;
   var RECONNECT_MAX    = 30000;
+  var TAIL_GRACE_MS    = 1500;   // a reopened log stream's tail replay lands within this
   var MAX_ACTIVITY     = 14;
 
   var ACCENTS = {
@@ -1318,6 +1522,18 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     if (typeof p === "string" && owns.call(PHASES, p)) { return PHASES[p]; }
     if (!p) { return UNKNOWN; }
     return { glyph: "?", word: String(p), cls: "p-unknown" };
+  }
+
+  // A dead service's detail is "exit explanation\n<log tail>", because the CLI
+  // renders that tail under the row. The console already binds the log pane
+  // below to the selected service, so here the pane owns the tail and the
+  // detail keeps only the explanation. Every other phase's detail is one line
+  // and is passed through untouched.
+  function visibleDetail(st) {
+    if (!st || !st.detail) { return ""; }
+    if (st.phase !== "exited" && st.phase !== "failed") { return st.detail; }
+    var nl = st.detail.indexOf("\n");
+    return nl < 0 ? st.detail : st.detail.slice(0, nl);
   }
 
   /* =======================================================================
@@ -1425,6 +1641,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
       // forever.
       return res.text().then(function (body) {
         if (!res.ok) { throw new Error(explainHTTP(res.status, body)); }
+        if (res.status === 204) { return null; }
         try { return JSON.parse(body); }
         catch (e) { throw new Error("malformed response from " + path); }
       });
@@ -2002,6 +2219,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
 
     es.onopen = function () {
       self.retryAt = RECONNECT_MIN;
+      self.liveSince = Date.now();
       self.setState("live", "");
     };
 
@@ -2029,6 +2247,9 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
         self.retryAt = RECONNECT_MIN;
         if (self.state !== "live") { self.setState("live", ""); }
         self.push(d.line, "", d.service || "");
+        // Every (re)open begins by replaying the tail, which is not news; only
+        // lines after that burst count toward the Output tab's unseen badge.
+        if (Date.now() - self.liveSince > TAIL_GRACE_MS) { noteUnseenOutput(); }
       }
     };
 
@@ -2157,6 +2378,12 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
         ev.preventDefault();
         select(svc.name, true);
       }
+    });
+    // A double click asks to SEE the service, which only the Output tab does;
+    // a single click selects without pulling the reader out of another tab.
+    root.addEventListener("dblclick", function (ev) {
+      if (ev.target && ev.target.closest && ev.target.closest("button")) { return; }
+      showTab("output");
     });
     root.addEventListener("mouseenter", function () { showTip(self); });
     root.addEventListener("mouseleave", hideTip);
@@ -2518,15 +2745,20 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
       this.logPathEl.classList.toggle("dim", !st.log_path);
       this.logPathEl.appendChild(ellipsised(st.log_path || "–"));
 
-      if (st.detail) {
+      var detail = visibleDetail(st);
+      if (detail) {
         this.detailLine.hidden = false;
-        this.detailLine.textContent = st.detail;
+        this.detailLine.textContent = detail;
       } else {
         this.detailLine.hidden = true;
         this.detailLine.textContent = "";
       }
 
       this.paintUptime();
+      // The buttons key off the phase, exactly as the row's do; without this
+      // the header kept the phase it was mounted with and offered Start on a
+      // running service while greying out Stop.
+      this.paintButtons();
     },
 
     // Uptime comes from the spawn time mabo-ctl wrote into the pid record, so it
@@ -2842,6 +3074,8 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     themeWord.textContent = themePref.charAt(0).toUpperCase() + themePref.slice(1);
     btnTheme.title = "Colour theme: " + themePref + (themePref === "system"
       ? " (currently " + (dark ? "dark" : "light") + ")" : "") + ". Click to change.";
+    // A loaded API reference is reloaded in the new theme.
+    if (apiFrame && apiFrame.getAttribute("src")) { apiFrame.setAttribute("src", apiSrc()); }
   }
 
   (function () {
@@ -3211,7 +3445,6 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
   var configBody = document.getElementById("cfg-body");
   var configNote = document.getElementById("cfg-note");
   var btnConfig  = document.getElementById("btn-config");
-  var splitEl    = document.getElementById("split");
 
   var configLoaded = false;
   var configBusy   = false;
@@ -3251,20 +3484,9 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     return declared ? "overrides " + declared : "overrides the declared default";
   }
 
-  function configOpen() { return !configView.hidden; }
+  function configOpen() { return currentTab === "config"; }
 
-  function showConfig(on) {
-    if (on === configOpen()) { return; }
-    configView.hidden = !on;
-    splitEl.hidden = !!on;
-    btnConfig.setAttribute("aria-pressed", on ? "true" : "false");
-    if (on) {
-      loadConfig(false);
-      configBody.focus();
-    } else {
-      btnConfig.focus();
-    }
-  }
+  function showConfig(on) { showTab(on ? "config" : "output"); }
 
   function loadConfig(force) {
     if (configBusy) { return; }
@@ -3630,11 +3852,429 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     return card;
   }
 
-  btnConfig.addEventListener("click", function () { showConfig(!configOpen()); });
   document.getElementById("btn-config-reload")
     .addEventListener("click", function () { loadConfig(true); });
-  document.getElementById("btn-config-close")
-    .addEventListener("click", function () { showConfig(false); });
+
+  /* =======================================================================
+     Tabs: Output, Config, API, Terminal
+     ---------------------------------------------------------------------
+     Each tab REPLACES the view right of the sidebar. The service list itself
+     stays on screen in every tab, and so do its shortcuts.
+     ======================================================================= */
+
+  var currentTab = "output";
+  var TAB_VIEWS = {
+    output:   document.getElementById("detail"),
+    config:   configView,
+    api:      document.getElementById("api-view"),
+    terminal: document.getElementById("terminal-view")
+  };
+  var tabButtons = document.querySelectorAll(".tabs .tab");
+  var apiFrame = document.getElementById("api-frame");
+
+  var TAB_KEY = "mabo-ctl.tab";
+
+  // No token in the frame's URL: this page already holds the session cookie,
+  // and a credential in a URL is one more place for it to be copied from.
+  function apiSrc() {
+    return "/api-docs?theme=" + (document.documentElement.getAttribute("data-theme") || "light");
+  }
+
+  function showTab(name) {
+    if (!owns.call(TAB_VIEWS, name) || name === currentTab) { return; }
+    currentTab = name;
+    try { window.localStorage.setItem(TAB_KEY, name); } catch (e) { /* no storage */ }
+    for (var k in TAB_VIEWS) {
+      if (owns.call(TAB_VIEWS, k)) { TAB_VIEWS[k].hidden = k !== name; }
+    }
+    for (var i = 0; i < tabButtons.length; i++) {
+      var b = tabButtons[i];
+      b.setAttribute("aria-selected", b.dataset.tab === name ? "true" : "false");
+    }
+    hideTip();
+    if (name === "output") { unseenOutput = 0; paintTabBadges(); }
+    if (name === "config") {
+      loadConfig(false);
+      configBody.focus();
+    } else if (name === "api" && !apiFrame.getAttribute("src")) {
+      apiFrame.setAttribute("src", apiSrc());
+    } else if (name === "terminal") {
+      terminals.show();
+    }
+  }
+
+  /* Tab badges: Terminal (n) is how many shells are open; Output (+n) is how
+     many log lines arrived while another tab was showing. */
+  var unseenOutput = 0;
+  var terminalCount = 0;
+  var badgeOutput = document.getElementById("badge-output");
+  var badgeTerminal = document.getElementById("badge-terminal");
+
+  function noteUnseenOutput() {
+    if (currentTab === "output") { return; }
+    unseenOutput++;
+    paintTabBadges();
+  }
+
+  function setTerminalCount(n) {
+    terminalCount = n;
+    paintTabBadges();
+  }
+
+  function paintTabBadges() {
+    badgeOutput.hidden = unseenOutput === 0;
+    badgeOutput.textContent = unseenOutput > 999 ? "+999" : "+" + unseenOutput;
+    badgeOutput.title = unseenOutput + " new log line" + (unseenOutput === 1 ? "" : "s") + " since you left this tab";
+    badgeTerminal.hidden = terminalCount === 0;
+    badgeTerminal.textContent = String(terminalCount);
+    badgeTerminal.title = terminalCount + " shell" + (terminalCount === 1 ? "" : "s") + " open";
+  }
+
+  for (var ti = 0; ti < tabButtons.length; ti++) {
+    tabButtons[ti].addEventListener("click", function (ev) {
+      showTab(ev.currentTarget.dataset.tab);
+    });
+  }
+
+  /* =======================================================================
+     Terminal tab
+     ---------------------------------------------------------------------
+     Each terminal is a login shell the server keeps on a pty. It outlives
+     this page: a reload reattaches and replays the scrollback, so a long job
+     (or an agent) keeps running while the tab is closed. Output arrives over
+     SSE as base64 and is fed to xterm.js as bytes; keystrokes go out as POSTs
+     through a per-terminal queue that keeps them in order.
+     ======================================================================= */
+
+  // The terminal is always indigo, whatever the page theme. Programs that pick
+  // exact colours (Claude Code, prompt themes) assume a dark background, so a
+  // terminal that turned light with the page would make them unreadable.
+  var TERM_THEME = {
+    background: "#1e1b4b", foreground: "#e0e7ff", cursor: "#a5b4fc", cursorAccent: "#1e1b4b",
+    selectionBackground: "#4338ca",
+    black: "#312e81", red: "#f87171", green: "#4ade80", yellow: "#facc15",
+    blue: "#818cf8", magenta: "#e879f9", cyan: "#22d3ee", white: "#c7d2fe",
+    brightBlack: "#7c7fbf", brightRed: "#fca5a5", brightGreen: "#86efac", brightYellow: "#fde047",
+    brightBlue: "#a5b4fc", brightMagenta: "#f0abfc", brightCyan: "#67e8f9", brightWhite: "#eef2ff"
+  };
+  // The server caps one input body at 1 MiB. JSON escaping can sextuple a
+  // control character, so a chunk stays well under that even in the worst case.
+  var TERM_INPUT_CHUNK = 128 * 1024;
+
+  var terminals = {
+    body: document.getElementById("term-body"),
+    tabsEl: document.getElementById("term-tabs"),
+    note: document.getElementById("term-note"),
+    sessions: Object.create(null),
+    order: [],
+    active: "",
+    libState: "",      // "", "loading", "ready", "failed"
+    libWaiters: [],
+    synced: false,
+
+    enabled: function () { return !!this.body; },
+
+    show: function () {
+      if (!this.enabled()) { return; }
+      var self = this;
+      this.loadLib(function () {
+        if (!self.synced) { self.sync(true); } else { self.sync(false); self.fitActive(); self.focusActive(); }
+      });
+    },
+
+    loadLib: function (cb) {
+      if (this.libState === "ready") { cb(); return; }
+      if (this.libState === "failed") { return; }
+      this.libWaiters.push(cb);
+      if (this.libState === "loading") { return; }
+      this.libState = "loading";
+      this.note.textContent = "loading the terminal…";
+      var self = this;
+      var s = document.createElement("script");
+      s.src = "/assets/xterm.js";
+      s.onload = function () {
+        self.libState = "ready";
+        self.note.textContent = "";
+        var w = self.libWaiters; self.libWaiters = [];
+        for (var i = 0; i < w.length; i++) { w[i](); }
+      };
+      s.onerror = function () {
+        self.libState = "failed";
+        self.note.textContent = "could not load the terminal emulator from this console";
+      };
+      document.head.appendChild(s);
+    },
+
+    // sync attaches every terminal the server has that this page does not, and
+    // on the first visit opens one so the tab is never an empty box.
+    sync: function (first) {
+      var self = this;
+      request("GET", "/api/terminals", STATUS_TIMEOUT).then(function (list) {
+        self.synced = true;
+        list = list || [];
+        for (var i = 0; i < list.length; i++) {
+          if (!owns.call(self.sessions, list[i].id)) { self.attach(list[i]); }
+        }
+        setTerminalCount(self.openCount());
+        if (first && !self.order.length) { self.open(); return; }
+        if (!self.active && self.order.length) { self.activate(self.order[self.order.length - 1]); }
+        self.paintEmpty();
+      }).catch(function (err) {
+        self.note.textContent = err.message;
+      });
+    },
+
+    openCount: function () {
+      var n = 0;
+      for (var k in this.sessions) {
+        if (owns.call(this.sessions, k) && !this.sessions[k].dead) { n++; }
+      }
+      return n;
+    },
+
+    // refreshCount keeps the tab badge true while the tab is not open: before
+    // the first visit it only counts the server's shells; after it, it also
+    // attaches any another window opened.
+    refreshCount: function () {
+      if (!this.enabled()) { return; }
+      if (this.synced) { this.sync(false); return; }
+      request("GET", "/api/terminals", STATUS_TIMEOUT).then(function (list) {
+        setTerminalCount((list || []).length);
+      }).catch(function () { /* the badge keeps its last value */ });
+    },
+
+    open: function () {
+      var self = this;
+      var size = this.estimateSize();
+      this.note.textContent = "starting a shell…";
+      request("POST", "/api/terminals", STATUS_TIMEOUT, size).then(function (info) {
+        self.note.textContent = "";
+        self.attach(info);
+        self.activate(info.id);
+      }).catch(function (err) {
+        self.note.textContent = "could not start a shell: " + err.message;
+      });
+    },
+
+    // estimateSize guesses the grid the pane will hold, so the shell starts at
+    // roughly the right size; the fit after attach makes it exact.
+    estimateSize: function () {
+      var r = this.body.getBoundingClientRect();
+      return { cols: Math.max(20, Math.floor((r.width - 16) / 7.2)), rows: Math.max(5, Math.floor((r.height - 16) / 15.5)) };
+    },
+
+    attach: function (info) {
+      var self = this, id = info.id;
+      var pane = el("div", "term-pane");
+      pane.hidden = true;
+      this.body.appendChild(pane);
+
+      var tab = el("span", "term-tab");
+      tab.setAttribute("role", "tab");
+      tab.setAttribute("aria-selected", "false");
+      tab.title = "shell " + id + " · pid " + info.pid;
+      var label = el("button", "x-label", "shell " + id);
+      label.type = "button";
+      label.style.cssText = "border:0;background:transparent;padding:0;color:inherit;font:inherit";
+      label.addEventListener("click", function () { self.activate(id); });
+      var x = el("button", "x", "×");
+      x.type = "button";
+      x.title = "Close shell " + id + " (its processes get SIGHUP)";
+      x.setAttribute("aria-label", "close shell " + id);
+      x.addEventListener("click", function () { self.close(id); });
+      tab.appendChild(label);
+      tab.appendChild(x);
+      this.tabsEl.appendChild(tab);
+
+      var term = new window.Terminal({
+        cursorBlink: true,
+        fontFamily: getComputedStyle(document.documentElement).getPropertyValue("--mono"),
+        fontSize: 12,
+        scrollback: 10000,
+        macOptionIsMeta: true,
+        theme: TERM_THEME,
+        // OSC 8 hyperlinks come from whatever the shell prints — a catted file
+        // included. xterm's default handler would follow any scheme, and a
+        // javascript: link opened from this page runs as this page, token and
+        // all. Only http(s) is followed, in a window with no handle back here.
+        linkHandler: {
+          activate: function (ev, uri) {
+            if (/^https?:\/\//i.test(uri)) { window.open(uri, "_blank", "noopener,noreferrer"); }
+          }
+        }
+      });
+      var fit = new window.FitAddon.FitAddon();
+      term.loadAddon(fit);
+      term.loadAddon(new window.WebLinksAddon.WebLinksAddon(function (ev, uri) {
+        window.open(uri, "_blank", "noopener,noreferrer");
+      }));
+      term.open(pane);
+
+      var s = { id: id, pane: pane, tab: tab, term: term, fit: fit, es: null,
+                queue: "", sending: false, dead: false, replaying: 0, resizeTimer: 0 };
+      this.sessions[id] = s;
+      this.order.push(id);
+
+      term.onData(function (d) { if (!s.replaying) { self.send(s, d); } });
+      term.onResize(function (sz) {
+        clearTimeout(s.resizeTimer);
+        s.resizeTimer = setTimeout(function () {
+          if (s.dead) { return; }
+          request("POST", "/api/terminals/" + encodeURIComponent(id) + "/resize", STATUS_TIMEOUT,
+            { cols: sz.cols, rows: sz.rows }).catch(function () { /* the stream reports an end */ });
+        }, 80);
+      });
+      this.stream(s);
+      this.paintEmpty();
+      setTerminalCount(this.openCount());
+    },
+
+    // stream opens the output. Every (re)connect replays the scrollback, so the
+    // screen is reset first; the server ends with {end:true} when the shell exits.
+    stream: function (s) {
+      var self = this;
+      var es = new EventSource("/api/terminals/" + encodeURIComponent(s.id) + "/stream");
+      s.es = es;
+      es.onopen = function () { if (!s.dead) { s.term.reset(); } };
+      es.onmessage = function (ev) {
+        // A frame queued before the tab was closed must not be written to a
+        // terminal that has already been disposed.
+        if (s.dead) { return; }
+        var msg;
+        try { msg = JSON.parse(ev.data); } catch (e) { return; }
+        if (msg.data && msg.replay) {
+          // The scrollback carries old terminal queries; xterm would answer
+          // them again and the answers would land at the shell prompt as
+          // typed garbage. Nothing generated while a replay is parsed is
+          // sent; counting rather than a flag covers a reconnect arriving
+          // before the previous replay finished.
+          s.replaying++;
+          s.term.write(b64bytes(msg.data), function () { s.replaying--; });
+        } else if (msg.data) {
+          s.term.write(b64bytes(msg.data));
+        }
+        if (msg.end) { self.ended(s); }
+      };
+      es.onerror = function () {
+        // A closed EventSource (404: the shell is gone) does not retry; one
+        // that is merely reconnecting does, and replays on its next open.
+        if (es.readyState === 2) { self.ended(s); }
+      };
+    },
+
+    ended: function (s) {
+      if (s.dead) { return; }
+      s.dead = true;
+      if (s.es) { s.es.close(); s.es = null; }
+      s.tab.classList.add("dead");
+      setTerminalCount(this.openCount());
+      s.term.write("\r\n\x1b[2m[shell " + s.id + " exited — close the tab to dismiss it]\x1b[0m\r\n");
+    },
+
+    send: function (s, data) {
+      if (s.dead) { return; }
+      s.queue += data;
+      if (!s.sending) { this.flush(s); }
+    },
+
+    flush: function (s) {
+      var self = this;
+      if (!s.queue || s.dead) { s.sending = false; return; }
+      s.sending = true;
+      var chunk = s.queue.slice(0, TERM_INPUT_CHUNK);
+      s.queue = s.queue.slice(chunk.length);
+      request("POST", "/api/terminals/" + encodeURIComponent(s.id) + "/input", STATUS_TIMEOUT, { data: chunk })
+        .catch(function (err) { self.note.textContent = "input not delivered: " + err.message; })
+        .then(function () { self.flush(s); });
+    },
+
+    activate: function (id) {
+      if (!owns.call(this.sessions, id)) { return; }
+      this.active = id;
+      for (var k in this.sessions) {
+        if (!owns.call(this.sessions, k)) { continue; }
+        var s = this.sessions[k];
+        s.pane.hidden = k !== id;
+        s.tab.setAttribute("aria-selected", k === id ? "true" : "false");
+      }
+      this.fitActive();
+      this.focusActive();
+    },
+
+    close: function (id) {
+      var s = this.sessions[id];
+      if (!s) { return; }
+      if (!s.dead && !window.confirm("Close shell " + id + "? Everything running in it gets SIGHUP.")) { return; }
+      var self = this;
+      var finish = function () {
+        if (s.es) { s.es.close(); }
+        s.term.dispose();
+        s.pane.parentNode.removeChild(s.pane);
+        s.tab.parentNode.removeChild(s.tab);
+        delete self.sessions[id];
+        self.order.splice(self.order.indexOf(id), 1);
+        if (self.active === id) {
+          self.active = "";
+          if (self.order.length) { self.activate(self.order[self.order.length - 1]); }
+        }
+        self.paintEmpty();
+        setTerminalCount(self.openCount());
+      };
+      if (s.dead) { finish(); return; }
+      s.dead = true;
+      request("POST", "/api/terminals/" + encodeURIComponent(id) + "/close", MUTATE_TIMEOUT)
+        .catch(function () { /* already gone */ })
+        .then(finish);
+    },
+
+    fitActive: function () {
+      var s = this.active && this.sessions[this.active];
+      if (!s || s.pane.hidden || currentTab !== "terminal") { return; }
+      try { s.fit.fit(); } catch (e) { /* not laid out yet */ }
+    },
+
+    focusActive: function () {
+      var s = this.active && this.sessions[this.active];
+      if (s && currentTab === "terminal") { s.term.focus(); }
+    },
+
+    paintEmpty: function () {
+      var empty = this.body.querySelector(".term-empty");
+      if (this.order.length) {
+        if (empty) { empty.parentNode.removeChild(empty); }
+        return;
+      }
+      if (!empty) {
+        this.body.appendChild(el("div", "term-empty",
+          "No shell is open. + New starts one in the repository root."));
+      }
+    }
+  };
+
+  function b64bytes(s) {
+    var bin = atob(s), out = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) { out[i] = bin.charCodeAt(i); }
+    return out;
+  }
+
+  if (terminals.enabled()) {
+    document.getElementById("btn-term-new").addEventListener("click", function () {
+      terminals.loadLib(function () { terminals.open(); });
+    });
+    window.addEventListener("resize", function () { terminals.fitActive(); });
+    if (window.ResizeObserver) {
+      new ResizeObserver(function () { terminals.fitActive(); }).observe(terminals.body);
+    }
+    terminals.refreshCount();
+  }
+
+  // The open tab survives a reload — the one moment a terminal user most needs
+  // to land back where they were.
+  (function () {
+    var saved = null;
+    try { saved = window.localStorage.getItem(TAB_KEY); } catch (e) { /* no storage */ }
+    if (saved && saved !== "output") { showTab(saved); }
+  }());
 
   /* =======================================================================
      Keyboard
@@ -3659,19 +4299,20 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
 
     if (ev.key === "/" && !typing && !ev.metaKey && !ev.ctrlKey && !ev.altKey) {
       ev.preventDefault();
-      // The filter belongs to the service list, so asking for it asks for the
-      // list back: focusing an input inside a hidden view does nothing.
-      showConfig(false);
+      // The filter lives in the full sidebar; focusing it inside the rail
+      // would do nothing.
       if (railOn) { setRail(false, false); }
       filterEl.focus();
       filterEl.select();
       return;
     }
     if (typing || ev.metaKey || ev.ctrlKey || ev.altKey) { return; }
+    // Every key inside a terminal belongs to the shell.
+    if (t && t.closest && t.closest("#terminal-view")) { return; }
 
-    if (ev.key === "Escape" && configOpen()) {
+    if (ev.key === "Escape" && currentTab !== "output") {
       ev.preventDefault();
-      showConfig(false);
+      showTab("output");
       return;
     }
     if (ev.key === "c") {
@@ -3679,11 +4320,6 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
       showConfig(!configOpen());
       return;
     }
-    // Every remaining shortcut acts on the service list, which the config view
-    // has replaced. Moving or starting something the reader cannot see is worse
-    // than doing nothing.
-    if (configOpen()) { return; }
-
     if (ev.key === "b") {
       ev.preventDefault();
       setRail(!railOn, true);
@@ -3966,6 +4602,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     // Until the first service list arrives there is no pane or event stream to
     // recover; loadServices owns its own retry and will open both on success.
     if (!booted) { return; }
+    terminals.refreshCount();
     if (eventsES === null || eventsES.readyState === 2 ||
         (eventsES.readyState === 0 && Date.now() - eventsOpenedAt > RECONNECT_MAX)) {
       openEvents();

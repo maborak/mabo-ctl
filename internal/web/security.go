@@ -134,7 +134,7 @@ func (s *Server) guard(next http.Handler) http.Handler {
 			case rec.status >= 400:
 				auditLog.Printf("refused %d %s %s from %s",
 					rec.status, r.Method, r.URL.Path, r.RemoteAddr)
-			case r.Method == http.MethodPost:
+			case r.Method == http.MethodPost && !terminalChatter(r):
 				auditLog.Printf("accepted %d %s %s from %s",
 					rec.status, r.Method, r.URL.Path, r.RemoteAddr)
 			}

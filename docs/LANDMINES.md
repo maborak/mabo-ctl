@@ -611,3 +611,70 @@ go test ./internal/web -run 'TestConsolePageRecoversFromAStalledTransport|TestSS
 ```
 
 Full analysis: [RCA-2026-10-25-console-sleep.md](RCA-2026-10-25-console-sleep.md).
+
+## 20. The detail header kept the phase it was mounted with
+
+**Shape.** Two views of one state, only one of them repainted. The service row
+recomputed its Start/Stop buttons on every status; the detail header computed
+its own once, when a service was selected — before any status had arrived, so
+from the "unknown" phase, which is deliberately treated as not alive.
+
+**Where it bit us.** `internal/web/console.html` (`detail.applyStatus`),
+noticed 2026-10-31 in a screenshot of the redesigned console: a running service
+showed an enabled **Start** and a greyed-out **Stop** in its header, while its
+row said the opposite. Clicking Start was refused by the server; Stop, the one
+action that made sense, was unreachable from the header until another service
+was selected and this one selected again.
+
+**Fix.** `detail.applyStatus` ends by calling `paintButtons`, so the header is
+repainted from the same phase table on every status, exactly like the row.
+
+**Detector.**
+```bash
+go test ./internal/web -run TestDetailHeaderRepaintsItsButtonsOnEveryStatus
+```
+
+## 21. A reattached terminal answered its own scrollback
+
+**Shape.** Replaying recorded terminal output into a live emulator re-runs
+everything in it — including the queries programs sent to the terminal they
+had at the time. The emulator answers each one again, and the answers are
+written to whatever is reading the pty now.
+
+**Where it bit us.** `internal/web/console.html` (`terminals.stream`), reported
+2026-10-31: reloading the console after running a program that probes the
+terminal (device attributes `ESC[c`, foreground/background colour `OSC 10/11`,
+mode request `DECRQM`) typed `2RR0;276;0c10;rgb:e0e0/e7e7/ffff11;…$y` at the
+zsh prompt on every reload, followed by a cascade of "command not found".
+
+**Fix.** The server marks the scrollback frame `"replay": true`; the page sets
+a per-terminal `replaying` flag while xterm parses that frame (cleared by the
+write callback, so live output is untouched) and drops everything `onData`
+emits meanwhile. Live queries are still answered, which programs need.
+
+**Detector.**
+```bash
+go test ./internal/web -run 'TestTerminalStreamMarksTheScrollbackAsReplay|TestConsolePageHasThemeSidebarAndRestartAll'
+```
+
+## 22. A dead service's log tail rendered twice
+
+**Shape.** One payload serving two readers, with only one of them needing the
+whole thing. `supervisor` appends the last 20 log lines to a dead service's
+`Detail` so `mabo-ctl status` can print the tail under the row, and the console
+rendered that same string in the detail pane while its log pane below was
+already bound to the selected service's log.
+
+**Where it bit us.** `internal/web/console.html` (`detail.applyStatus`),
+reported 2026-10-31 with a screenshot of a failed service: the same timestamped
+tail appeared twice on one screen, once inside the detail pane and once in the
+output pane directly below it.
+
+**Fix.** `visibleDetail` keeps only the first line of the detail for `exited`
+and `failed`; the log pane is the console's one owner of the tail. The JSON and
+the CLI keep the full detail, because there the tail is the only copy.
+
+**Detector.**
+```bash
+go test ./internal/web -run TestDetailPaneDoesNotRepeatTheLogTail
+```
