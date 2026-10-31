@@ -90,6 +90,24 @@ type Model struct {
 	// being cleared.
 	pending   map[string]opKind
 	activeOps int
+
+	// ctrlGen counts the controllers a reload has swapped in, so a status
+	// read from a controller since replaced is recognised and dropped.
+	ctrlGen int
+
+	// The configuration watch and reload. configChanged reports that
+	// mabo-ctl.yaml, or an env_file it names, no longer matches the
+	// configuration in force, and configChecking that a comparison is in
+	// flight. confirmReload holds L's y/n question open; reload is the
+	// reload in flight, and quitAfterReload a quit that arrived during it.
+	// reloadErr is the last reload's failure, kept apart from err because it
+	// alone is about the configuration.
+	configChanged   bool
+	configChecking  bool
+	confirmReload   bool
+	reload          *reloadSession
+	quitAfterReload bool
+	reloadErr       error
 }
 
 // New returns a console model driving ctrl.
@@ -99,8 +117,8 @@ type Model struct {
 // pure function of its messages.
 //
 // When [Options.Colors] is nil and ctrl can describe its instances, the
-// colours declared in mabo-ctl.yaml are adopted, so the plain [Run] entry point
-// still gives each service the colour its config asked for.
+// colours declared in mabo-ctl.yaml are adopted, so a caller that passes no
+// colours still gives each service the colour its config asked for.
 func New(ctrl Controller, opt Options) Model {
 	if opt.Colors == nil && ctrl != nil {
 		opt.Colors = serviceColors(ctrl)
@@ -121,7 +139,7 @@ func New(ctrl Controller, opt Options) Model {
 // immediately, so the console is populated on its first frame rather than one
 // tick later.
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(refresh(m.ctrl), tick())
+	return tea.Batch(refresh(m.ctrl, m.ctrlGen), tick())
 }
 
 // Shutdown stops every goroutine the console owns: the log tail and any
@@ -158,15 +176,43 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tickMsg:
 		var cmds []tea.Cmd
+		// The list keeps refreshing through a reload: watching services stop
+		// and come back is the progress report.
+		if cfg := configOf(m.ctrl); m.opt.Reload != nil && cfg != nil && !m.configChecking && m.reload == nil {
+			m.configChecking = true
+			cmds = append(cmds, checkConfig(cfg))
+		}
 		if !m.refreshing {
 			m.refreshing = true
-			cmds = append(cmds, refresh(m.ctrl))
+			cmds = append(cmds, refresh(m.ctrl, m.ctrlGen))
 		}
 		cmds = append(cmds, tick())
 		return m, tea.Batch(cmds...)
 
 	case statusMsg:
+		if msg.gen != m.ctrlGen {
+			// Read from a controller a reload has replaced. The refresh
+			// issued with the swap is in flight and clears refreshing.
+			return m, nil
+		}
 		return m.applyStatus(msg.statuses)
+
+	case configCheckMsg:
+		m.configChecking = false
+		if msg.cfg == configOf(m.ctrl) {
+			m.configChanged = msg.changed
+		}
+		return m, nil
+
+	case reloadEventMsg:
+		if msg.sess != m.reload {
+			return m, nil
+		}
+		m.recordEvent(msg.ev)
+		return m, msg.sess.next()
+
+	case reloadDoneMsg:
+		return m.finishReload(msg)
 
 	case tailLineMsg:
 		// A line from a superseded session is dropped, and its reader is NOT
@@ -327,7 +373,7 @@ func (m Model) finishOp(msg opDoneMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.refreshing = true
-	return m, refresh(m.ctrl)
+	return m, refresh(m.ctrl, m.ctrlGen)
 }
 
 // pendingNames is the set of services an operation marked as busy: the ones it
@@ -350,6 +396,13 @@ func (m Model) launch(kind opKind, names []string) (tea.Model, tea.Cmd) {
 	if m.ctrl == nil {
 		return m, nil
 	}
+	if m.reload != nil {
+		// The reload is stopping and starting services right now; a second
+		// operation would race it. Say so — a key that does nothing reads as
+		// a broken key.
+		m.notice = "the configuration reload is still running; try again when it finishes"
+		return m, nil
+	}
 	sess := newOp(m.ctrl, kind, names)
 	if !m.live.addOp(sess) {
 		return m, nil
@@ -359,7 +412,7 @@ func (m Model) launch(kind opKind, names []string) (tea.Model, tea.Cmd) {
 		m.pending[n] = kind
 	}
 	m.notice = sess.label() + "…"
-	m.err = nil
+	m.err, m.reloadErr = nil, nil
 	return m, sess.next()
 }
 
@@ -378,7 +431,10 @@ func (m Model) launchSelected(kind opKind) (tea.Model, tea.Cmd) {
 // the letters that are otherwise commands.
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.Type == tea.KeyCtrlC {
-		return m.quitNow()
+		return m.requestQuit()
+	}
+	if m.confirmReload {
+		return m.answerReload(msg)
 	}
 	if m.filtering {
 		return m.editFilter(msg)
@@ -386,15 +442,18 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.help {
 		// Any key closes the overlay; a quit key still quits.
 		if k := msg.String(); k == "q" {
-			return m.quitNow()
+			return m.requestQuit()
 		}
 		m.help = false
 		return m, nil
 	}
 
 	switch msg.String() {
+	case "L":
+		return m.askReload()
+
 	case "q":
-		return m.quitNow()
+		return m.requestQuit()
 
 	case "esc":
 		// Escape backs out of the log pane rather than quitting, so the key
@@ -403,7 +462,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.focus = focusList
 			return m, nil
 		}
-		return m.quitNow()
+		return m.requestQuit()
 
 	case "?":
 		m.help = true

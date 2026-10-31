@@ -126,6 +126,17 @@ func Phases() []Phase {
 	}
 }
 
+// Alive reports whether p describes a live process. Slow and degraded are alive
+// but not answering their probe; stopped, failed and exited describe a process
+// that is gone.
+func (p Phase) Alive() bool {
+	switch p {
+	case PhaseRunning, PhaseReady, PhaseSlow, PhaseDegraded:
+		return true
+	}
+	return false
+}
+
 // Status is one service's state. It is pure data: internal/ui renders it, and
 // [github.com/maborak/mabo-ctl/internal/ui.StatusJSON] serialises it as the
 // stable machine contract.
@@ -239,6 +250,12 @@ type Supervisor struct {
 	// reaper also takes, so the reaper always reads a settled value. It is
 	// guarded by opsMu, which is only ever held for a map lookup.
 	stopping map[string]bool
+
+	// owed names the services a configuration reload stopped and could not
+	// start again, so the next reload starts them instead of skipping them as
+	// not running. ApplyReload writes it on the supervisor it hands over; an
+	// explicit Stop settles an entry. Guarded by opsMu, like stopping.
+	owed map[string]bool
 
 	// holders caches port-holder lookups for [holderTTL], keyed by port. Only
 	// the READ path uses it; see Supervisor.heldBy for why startOne must not.
@@ -948,7 +965,28 @@ func unreadyWhy(p Phase) string {
 	}
 }
 
-// hookExitCode digs the wait status out of a hook failure. exec.ExitError is// what Run returns for a non-zero status or a signal; anything else (context
+// runningPhase settles the phase of a service a start found already running.
+//
+// A start's result is what the depends_ready_on fold reads, and "already
+// running" does not answer "is it ready?". Returning [PhaseRunning] for a live
+// service that declares a probe made every readiness-gated dependant of an up,
+// READY dependency skip itself with "is running but declares no probe" — false
+// on both counts, and reached by every `restart` of the dependant and every
+// configuration reload that changed it (docs/LANDMINES.md §17). One probe
+// answers the question, with the phase Status would derive for the same
+// process.
+func (s *Supervisor) runningPhase(ctx context.Context, in service.Instance, startedAt time.Time) Phase {
+	if in.Health == "" {
+		return PhaseRunning
+	}
+	if probeOnce(ctx, in).OK {
+		return PhaseReady
+	}
+	return s.probeFailPhase(in, startedAt)
+}
+
+// hookExitCode digs the wait status out of a hook failure. exec.ExitError is
+// what Run returns for a non-zero status or a signal; anything else (context
 // expiry, unresolvable path) has no exit status, and -1 says so honestly —
 // the same reading the exit record gives a service whose wait was never seen.
 func hookExitCode(err error) int {
@@ -1020,17 +1058,18 @@ func (s *Supervisor) startOne(ctx context.Context, in service.Instance, ev chan<
 	defer lk.Unlock()
 
 	// 1. Already running? Starting a second copy is never what the user meant.
-	if pid, err := s.livePID(in.Name); errors.Is(err, ErrStalePID) {
+	if rec, err := s.liveRecord(in.Name); errors.Is(err, ErrStalePID) {
 		// Provably not our process. Clear the record and start for real,
 		// instead of refusing forever on the strength of a dead file.
 		s.clearStalePID(in.Name, err, ev)
 	} else if err != nil {
 		emit(ev, Event{Service: in.Name, Msg: err.Error(), Err: err})
 		return PhaseFailed, err
-	} else if pid > 0 {
-		emit(ev, Event{Service: in.Name, Phase: PhaseRunning,
-			Msg: fmt.Sprintf("already running (pid %d)", pid)})
-		return PhaseRunning, nil
+	} else if rec.PID > 0 {
+		phase := s.runningPhase(ctx, in, rec.StartedAt)
+		emit(ev, Event{Service: in.Name, Phase: phase,
+			Msg: fmt.Sprintf("already running (pid %d)", rec.PID)})
+		return phase, nil
 	}
 
 	// 1b. Did this service's runtime resolve? [service.Resolve] defers that
@@ -1298,12 +1337,23 @@ func (s *Supervisor) startOne(ctx context.Context, in service.Instance, ev chan<
 // set made `mabo-ctl stop listener` silently kill the backend it depends on
 // (docs/LANDMINES.md §8). Naming none still means everything: for a stop that
 // already meant "all", and nothing narrows it.
+//
+// A cancelled context stops the run between services, as it does between
+// Start's levels: the services not yet reached are left alone rather than
+// signalled with no one waiting on them. An explicit stop also settles any
+// restart a configuration reload still owed the service; see
+// [Supervisor.ApplyReload].
 func (s *Supervisor) Stop(ctx context.Context, names []string, ev chan<- Event) error {
 	sel, err := service.SelectExact(s.insts, names)
 	if err != nil {
 		return err
 	}
 	for i := len(sel) - 1; i >= 0; i-- {
+		if err := ctx.Err(); err != nil {
+			emit(ev, Event{Msg: "interrupted; remaining services were not stopped", Err: err})
+			return nil
+		}
+		s.settleOwed(sel[i].Name)
 		s.stopOne(ctx, sel[i].Name, ev)
 	}
 	return nil
@@ -1341,6 +1391,16 @@ func (s *Supervisor) stopOne(ctx context.Context, name string, ev chan<- Event) 
 	}
 	pid := pidRec.PID
 	if pid <= 0 {
+		// No pid yet is not "not running" when another mabo-ctl holds the start
+		// claim: its spawn is moments away, and reporting the stop as done let
+		// that start bring up the service this stop was asked to take down.
+		if owner, since, ok := s.st.ActiveClaim(name, time.Now()); ok && owner != os.Getpid() {
+			err := fmt.Errorf("%s is being started by another mabo-ctl (pid %d, since %s); "+
+				"there is nothing to stop yet — stop it again once that start finishes",
+				name, owner, since.Format(time.RFC3339))
+			emit(ev, Event{Service: name, Err: err, Msg: err.Error()})
+			return
+		}
 		emit(ev, Event{Service: name, Phase: PhaseStopped, Msg: "not running"})
 		return
 	}
@@ -1397,6 +1457,20 @@ func (s *Supervisor) stopOne(ctx context.Context, name string, ev chan<- Event) 
 			s.runStopHook(ctx, in, in.Hooks.PostStop, ev, "post_stop")
 		}
 		emit(ev, Event{Service: name, Phase: PhaseStopped, Msg: "stopped"})
+		return
+	}
+
+	// Interrupted is not timed out. awaitDeath returns early on a cancelled
+	// context, and escalating on that turned every abandoned stop — the
+	// console quitting mid-stop, a web operation reaching its deadline — into
+	// an immediate SIGKILL with no grace at all, service after service. The
+	// process has its SIGTERM; nobody is left to escalate, so say so and keep
+	// the pid file naming it. SIGKILL is earned by the grace running out.
+	// See docs/LANDMINES.md §18.
+	if err := ctx.Err(); err != nil {
+		err = fmt.Errorf("%s: stop interrupted after SIGTERM, not escalating; pid %d may still be exiting: %w",
+			name, pid, err)
+		emit(ev, Event{Service: name, Err: err, Msg: err.Error()})
 		return
 	}
 
@@ -1466,6 +1540,13 @@ func (s *Supervisor) Restart(ctx context.Context, names []string, ev chan<- Even
 func (s *Supervisor) Reset(ctx context.Context, force bool, ev chan<- Event) error {
 	if err := s.Stop(ctx, nil, ev); err != nil {
 		return err
+	}
+	// An interrupted Stop leaves services it never reached, and ones it sent
+	// SIGTERM without waiting out. Wiping the pid files under them would turn
+	// each into an orphan no command can name, so an interrupted reset stops
+	// here with the state directory intact.
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("reset interrupted; the state directory was not cleared: %w", err)
 	}
 
 	for _, in := range s.insts {

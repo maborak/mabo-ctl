@@ -21,8 +21,8 @@ func PortEnvVar(n string) string {
 }
 
 // CaptureEnv reads and UNSETS the caller's <NAME>_PORT variables, returning
-// what it took, keyed by variable name. It MUST be called before any child is
-// spawned.
+// what it took, keyed by variable name. It MUST be called before any child that
+// could see the variable is spawned.
 //
 // The unset is the point. Reading BACKEND_PORT without removing it leaves the
 // variable in the environment every child inherits, so a service whose port
@@ -30,12 +30,19 @@ func PortEnvVar(n string) string {
 // supervisor then probes a port nobody is listening on. Resolve puts the
 // authoritative value back into each child's environment; see [buildEnv].
 //
-// CaptureEnv mutates the process environment, so call it exactly once, early,
-// on the main goroutine: os.Unsetenv is not safe to race against another
-// goroutine reading the environment. A variable that is set but blank is taken
-// and reported as blank; Resolve treats a blank value as "not set" and falls
-// through to the next precedence level. Duplicate names are collapsed. The
-// returned map is never nil.
+// CaptureEnv mutates the process environment. Call it early — at bootstrap,
+// before anything is resolved — and again only for names a reloaded
+// configuration adds, which is what cmd/mabo-ctl's reload does so that a new
+// service gets the precedence a fresh `mabo-ctl start` in that shell would give
+// it. Go's environment functions are synchronised, so the call is safe from any
+// goroutine; what must not happen is a Resolve reading the environment
+// concurrently, and the reload runs under the lock that excludes one. A
+// supervised child never inherits the process environment directly: every
+// service, hook and probe is spawned with Instance.Env.
+//
+// A variable that is set but blank is taken and reported as blank; Resolve
+// treats a blank value as "not set" and falls through to the next precedence
+// level. Duplicate names are collapsed. The returned map is never nil.
 func CaptureEnv(names []string) map[string]string {
 	out := make(map[string]string, len(names))
 	for _, n := range names {
@@ -130,6 +137,11 @@ func resolvePorts(cfg *config.Config, st *state.Dir, opt Options) ([]Origin, err
 		}
 	}
 
+	adopt := make(map[string]bool, len(opt.IgnoreRunEnvFor))
+	for _, n := range opt.IgnoreRunEnvFor {
+		adopt[n] = true
+	}
+
 	origins := make([]Origin, 0, len(cfg.Services))
 	for _, s := range cfg.Services {
 		o := Origin{Service: s.Name, Port: s.Port, Source: FromDefault, Declared: s.Port}
@@ -163,7 +175,7 @@ func resolvePorts(cfg *config.Config, st *state.Dir, opt Options) ([]Origin, err
 		}
 		// Stale state may not invent a port the config no longer declares: a
 		// service declared portless stays portless.
-		if p, ok := persisted.Port(s.Name); ok && p > 0 && s.Port > 0 {
+		if p, ok := persisted.Port(s.Name); ok && p > 0 && s.Port > 0 && !adopt[s.Name] {
 			o.Port, o.Source = p, FromRunEnv
 			// The reason Origin exists: a persisted port outranking a default
 			// that has since changed must be visible, never silent.

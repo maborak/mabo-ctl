@@ -2,13 +2,16 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/spf13/cobra"
 
@@ -125,35 +128,122 @@ type app struct {
 	// warning line: the web console renders it on /api/config.
 	origins  []service.Origin
 	resolved bool
+
+	// reloadMu serialises [app.reloadConfig], which replaces cfg, sup, lc,
+	// insts and origins together.
 	reloadMu sync.Mutex
+	// resident is the supervisor a long-lived watcher reads: the one this
+	// process started with, then whichever a configuration reload adopted.
+	// It is separate from sup because the interactive prompt rebuilds sup
+	// on the main goroutine for every line, and a watcher goroutine must not
+	// read that field.
+	resident atomic.Pointer[supervisor.Supervisor]
 }
 
-// reloadForServe builds a fresh validated supervisor snapshot. It intentionally
-// does not stop or restart existing processes; the new snapshot governs later
-// web-console operations only.
-func (a *app) reloadForServe() (*supervisor.Supervisor, []service.Origin, string, bool, error) {
+// reloaded is what [app.reloadConfig] adopted: the new supervisor, where each
+// resolved port came from, and what applying it did to the running stack.
+type reloaded struct {
+	sup     *supervisor.Supervisor
+	origins []service.Origin
+	report  supervisor.ReloadReport
+}
+
+// reloadConfig re-reads mabo-ctl.yaml, resolves it with the inputs startup used,
+// and applies it to the running stack through
+// [supervisor.Supervisor.ApplyReload], reporting progress on ev. It is what the
+// resident front ends — `serve` and the full-screen console — run when the
+// operator confirms a reload.
+//
+// A nil result means nothing was applied: the file did not load, validate or
+// resolve, or ApplyReload refused, and the previous configuration is still in
+// force. A non-nil result is authoritative even when the error is not nil;
+// the error then names the services that could not be stopped or started.
+//
+// It composes the resolution the way [app.resolve] does, with one deliberate
+// difference: the port-drift conversation [app.reconcilePorts] holds on stdin
+// is impossible here — the console owns the terminal and serve runs this from
+// a request — so the edit itself is the answer. A service whose declared port
+// was just edited adopts it; every other service keeps the port run.env
+// pinned for it, which an unrelated edit must not move.
+func (a *app) reloadConfig(ctx context.Context, ev chan<- supervisor.Event) (*reloaded, error) {
 	a.reloadMu.Lock()
 	defer a.reloadMu.Unlock()
 
-	a.loaded, a.cfg, a.cfgErr = false, nil, nil
-	a.resolved, a.sup, a.lc, a.insts, a.st, a.origins = false, nil, nil, nil, nil, nil
-	a.capturedOnce = false
-	a.load()
-	a.capture()
-	insts, err := a.resolve()
+	cfg, err := a.rereadConfig()
 	if err != nil {
-		return nil, nil, "", false, err
+		return nil, err
 	}
-	cfg, err := a.config()
+	if cfg.Root != a.cfg.Root {
+		return nil, fmt.Errorf("the configuration is now %s, outside %s; restart mabo-ctl to supervise another directory",
+			cfg.Path, a.cfg.Root)
+	}
+	if len(a.ports.values) > 0 && !slices.Equal(service.PortSlotNames(cfg), service.PortSlotNames(a.cfg)) {
+		return nil, fmt.Errorf("--ports assigns ports by position, and this edit changed which services declare one (%s → %s); "+
+			"restart mabo-ctl with --ports matching the new list, or name them with --port SERVICE=PORT",
+			strings.Join(service.PortSlotNames(a.cfg), ", "), strings.Join(service.PortSlotNames(cfg), ", "))
+	}
+	a.captureFrom(cfg)
+	insts, origins, err := service.Resolve(cfg, a.st, service.Options{
+		Ports:           a.ports.values,
+		PortOverrides:   a.portOverrides,
+		EnvVars:         a.captured,
+		IgnoreRunEnv:    a.refreshPorts,
+		IgnoreRunEnvFor: editedPorts(a.cfg, cfg),
+	})
 	if err != nil {
-		return nil, nil, "", false, err
+		return nil, err
 	}
+
 	sup := supervisor.New(cfg, a.st, insts)
-	if err := service.Persist(a.st, insts); err != nil {
-		return nil, nil, "", false, err
+	report, err := a.sup.ApplyReload(ctx, sup, ev)
+	if !report.Applied {
+		return nil, err
 	}
-	a.sup = sup
-	return sup, append([]service.Origin(nil), a.origins...), a.stateDir(), a.configPath != "", nil
+	a.cfg, a.sup, a.insts, a.origins = cfg, sup, insts, origins
+	a.lc = a.env.NewSupervisor(sup)
+	a.renderer().SetInstanceColors(insts)
+	a.resident.Store(sup)
+	if perr := service.Persist(a.st, insts); perr != nil {
+		err = errors.Join(err, fmt.Errorf("mabo-ctl: persist resolved ports: %w", perr))
+	}
+	return &reloaded{sup: sup, origins: origins, report: report}, err
+}
+
+// rereadConfig reads the configuration again the way [app.load] first found
+// it: the --config file when one was given, discovery from the same directory
+// otherwise. Re-running discovery is what picks up the rename it asks for — a
+// devctl.yaml renamed to mabo-ctl.yaml — where re-reading the old path would
+// fail every later reload.
+func (a *app) rereadConfig() (*config.Config, error) {
+	var (
+		cfg *config.Config
+		err error
+	)
+	if a.configPath != "" {
+		cfg, err = config.Load(a.configPath)
+	} else {
+		cfg, _, err = config.Discover(a.env.Wd)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if err := cfg.ApplyProfiles(a.activeProfiles()); err != nil {
+		return nil, err
+	}
+	return cfg, nil
+}
+
+// editedPorts names the services whose declared port next changes from prev,
+// including services prev does not declare at all: for those the edit is the
+// operator's instruction, and the run.env level must not override it.
+func editedPorts(prev, next *config.Config) []string {
+	var out []string
+	for _, s := range next.Services {
+		if old, ok := prev.Service(s.Name); !ok || old.Port != s.Port {
+			out = append(out, s.Name)
+		}
+	}
+	return out
 }
 
 // newApp returns an app bound to e. e must already have been passed through
@@ -297,7 +387,14 @@ func (a *app) capture() {
 		return
 	}
 	a.capturedOnce = true
-	got := service.CaptureEnv(a.cfg.Names())
+	a.captureFrom(a.cfg)
+}
+
+// captureFrom takes the <NAME>_PORT variables of cfg's services and merges them
+// into what was already captured. A configuration reload calls it directly,
+// for the services the edit added.
+func (a *app) captureFrom(cfg *config.Config) {
+	got := service.CaptureEnv(cfg.Names())
 	if a.captured == nil {
 		a.captured = got
 		return

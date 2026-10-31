@@ -276,6 +276,47 @@ func TestIgnoreRunEnvLetsTheDeclaredDefaultWin(t *testing.T) {
 	}
 }
 
+// TestIgnoreRunEnvForAdoptsOnlyTheNamedServices is what a configuration reload
+// uses: the service whose declared port was just edited takes the edit, and
+// every other service keeps the port run.env pinned for it.
+func TestIgnoreRunEnvForAdoptsOnlyTheNamedServices(t *testing.T) {
+	root, _ := testRepo(t)
+	cfg := testConfig(t, root, svc("website", 7100), svc("backend", 7102))
+	st := testState(t, root, map[string]int{"backend": 7002, "website": 7001})
+
+	_, origins, err := Resolve(cfg, st, Options{IgnoreRunEnvFor: []string{"backend"}})
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if o := originFor(t, origins, "backend"); o.Source != FromDefault || o.Port != 7102 {
+		t.Errorf("backend = %d from %q, want the declared 7102", o.Port, o.Source)
+	}
+	if o := originFor(t, origins, "website"); o.Source != FromRunEnv || o.Port != 7001 {
+		t.Errorf("website = %d from %q, want 7001 from run.env — only the named service adopts", o.Port, o.Source)
+	}
+}
+
+// TestTemplateErrorsNeverQuoteTheValue: an env value is where a credential
+// lives, and a resolve error reaches stderr, the web console and its event
+// stream. docs/LANDMINES.md §4.
+func TestTemplateErrorsNeverQuoteTheValue(t *testing.T) {
+	root, _ := testRepo(t)
+	const secret = "sk-live-SECRET-VALUE-42"
+	s := svc("backend", 7102)
+	s.Env = map[string]string{"API_TOKEN": secret + `{{.Port "nope"}}`}
+	cfg := testConfig(t, root, s)
+	_, _, err := Resolve(cfg, nil, Options{})
+	if err == nil {
+		t.Fatal("Resolve accepted a reference to an undeclared service")
+	}
+	if strings.Contains(err.Error(), secret) {
+		t.Fatalf("the resolve error quotes the env value:\n%v", err)
+	}
+	if !strings.Contains(err.Error(), `env["API_TOKEN"]`) {
+		t.Errorf("the error no longer names the field: %v", err)
+	}
+}
+
 // TestOriginNoOverrideWhenPersistedMatchesDefault keeps Override meaningful:
 // run.env agreeing with the default is not an override and must not print.
 func TestOriginNoOverrideWhenPersistedMatchesDefault(t *testing.T) {

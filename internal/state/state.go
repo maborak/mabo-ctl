@@ -426,6 +426,26 @@ func (d *Dir) ClaimPID(svc string, owner int, now time.Time) (ClaimReport, error
 	return rep, fmt.Errorf("state: %w: another mabo-ctl claimed %s first", ErrClaimed, svc)
 }
 
+// ActiveClaim reports a start of svc that another process has in flight: a
+// claim that [Dir.ClaimPID] would refuse rather than clear, because its owner
+// is alive and it is younger than [claimMaxAge]. Wreckage — a dead owner, an
+// expired or unreadable claim — is not reported; the next start clears it.
+//
+// It is a read. A stop that finds no pid file uses it to tell "not running"
+// from "another mabo-ctl is starting it right now", which used to print the
+// same "not running" while the other start went on to spawn the service the
+// stop had been asked to take down.
+func (d *Dir) ActiveClaim(svc string, now time.Time) (pid int, since time.Time, ok bool) {
+	if validService(svc) != nil {
+		return 0, time.Time{}, false
+	}
+	rec, err := d.readClaim(d.PIDClaimPath(svc))
+	if err != nil || rec.PID <= 0 || now.Sub(rec.At) > claimMaxAge || !Alive(rec.PID) {
+		return 0, time.Time{}, false
+	}
+	return rec.PID, rec.At, true
+}
+
 // ReleaseClaim removes svc's start claim. An absent claim is not an error: it
 // is the normal state after WritePIDAt superseded it, after another caller
 // released it first, and after a `reset` removed the whole tree.

@@ -535,10 +535,20 @@ opens the same console with the stack already coming up in it.
 ↑/↓ or j/k  select      s  start     x  stop      r  restart
 a  start all            S  stop all  l or tab  focus the log pane
 /  filter logs          g/G  top/bottom          ?  help      q  quit
+L  reload mabo-ctl.yaml (asks first)
 ```
 
 Quitting does **not** stop the supervised services. They were spawned with
 `setsid` and mabo-ctl is not their parent.
+
+When `mabo-ctl.yaml` — or an `env_file` it names — no longer matches the
+configuration in force, the title bar says `YAML changed · L reloads`. `L` asks
+before it does anything, then restarts each running service whose command,
+directory, environment, port or `tty` changed, stops each running service the
+file no longer declares, and leaves everything else running; a colour, probe or
+hook edit restarts nothing. `mabo-ctl serve` offers the same reload from the
+browser. Quitting while a reload runs waits for it to finish; quit again to
+leave at once.
 
 ## The prompt
 
@@ -591,6 +601,12 @@ log stream per service that you can filter, pause and scroll without losing your
 place. The log pane's **All** toggle streams every service into the same pane,
 each line labelled with its service — and the text filter and level chips then
 search across all of them at once, which is the web form of `mabo-ctl logs all`.
+
+The service list is a sidebar; `b` (or its `«` button) collapses it to a rail of
+phase icons, each with a hover card carrying the port, pid, uptime and probe.
+**Restart all** restarts only the services that are running — stopped ones stay
+stopped. The theme follows the system or is pinned to light or dark; both
+choices are remembered by the browser.
 
 ```sh
 $ mabo-ctl serve

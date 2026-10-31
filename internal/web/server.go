@@ -240,21 +240,46 @@ type Options struct {
 	// cryptographically random key.
 	AccessKey string
 
-	// Reload re-reads the configuration and returns a fully resolved controller
-	// only after the new configuration has passed validation.
-	Reload func(context.Context) (Controller, []service.Origin, string, bool, error)
+	// Reload applies the configuration as it now reads on disk, restarting
+	// the running services whose process it changes and reporting progress on
+	// ev; POST /api/config/reload calls it. A nil *Reloaded means nothing was
+	// applied and the previous configuration is still in force, with the
+	// error saying why. A non-nil one is authoritative even when the error is
+	// not nil — the error then names the services that could not be stopped
+	// or started. Nil Reload means this console cannot reload: the route
+	// refuses, and the file is not watched, so no page offers a reload it
+	// cannot perform.
+	Reload func(ctx context.Context, ev chan<- supervisor.Event) (*Reloaded, error)
 }
 
 // Server serves the console over HTTP. Construct one with [New] or [NewWith];
 // the zero value is not usable.
 type Server struct {
-	ctrl Controller
+	// lifecycleMu orders a configuration reload against everything else that
+	// starts or stops processes: every lifecycle mutation holds it for
+	// reading, a reload holds it for writing, and both only TRY it, so the
+	// loser is refused with 409 rather than queued behind a minutes-long
+	// operation.
+	lifecycleMu sync.RWMutex
+
 	opts Options
 
-	// token is the session token: 32 random bytes, hex encoded. It is compared
-	// in constant time and is the only thing standing between a page the user
-	// happens to be visiting and a start/stop of their services.
-	token string
+	// ctrl, ctrlGen, configPending, token and tokenLife are guarded by mu; see
+	// [Server.controller] and [Server.sessionToken]. A reload replaces ctrl and
+	// bumps ctrlGen. configPending is what the config watcher last announced.
+	ctrl          Controller
+	ctrlGen       uint64
+	configPending bool
+
+	// token is the session token: 32 random bytes, hex encoded, or the
+	// configured access key. It is compared in constant time and is the only
+	// thing standing between a page the user happens to be visiting and a
+	// start/stop of their services. [Server.SetAccessKey] replaces it, and
+	// cancels tokenLife, which every open stream is tied to, so a rotated key
+	// also ends what the old one had opened.
+	token        string
+	tokenLife    context.Context
+	endTokenLife context.CancelFunc
 
 	// tmpl is the parsed console page, or nil when the page could not be
 	// parsed as a template and must be served verbatim instead.
@@ -276,7 +301,7 @@ type Server struct {
 	// address. Unlike the fields above it is NOT read-only after construction:
 	// /api/origins edits it while the console is running.
 	trusted originSet
-	reload  func(context.Context) (Controller, []service.Origin, string, bool, error)
+	reload  func(ctx context.Context, ev chan<- supervisor.Event) (*Reloaded, error)
 
 	h      http.Handler
 	events *broker
@@ -284,6 +309,10 @@ type Server struct {
 	// heartbeat is the SSE keep-alive period. It is a field only so the tests
 	// do not have to wait 15 seconds to observe one.
 	heartbeat time.Duration
+
+	// configPoll is how often [Server.watchConfig] compares the files with the
+	// configuration in force; a field for the same reason as heartbeat.
+	configPoll time.Duration
 
 	// inflight is a counting semaphore over concurrent mutations.
 	inflight chan struct{}
@@ -372,19 +401,21 @@ func NewWith(ctrl Controller, opt Options) (*Server, error) {
 	}
 
 	s := &Server{
-		ctrl:      ctrl,
-		opts:      opt,
-		token:     token,
-		addr:      opt.Addr,
-		heartbeat: heartbeatInterval,
-		events:    newBroker(),
-		inflight:  make(chan struct{}, maxInflightMutations),
-		origins:   append([]service.Origin(nil), opt.Origins...),
-		stateDir:  opt.StateDir,
+		ctrl:       ctrl,
+		opts:       opt,
+		token:      token,
+		addr:       opt.Addr,
+		heartbeat:  heartbeatInterval,
+		configPoll: configPollInterval,
+		events:     newBroker(),
+		inflight:   make(chan struct{}, maxInflightMutations),
+		origins:    append([]service.Origin(nil), opt.Origins...),
+		stateDir:   opt.StateDir,
 
 		explicitConfig: opt.ExplicitConfig,
 		reload:         opt.Reload,
 	}
+	s.tokenLife, s.endTokenLife = context.WithCancel(context.Background())
 
 	// Seeded before the socket is bound, and fatal when invalid: a mistyped
 	// --allow-origin must be reported as a usage error, not accepted silently
@@ -411,42 +442,6 @@ func NewWith(ctrl Controller, opt Options) (*Server, error) {
 
 	s.h = s.guard(s.routes())
 	return s, nil
-}
-
-// NotifyConfigChange publishes a configuration-change notice to connected
-// browsers. It does not apply the change; the operator must confirm it in the
-// console so an edit cannot unexpectedly restart or alter running services.
-func (s *Server) NotifyConfigChange() {
-	s.events.publish(supervisor.Event{Msg: "config change detected; reload configuration?"})
-}
-
-// ReloadConfig applies a validated configuration snapshot returned by the
-// caller. Existing processes are not restarted.
-func (s *Server) ReloadConfig(ctx context.Context) error {
-	s.mu.Lock()
-	reload := s.reload
-	s.mu.Unlock()
-	if reload == nil {
-		return errors.New("web: configuration reload is unavailable")
-	}
-	ctrl, origins, stateDir, explicit, err := reload(ctx)
-	if err != nil {
-		return err
-	}
-	names := make([]string, 0, len(ctrl.Instances()))
-	for _, in := range ctrl.Instances() {
-		names = append(names, in.Name)
-	}
-	known := make(map[string]struct{}, len(names))
-	for _, name := range names {
-		known[name] = struct{}{}
-	}
-	s.mu.Lock()
-	s.ctrl, s.names, s.known = ctrl, names, known
-	s.origins, s.stateDir, s.explicitConfig = append([]service.Origin(nil), origins...), stateDir, explicit
-	s.mu.Unlock()
-	s.events.publish(supervisor.Event{Msg: "configuration reloaded"})
-	return nil
 }
 
 // routes builds the mux FROM [consoleRoutes], the table that is also what
@@ -498,6 +493,7 @@ func (s *Server) routes() *http.ServeMux {
 		"POST /api/config/reload": s.handleReloadConfig,
 		"POST /api/start-all":     s.handleStartAll,
 		"POST /api/stop-all":      s.handleStopAll,
+		"POST /api/restart-all":   s.handleRestartAll,
 		"POST /api/{svc}/start":   s.handleStart,
 		"POST /api/{svc}/stop":    s.handleStop,
 		"POST /api/{svc}/restart": s.handleRestart,
@@ -561,7 +557,45 @@ func (s *Server) routes() *http.ServeMux {
 //
 // It is exported so the caller can print the URL that carries it. Treat it as a
 // credential: anything holding it can start and stop the services.
-func (s *Server) Token() string { return s.token }
+func (s *Server) Token() string { return s.sessionToken() }
+
+// sessionToken returns the current session token.
+func (s *Server) sessionToken() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.token
+}
+
+// tokenContext is done once the token current at the call has been replaced.
+// A stream ties its lifetime to it, so a rotated key closes every stream the
+// old key opened instead of leaving them reading the stack.
+func (s *Server) tokenContext() context.Context {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.tokenLife
+}
+
+// SetAccessKey replaces the session token. From the next request on, every
+// page, cookie and header holding the old token is refused, and every stream
+// it opened is closed; the operator reopens the console with the new key. It
+// is how a console_access_key edited in mabo-ctl.yaml takes effect without
+// restarting the console — which matters most when the edit is the rotation
+// of a key that leaked. Announcing the rotation is the caller's: the streams
+// that would carry the news are the ones it closes.
+func (s *Server) SetAccessKey(key string) error {
+	if err := validateAccessKey(key); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.token == key {
+		return nil
+	}
+	s.token = key
+	s.endTokenLife()
+	s.tokenLife, s.endTokenLife = context.WithCancel(context.Background())
+	return nil
+}
 
 func (s *Server) controller() Controller {
 	s.mu.Lock()
@@ -591,7 +625,7 @@ func (s *Server) Addr() string {
 func (s *Server) URL() string {
 	host, port, err := splitHostPort(s.Addr(), 80)
 	if err != nil {
-		return "http://" + s.Addr() + "/?token=" + s.token
+		return "http://" + s.Addr() + "/?token=" + s.sessionToken()
 	}
 	if host == "" || host == "0.0.0.0" || host == "::" {
 		host = "127.0.0.1"
@@ -599,7 +633,7 @@ func (s *Server) URL() string {
 	if ip := net.ParseIP(host); ip != nil && ip.To4() == nil {
 		host = "[" + host + "]"
 	}
-	return "http://" + net.JoinHostPort(host, strconv.Itoa(port)) + "/?token=" + s.token
+	return "http://" + net.JoinHostPort(host, strconv.Itoa(port)) + "/?token=" + s.sessionToken()
 }
 
 // Listen binds the socket and records the resolved address.
@@ -650,6 +684,11 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 
 	base, cancelBase := context.WithCancel(context.Background())
 	defer cancelBase()
+	// Only a console that can reload watches the file: announcing an edit
+	// with a button that then refuses is worse than not announcing it.
+	if s.reload != nil {
+		go s.watchConfig(base)
+	}
 
 	srv := &http.Server{
 		Handler:           s.h,
@@ -706,7 +745,7 @@ func (s *Server) port() int {
 // timeouts so a config with a long readiness budget is not cut short by a
 // constant chosen here.
 func (s *Server) opTimeout() time.Duration {
-	cfg := s.ctrl.Config()
+	cfg := s.controller().Config()
 	if cfg == nil {
 		return defaultOpTimeout
 	}

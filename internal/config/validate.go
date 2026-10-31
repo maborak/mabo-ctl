@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"text/template"
+
+	"github.com/maborak/mabo-ctl/internal/redact"
 )
 
 // nameRE is the set of legal service names. It is deliberately narrow: a name
@@ -395,14 +397,18 @@ func (v *validator) checkTemplates(id string, s Spec) {
 			v.addf("%s: %s is not a valid template: %v", id, what, err)
 		}
 	}
+	// Each quoted value is redacted where the message is BUILT, by the rule
+	// for its field — a template error in an env value must not print the
+	// credential it holds. See docs/LANDMINES.md §4.
 	check(fmt.Sprintf("health %q", s.Health.String()), s.Health.Raw())
+	shown := redact.Args(s.Cmd)
 	for i, a := range s.Cmd {
-		check(fmt.Sprintf("cmd[%d] %q", i, a), a)
+		check(fmt.Sprintf("cmd[%d] %q", i, shown[i]), a)
 	}
 	for _, k := range sortedKeys(s.Env) {
-		check(fmt.Sprintf("env[%q] %q", k, s.Env[k]), s.Env[k])
+		check(fmt.Sprintf("env[%q] %q", k, redact.Value(k, s.Env[k])), s.Env[k])
 	}
-	check(fmt.Sprintf("open %q", s.Open), s.Open)
+	check(fmt.Sprintf("open %q", redact.URL(s.Open)), s.Open)
 }
 
 // checkEnvKeys rejects environment keys that cannot survive being encoded as
@@ -457,7 +463,7 @@ func (v *validator) checkEnvFile(id string, s Spec) {
 	}
 	for _, k := range sortedKeys(fileEnv) {
 		v.checkEnvKeyName(id, "env_file", k)
-		check(fmt.Sprintf("env_file[%q] %q", k, fileEnv[k]), fileEnv[k])
+		check(fmt.Sprintf("env_file[%q] %q", k, redact.Value(k, fileEnv[k])), fileEnv[k])
 	}
 }
 

@@ -292,22 +292,35 @@ paths:
   /api/config/reload:
     post:
       summary: Reload configuration
-      description: Apply the latest validated mabo-ctl.yaml without restarting running services.
+      description: >-
+        Apply mabo-ctl.yaml as it now reads on disk. A running service whose
+        command, directory, environment, port or tty changed is restarted under
+        its new definition; a running service the file no longer declares is
+        stopped; every other service keeps running. A changed declared port is
+        adopted even when .mabo-ctl/run.env pinned the old one. The reload runs
+        to completion even if the client disconnects.
       security:
         - tokenHeader: []
       responses:
         "200":
-          description: Configuration reloaded
+          description: >-
+            The new configuration is in force. ok is false when a service could
+            not be stopped or started; error says which, events say why.
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  ok:
-                    type: boolean
-                required: [ok]
+                $ref: "#/components/schemas/ReloadResponse"
+        "409":
+          description: A start, stop or restart is in progress; the reload was not attempted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "422":
-          description: Configuration could not be loaded, validated or resolved; the previous snapshot remains active.
+          description: >-
+            Nothing was applied — the file did not load, validate or resolve, a
+            service it needs cannot run, or a removed service survived its stop —
+            and the previous configuration remains in force.
           content:
             application/json:
               schema:
@@ -326,6 +339,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/MutationResponse"
+        "409":
+          description: A configuration reload is in progress; retry when it finishes
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "429":
           description: Too many operations in flight
           content:
@@ -346,6 +365,40 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/MutationResponse"
+        "409":
+          description: A configuration reload is in progress; retry when it finishes
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          description: Too many operations in flight
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/restart-all:
+    post:
+      summary: Restart running services
+      description: >-
+        Restart every service that is running now (running, ready, slow or
+        degraded). Stopped, failed and exited services are left alone.
+      security:
+        - tokenHeader: []
+      responses:
+        "200":
+          description: Operation result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MutationResponse"
+        "409":
+          description: Nothing is running, or a configuration reload is in progress
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "429":
           description: Too many operations in flight
           content:
@@ -368,6 +421,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/MutationResponse"
+        "409":
+          description: A configuration reload is in progress; retry when it finishes
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "404":
           description: Unknown service
           content:
@@ -396,6 +455,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/MutationResponse"
+        "409":
+          description: A configuration reload is in progress; retry when it finishes
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "404":
           description: Unknown service
           content:
@@ -418,6 +483,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/MutationResponse"
+        "409":
+          description: A configuration reload is in progress; retry when it finishes
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "404":
           description: Unknown service
           content:
@@ -725,6 +796,40 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/EventJSON"
+
+    ReloadResponse:
+      type: object
+      example:
+        ok: false
+        error: "services did not start: worker"
+        stopped: [legacy]
+        restarted: [backend, worker]
+        events:
+          - service: worker
+            phase: failed
+            msg: "failed: process died"
+      properties:
+        ok:
+          type: boolean
+          description: Every affected service was stopped and started cleanly
+        error:
+          type: string
+          description: What failed when ok is false
+        stopped:
+          type: array
+          items:
+            type: string
+          description: Running services the new configuration removed, stopped
+        restarted:
+          type: array
+          items:
+            type: string
+          description: Services started under their new definition
+        events:
+          type: array
+          items:
+            $ref: "#/components/schemas/EventJSON"
+      required: [ok, stopped, restarted, events]
 
     OriginsResponse:
       type: object

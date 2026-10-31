@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/maborak/mabo-ctl/internal/redact"
 )
 
 // Probe kinds. The empty kind means "no readiness check", which is how a
@@ -64,16 +66,19 @@ func (h Health) Raw() string {
 	return strings.Join(parts, " ")
 }
 
-// String renders h the way status output quotes it back. It is the RAW form,
-// not the expanded one: Spec renders what was declared.
+// String renders h for a message that quotes the declaration back. It is the
+// RAW form, not the expanded one — Spec renders what was declared — with every
+// credential withheld through internal/redact: a validation error is printed
+// on stderr and served by the web console, and a health URL's password or an
+// exec probe's --token belongs on neither.
 func (h Health) String() string {
 	switch h.Kind {
 	case HealthTCP:
 		return "tcp:" + h.Addr
 	case HealthExec:
-		return "exec: [" + strings.Join(h.Argv, ", ") + "]"
+		return "exec: [" + strings.Join(redact.Args(h.Argv), ", ") + "]"
 	case HealthHTTP:
-		return h.HTTP
+		return redact.URL(h.HTTP)
 	default:
 		return ""
 	}

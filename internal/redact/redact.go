@@ -87,6 +87,17 @@ func IsSecret(key, value string) bool {
 	return false
 }
 
+// Value renders one variable's value for a reader: [Mark] when [IsSecret]
+// flags the pair, the value unchanged otherwise. It is the single-variable form
+// of [Env], for a message that quotes one entry — a config error naming the
+// env value that failed to parse must not print the credential it holds.
+func Value(key, value string) string {
+	if IsSecret(key, value) {
+		return Mark
+	}
+	return value
+}
+
 // Env renders a service's DECLARED environment, sorted by key.
 //
 // The argument is config.Spec.Env and never service.Instance.Env. The

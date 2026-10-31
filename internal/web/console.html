@@ -6,10 +6,23 @@
 <meta name="referrer" content="no-referrer">
 <meta name="color-scheme" content="light dark">
 <title>mabo-ctl console</title>
-<!-- An empty data: icon. The server serves one page and no /favicon.ico, so
-     without this every load logs a 404 in the browser console — noise that
-     buries the errors a developer opened the console to find. -->
-<link rel="icon" href="data:,">
+<!-- The icon is inline: the server serves no /favicon.ico, and the CSP admits
+     data: images and nothing remote. Three service rows, two ready and one
+     slow — the console's own status list in miniature. -->
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231f5fd0'/%3E%3Ccircle cx='9' cy='9.5' r='2.7' fill='%2358d07c'/%3E%3Crect x='14' y='8' width='11' height='3' rx='1.5' fill='%23fff'/%3E%3Ccircle cx='9' cy='16' r='2.7' fill='%2358d07c'/%3E%3Crect x='14' y='14.5' width='11' height='3' rx='1.5' fill='%23fff'/%3E%3Ccircle cx='9' cy='22.5' r='2.7' fill='%23e5a53a'/%3E%3Crect x='14' y='21' width='8' height='3' rx='1.5' fill='%23fff'/%3E%3C/svg%3E">
+
+<script>
+  // The theme is resolved before first paint, so a dark-mode reader never sees
+  // a light flash. "system" follows prefers-color-scheme; the main script owns
+  // the toggle and keeps following the system while it is chosen.
+  (function () {
+    var pref = "system";
+    try { pref = window.localStorage.getItem("mabo-ctl.theme") || "system"; } catch (e) { /* no storage */ }
+    var dark = pref === "dark" || (pref !== "light" && !!window.matchMedia &&
+      window.matchMedia("(prefers-color-scheme: dark)").matches);
+    document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
+  }());
+</script>
 
 
 <!--
@@ -90,13 +103,16 @@
   --c-blue:    #2563c9;  --c-magenta: #a3369c;  --c-cyan:    #0f7c8a;
   --c-gray:    #6b7480;  --c-white:   #4a5560;  --c-black:   #2b333c;
 
-  --fs-xs:   11px;
-  --fs-sm:   12px;
-  --fs-mono: 12.5px;
-  --fs-base: 13.5px;
-  --fs-md:   15px;
-  --fs-lg:   18px;
-  --fs-xl:   21px;
+  --fs-xs:   10.5px;
+  --fs-sm:   11.5px;
+  --fs-mono: 12px;
+  --fs-base: 13px;
+  --fs-md:   14px;
+  --fs-lg:   17px;
+  --fs-xl:   20px;
+
+  --side-w:      380px;
+  --side-rail-w: 52px;
 
   --sp-1: 4px;  --sp-2: 8px;  --sp-3: 12px;
   --sp-4: 16px; --sp-5: 24px; --sp-6: 32px;
@@ -109,54 +125,56 @@
           "Liberation Mono", "Courier New", monospace;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg:            #0b0e12;
-    --surface:       #14181e;
-    --surface-2:     #1a1f27;
-    --surface-3:     #232a34;
-    --log-bg:        #0a0d11;
-    --border:        #262d37;
-    --border-strong: #3a444f;
-    --text:          #e4e9ef;
-    --text-dim:      #9ba5b1;
-    --text-faint:    #6d7683;
-    --accent:        #6ba4ff;
-    --accent-soft:   #16233a;
-    --focus:         #6ba4ff;
-    --sel-bg:        #182338;
-    --sel-edge:      #6ba4ff;
-    --shadow:        0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+/* The theme is chosen by the script in <head>, which resolves "system" against
+   prefers-color-scheme before first paint and keeps following it. */
+:root { color-scheme: light; }
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg:            #0b0e12;
+  --surface:       #14181e;
+  --surface-2:     #1a1f27;
+  --surface-3:     #232a34;
+  --log-bg:        #0a0d11;
+  --border:        #262d37;
+  --border-strong: #3a444f;
+  --text:          #e4e9ef;
+  --text-dim:      #9ba5b1;
+  --text-faint:    #6d7683;
+  --accent:        #6ba4ff;
+  --accent-soft:   #16233a;
+  --focus:         #6ba4ff;
+  --sel-bg:        #182338;
+  --sel-edge:      #6ba4ff;
+  --shadow:        0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
 
-    --ph-ready:       #58d07c;
-    --ph-running:     #6ba4ff;
-    --ph-slow:        #e5a53a;
-    --ph-degraded:    #f0a05a;
-    --ph-stopped:     #8e99a6;
-    --ph-failed:      #f2837a;
-    --ph-exited:      #cf9bea;
-    --ph-unknown:     #8e99a6;
-    --ph-ready-bg:    #0f2a19;
-    --ph-running-bg:  #14233c;
-    --ph-slow-bg:     #2e2109;
-    --ph-degraded-bg: #331d0c;
-    --ph-stopped-bg:  #1e242c;
-    --ph-failed-bg:   #331512;
-    --ph-exited-bg:   #241430;
-    --ph-unknown-bg:  #1e242c;
+  --ph-ready:       #58d07c;
+  --ph-running:     #6ba4ff;
+  --ph-slow:        #e5a53a;
+  --ph-degraded:    #f0a05a;
+  --ph-stopped:     #8e99a6;
+  --ph-failed:      #f2837a;
+  --ph-exited:      #cf9bea;
+  --ph-unknown:     #8e99a6;
+  --ph-ready-bg:    #0f2a19;
+  --ph-running-bg:  #14233c;
+  --ph-slow-bg:     #2e2109;
+  --ph-degraded-bg: #331d0c;
+  --ph-stopped-bg:  #1e242c;
+  --ph-failed-bg:   #331512;
+  --ph-exited-bg:   #241430;
+  --ph-unknown-bg:  #1e242c;
 
-    --warn:          #e5a53a;
-    --warn-bg:       #2a1e08;
-    --warn-border:   #5c4413;
-    --danger:        #f2837a;
-    --danger-bg:     #2d1310;
-    --danger-border: #632923;
-    --ok:            #58d07c;
+  --warn:          #e5a53a;
+  --warn-bg:       #2a1e08;
+  --warn-border:   #5c4413;
+  --danger:        #f2837a;
+  --danger-bg:     #2d1310;
+  --danger-border: #632923;
+  --ok:            #58d07c;
 
-    --c-red:     #f2837a;  --c-green:   #58d07c;  --c-yellow:  #e5a53a;
-    --c-blue:    #6ba4ff;  --c-magenta: #dd8ad6;  --c-cyan:    #4fc7d8;
-    --c-gray:    #8e99a6;  --c-white:   #cbd3dc;  --c-black:   #7d8794;
-  }
+  --c-red:     #f2837a;  --c-green:   #58d07c;  --c-yellow:  #e5a53a;
+  --c-blue:    #6ba4ff;  --c-magenta: #dd8ad6;  --c-cyan:    #4fc7d8;
+  --c-gray:    #8e99a6;  --c-white:   #cbd3dc;  --c-black:   #7d8794;
 }
 
 *, *::before, *::after { box-sizing: border-box; }
@@ -332,7 +350,7 @@ button:active:not(:disabled) { transform: translateY(.5px); }
 button:disabled { opacity: .42; cursor: not-allowed; }
 
 button.primary { color: #fff; background: var(--accent); border-color: transparent; }
-@media (prefers-color-scheme: dark) { button.primary { color: #08111f; } }
+:root[data-theme="dark"] button.primary { color: #08111f; }
 button.primary:hover:not(:disabled) { filter: brightness(1.08); }
 
 button.ghost, a.ghost {
@@ -488,28 +506,32 @@ main {
 
 .svc-list { flex: 1 1 auto; min-height: 0; overflow: auto; scrollbar-gutter: stable; }
 
+/* The name is the column a reader scans, so it takes every pixel the others do
+   not need; the rest are small, fixed and right-aligned. The phase is a glyph in
+   the phase colour, with the word in the tooltip and the aria-label — never the
+   colour alone. The actions float over the right edge on hover and focus. */
 .row, .row-head {
   display: grid;
   grid-template-columns:
-    [phase] 74px [name] minmax(72px, 1fr) [port] 44px
-    [pid] 50px [up] 62px [hl] 52px [act] 82px;
+    [phase] 14px [name] minmax(0, 1fr) [port] 36px [pid] 38px [up] 46px [hl] 34px;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   padding: 0 var(--sp-2) 0 var(--sp-3);
 }
 
 .row-head {
   position: sticky; top: 0; z-index: 2;
-  height: 24px;
+  height: 20px;
   background: var(--surface-2);
   border-bottom: 1px solid var(--border);
-  font-size: 10px; font-weight: 700; letter-spacing: .05em;
+  font-size: 9.5px; font-weight: 700; letter-spacing: .05em;
   text-transform: uppercase; color: var(--text-faint);
 }
-.row-head .cell { overflow: hidden; text-overflow: ellipsis; font-family: var(--font); }
+.row-head .cell { overflow: hidden; text-overflow: ellipsis; font-family: var(--font); font-size: inherit; }
 
 .row {
-  min-height: 32px;
+  position: relative;
+  min-height: 28px;
   border-bottom: 1px solid var(--border);
   border-left: 3px solid transparent;
   padding-left: calc(var(--sp-3) - 3px);
@@ -538,14 +560,16 @@ main {
 .acc-black   { --svc-accent: var(--c-black); }
 
 .cell {
-  min-width: 0; font-family: var(--mono); font-size: var(--fs-mono);
+  min-width: 0; font-family: var(--mono); font-size: var(--fs-xs);
   color: var(--text-dim); font-variant-numeric: tabular-nums;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .c-name {
-  color: var(--svc-accent); font-weight: 650; font-size: var(--fs-base);
-  letter-spacing: -.01em;
+  color: var(--svc-accent); font-weight: 650; font-size: 12.5px;
+  letter-spacing: -.02em;
 }
+.row .ph .w { display: none; }
+.row .ph .g { font-size: 13px; }
 .c-port, .c-pid, .c-up { text-align: right; }
 .cell.dim { color: var(--text-faint); }
 
@@ -566,8 +590,8 @@ main {
 /* Readiness probe result, as a word or a code — never a bare colour. */
 .hl {
   display: inline-block; min-width: 100%; text-align: center;
-  font-size: 10.5px; font-weight: 700; font-family: var(--mono);
-  padding: 1px 0; border-radius: var(--r-sm);
+  font-size: 9.5px; font-weight: 700; font-family: var(--mono);
+  padding: 0; border-radius: var(--r-sm);
   border: 1px solid currentColor;
 }
 .hl-ok   { color: var(--ok);         background: var(--ph-ready-bg); }
@@ -576,13 +600,17 @@ main {
 .hl-none { color: var(--text-faint); background: var(--surface-2); border-style: dashed; }
 
 .c-act {
-  display: flex; gap: 3px; justify-content: flex-end; overflow: visible;
-  opacity: 0; transition: opacity .1s ease;
+  position: absolute; right: var(--sp-1); top: 50%; transform: translateY(-50%);
+  display: flex; gap: 3px; overflow: visible; padding: 2px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--r-md); box-shadow: var(--shadow);
+  opacity: 0; pointer-events: none; transition: opacity .1s ease;
 }
 .row:hover .c-act,
-.row:focus-within .c-act,
-.row[aria-selected="true"] .c-act { opacity: 1; }
-@media (hover: none) { .c-act { opacity: 1; } }
+.row:focus-within .c-act { opacity: 1; pointer-events: auto; }
+/* Without hover the overlay would cover the row for good; the detail pane
+   carries the same buttons. */
+@media (hover: none) { .c-act { display: none; } }
 
 .iconbtn {
   font-family: var(--mono); font-size: 11px; font-weight: 700;
@@ -594,6 +622,51 @@ main {
   padding: var(--sp-5) var(--sp-4); text-align: center;
   color: var(--text-faint); font-size: var(--fs-sm);
 }
+
+/* --- sidebar: collapse to a rail of phase glyphs -------------------------- */
+
+.side-toggle { flex: none; font-family: var(--mono); width: 24px; padding: 2px 0; }
+
+.split.rail .master .panel-head { justify-content: center; padding: var(--sp-2) 0; }
+.split.rail .master .panel-head h2,
+.split.rail .master .filter-wrap,
+.split.rail .master .row-head,
+.split.rail .master .hints,
+.split.rail .master .list-empty { display: none; }
+.split.rail .svc-list { scrollbar-width: none; }
+.split.rail .svc-list::-webkit-scrollbar { display: none; }
+.split.rail .row {
+  display: flex; justify-content: center;
+  min-height: 34px; padding: 0;
+}
+.split.rail .row .cell:not(.c-phase) { display: none; }
+.split.rail .row .ph .g { font-size: 16px; }
+
+/* One floating card for the whole list, filled from the row under the pointer
+   or the keyboard focus while the list is a rail. */
+.svc-tip {
+  position: fixed; z-index: 60; pointer-events: none;
+  min-width: 170px; max-width: 300px;
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--surface); color: var(--text);
+  border: 1px solid var(--border-strong); border-left: 3px solid var(--svc-accent, var(--c-gray));
+  border-radius: var(--r-md); box-shadow: var(--shadow);
+  font-size: var(--fs-xs);
+}
+.svc-tip .tip-name {
+  font-family: var(--mono); font-weight: 650; font-size: var(--fs-sm);
+  color: var(--svc-accent, var(--text)); overflow-wrap: anywhere;
+}
+.svc-tip .ph { margin: 2px 0 var(--sp-1); }
+.svc-tip dl {
+  display: grid; grid-template-columns: auto 1fr; gap: 1px var(--sp-3); margin: 0;
+}
+.svc-tip dt { color: var(--text-faint); text-transform: uppercase; letter-spacing: .06em; font-size: 9.5px; align-self: center; }
+.svc-tip dd { margin: 0; font-family: var(--mono); color: var(--text-dim); overflow-wrap: anywhere; }
+
+/* --- theme toggle --------------------------------------------------------- */
+
+.theme-toggle .g { font-family: var(--mono); margin-right: 4px; }
 
 /* --- detail pane --------------------------------------------------------- */
 
@@ -810,18 +883,6 @@ ol.argv-list li code { color: var(--text); }
 .placeholder h3 { margin: 0 0 var(--sp-2); font-size: var(--fs-md); color: var(--text); }
 .placeholder p { margin: 0; font-size: var(--fs-sm); }
 
-/* --- footer -------------------------------------------------------------- */
-
-footer {
-  flex: none;
-  padding: var(--sp-3) var(--sp-4);
-  color: var(--text-faint); font-size: var(--fs-xs);
-  border-top: 1px solid var(--border);
-  display: flex; gap: var(--sp-4); flex-wrap: wrap;
-}
-footer p { margin: 0; max-width: 62ch; }
-footer code { font-family: var(--mono); color: var(--text-dim); }
-
 /* --- config view ----------------------------------------------------------
    A SEPARATE view, not more rows in the service list. The master/detail layout
    exists so a five-service stack fits on one screen, and "why is backend on
@@ -942,13 +1003,14 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
 .cfg-card .facts { border-bottom: none; }
 .cfg-card .cmd-wrap { border-bottom: none; padding-top: 0; }
 
-/* --- wide windows: a fixed app shell, so the stack never scrolls away ---- */
+/* --- wide windows: sidebar + detail in a fixed app shell ------------------ */
 
-@media (min-width: 1080px) {
-  .split { grid-template-columns: minmax(0, 520px) minmax(0, 1fr); }
+@media (min-width: 760px) {
+  .split { grid-template-columns: var(--side-w) minmax(0, 1fr); }
+  .split.rail { grid-template-columns: var(--side-rail-w) minmax(0, 1fr); }
 }
 
-@media (min-width: 1080px) and (min-height: 620px) {
+@media (min-width: 760px) and (min-height: 560px) {
   html, body { height: 100%; }
   body { height: 100vh; overflow: hidden; }
   .log-body { position: absolute; inset: 0; height: auto; }
@@ -959,7 +1021,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
 }
 
 @supports (height: 100dvh) {
-  @media (min-width: 1080px) and (min-height: 620px) {
+  @media (min-width: 760px) and (min-height: 560px) {
     body { height: 100dvh; }
   }
 }
@@ -993,6 +1055,12 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
   }
   .facts { grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); }
   .log-bar .log-filter { flex: 1 1 100%; width: auto; }
+}
+
+/* Stacked, the rail is a strip of glyphs rather than a column. */
+@media (max-width: 759px) {
+  .split.rail .svc-list { display: flex; flex-wrap: wrap; }
+  .split.rail .row { width: 40px; border-bottom: none; }
 }
 </style>
 </head>
@@ -1031,7 +1099,10 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
               aria-controls="config-view"
               title="Show the resolved configuration: which mabo-ctl.yaml was loaded, and where each port came from">Config</button>
       <button type="button" id="btn-refresh" class="ghost" title="Fetch status now">Refresh</button>
+      <button type="button" id="btn-theme" class="ghost theme-toggle"
+              title="Colour theme: follow the system, light or dark"><span class="g" aria-hidden="true">◐</span><span id="theme-word">System</span></button>
       <button type="button" id="btn-start-all" class="primary">Start all</button>
+      <button type="button" id="btn-restart-all">Restart all</button>
       <button type="button" id="btn-stop-all">Stop all</button>
     </div>
   </div>
@@ -1043,7 +1114,16 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     <div>
       <strong id="banner-title">disconnected</strong>
       <span class="why" id="banner-why"></span>
-      <button type="button" class="ghost tiny" id="btn-config-apply" hidden>Reload configuration</button>
+    </div>
+  </div>
+</div>
+
+<div class="banner" id="config-banner" hidden>
+  <div class="banner-in" role="status">
+    <div>
+      <strong id="config-banner-title">mabo-ctl.yaml changed</strong>
+      <span class="why" id="config-banner-why"></span>
+      <button type="button" class="ghost tiny" id="btn-config-apply" hidden>Reload &amp; restart</button>
     </div>
   </div>
 </div>
@@ -1072,6 +1152,9 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
   <div class="split" id="split">
     <section class="panel master" aria-labelledby="services-heading">
       <div class="panel-head">
+        <button type="button" id="btn-sidebar" class="ghost tiny side-toggle"
+                aria-expanded="true" aria-controls="svc-list"
+                title="Collapse the service list to status icons (b)">«</button>
         <h2 id="services-heading">Services</h2>
         <div class="filter-wrap">
           <input type="search" id="filter" placeholder="filter by name  /"
@@ -1080,13 +1163,12 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
       </div>
 
       <div class="row-head" aria-hidden="true">
-        <span class="cell">phase</span>
+        <span class="cell"></span>
         <span class="cell">service</span>
         <span class="cell c-port">port</span>
         <span class="cell c-pid">pid</span>
         <span class="cell c-up">uptime</span>
         <span class="cell">probe</span>
-        <span class="cell"></span>
       </div>
 
       <div class="svc-list" id="svc-list" role="grid" aria-multiselectable="false"
@@ -1098,6 +1180,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
         <span><kbd>x</kbd> stop</span>
         <span><kbd>r</kbd> restart</span>
         <span><kbd>/</kbd> filter</span>
+        <span><kbd>b</kbd> sidebar</span>
         <span><kbd>c</kbd> config</span>
         <span id="sort-note">declaration order</span>
       </div>
@@ -1123,19 +1206,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
   </section>
 </main>
 
-<footer>
-  <p>
-    This console can start and stop the commands declared in your
-    <code>mabo-ctl.yaml</code>. It is bound to a loopback address and every
-    mutation carries a per-session token that only this page has been shown.
-    Treat the URL mabo-ctl printed as a credential.
-  </p>
-  <p>
-    Environment values are redacted server-side by key and by shape; only the
-    variables declared in <code>mabo-ctl.yaml</code> are listed here, never the
-    environment mabo-ctl inherited.
-  </p>
-</footer>
+<div class="svc-tip" id="svc-tip" role="tooltip" hidden></div>
 
 <script>
 (function () {
@@ -1323,8 +1394,8 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
      answers, and it cannot read the token because it cannot read this page.
      ======================================================================= */
 
-  function request(method, path, timeoutMs, body) {
-    var ctl = new AbortController();
+  function request(method, path, timeoutMs, body, ctl) {
+    ctl = ctl || new AbortController();
     var timer = setTimeout(function () { ctl.abort(); }, timeoutMs);
     var headers = { "Accept": "application/json" };
     if (method === "POST") {
@@ -1348,15 +1419,21 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
       init.body = JSON.stringify(body);
     }
     return fetch(path, init).then(function (res) {
-      clearTimeout(timer);
+      // The timeout stays armed through the body. Clearing it as soon as the
+      // headers arrive leaves res.text() unbounded, and a response whose
+      // headers landed just before the laptop slept would hang this promise
+      // forever.
       return res.text().then(function (body) {
         if (!res.ok) { throw new Error(explainHTTP(res.status, body)); }
         try { return JSON.parse(body); }
         catch (e) { throw new Error("malformed response from " + path); }
       });
+    }).then(function (value) {
+      clearTimeout(timer);
+      return value;
     }, function (err) {
       clearTimeout(timer);
-      if (err && err.name === "AbortError") {
+      if (ctl.signal.aborted) {
         throw new Error("request to " + path + " timed out");
       }
       throw new Error(err && err.message ? err.message : "network error");
@@ -1518,6 +1595,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     this.levelFilter = "";    // "" = All; otherwise one of detectLevel's buckets
     this.chipButtons = null;  // level -> button, built below
     this.es = null;
+    this.openedAt = 0;
     this.retryAt = RECONNECT_MIN;
     this.retryTimer = 0;
     this.wanted = false;      // a live stream is wanted for the current name
@@ -1920,6 +1998,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
       return;
     }
     this.es = es;
+    this.openedAt = Date.now();
 
     es.onopen = function () {
       self.retryAt = RECONNECT_MIN;
@@ -1988,6 +2067,18 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
       this.es.onopen = this.es.onmessage = this.es.onerror = null;
       this.es.close();
       this.es = null;
+    }
+    this.openedAt = 0;
+  };
+
+  // recover reopens a transport that is closed, or that has been stuck
+  // CONNECTING since before a sleep. An OPEN stream is left alone: reopening
+  // it would replay the tail and duplicate lines.
+  LogPane.prototype.recover = function () {
+    if (!this.wanted || !this.name) { return; }
+    if (!this.es || this.es.readyState === 2 ||
+        (this.es.readyState === 0 && Date.now() - this.openedAt > RECONNECT_MAX)) {
+      this.open();
     }
   };
 
@@ -2067,6 +2158,10 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
         select(svc.name, true);
       }
     });
+    root.addEventListener("mouseenter", function () { showTip(self); });
+    root.addEventListener("mouseleave", hideTip);
+    root.addEventListener("focus", function () { showTip(self); });
+    root.addEventListener("blur", hideTip);
 
     this.root = root;
     this.paintButtons();
@@ -2148,6 +2243,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     this.phaseGlyph.textContent = ph.glyph;
     this.phaseWord.textContent = ph.word;
     this.phaseCell.setAttribute("aria-label", "phase " + ph.word);
+    this.phaseCell.title = ph.word;
 
     setText(this.portCell, st.port ? String(st.port) : "–", !st.port);
     setText(this.pidCell, st.pid ? String(st.pid) : "–", !st.pid);
@@ -2158,6 +2254,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     this.hlCell.title = hl.why;
 
     this.paintUptime();
+    if (tipRow === this) { paintTip(); }
     // The buttons key off the phase, so they are repainted where the phase
     // changes. Without this they kept whatever they were built with and told
     // the user a service was "unknown" in the same row that showed it stopped.
@@ -2633,6 +2730,141 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
   });
 
   /* =======================================================================
+     Sidebar rail and its hover card
+     ---------------------------------------------------------------------
+     Collapsed, the service list is a column of phase glyphs. Everything the
+     full row says moves into one floating card, shown for the row under the
+     pointer or holding keyboard focus. The choice persists per origin.
+     ======================================================================= */
+
+  var SIDEBAR_KEY = "mabo-ctl.sidebar";
+  var splitEl    = document.getElementById("split");
+  var btnSidebar = document.getElementById("btn-sidebar");
+  var tipEl      = document.getElementById("svc-tip");
+  var railOn     = false;
+  var tipRow     = null;
+
+  function setRail(on, persist) {
+    railOn = on;
+    splitEl.classList.toggle("rail", on);
+    btnSidebar.textContent = on ? "»" : "«";
+    btnSidebar.setAttribute("aria-expanded", on ? "false" : "true");
+    btnSidebar.title = on ? "Expand the service list (b)" : "Collapse the service list to status icons (b)";
+    if (!on) { hideTip(); }
+    if (persist) {
+      try { window.localStorage.setItem(SIDEBAR_KEY, on ? "rail" : "full"); }
+      catch (e) { /* no storage: the choice lasts for this page only */ }
+    }
+  }
+
+  btnSidebar.addEventListener("click", function () { setRail(!railOn, true); });
+  document.getElementById("svc-list").addEventListener("scroll", hideTip, { passive: true });
+  window.addEventListener("resize", hideTip);
+
+  (function () {
+    var saved = null;
+    try { saved = window.localStorage.getItem(SIDEBAR_KEY); } catch (e) { /* no storage */ }
+    setRail(saved === "rail", false);
+  }());
+
+  function showTip(row) {
+    if (!railOn) { return; }
+    tipRow = row;
+    paintTip();
+  }
+
+  function hideTip() {
+    tipRow = null;
+    tipEl.hidden = true;
+  }
+
+  function paintTip() {
+    var row = tipRow;
+    if (!row || !railOn || !row.root.isConnected || row.root.hidden) { hideTip(); return; }
+    var name = row.svc.name;
+    var st = owns.call(statusOf, name) ? statusOf[name] : null;
+    var ph = phaseLabel(row.phase);
+
+    clear(tipEl);
+    tipEl.style.setProperty("--svc-accent",
+      window.getComputedStyle(row.root).getPropertyValue("--svc-accent"));
+    tipEl.appendChild(el("div", "tip-name", name));
+    var phEl = el("div", "ph " + ph.cls);
+    var g = el("span", "g", ph.glyph);
+    g.setAttribute("aria-hidden", "true");
+    phEl.appendChild(g);
+    phEl.appendChild(el("span", "w", ph.word));
+    tipEl.appendChild(phEl);
+
+    var dl = el("dl");
+    var add = function (k, v) { dl.appendChild(el("dt", null, k)); dl.appendChild(el("dd", null, v)); };
+    var port = (st && st.port) || row.svc.port;
+    add("port", port ? String(port) : "–");
+    add("pid", st && st.pid ? String(st.pid) : "–");
+    add("uptime", row.upCell.textContent || "–");
+    add("probe", probeLabel(st).text);
+    tipEl.appendChild(dl);
+
+    tipEl.hidden = false;
+    var r = row.root.getBoundingClientRect();
+    var w = tipEl.offsetWidth, h = tipEl.offsetHeight;
+    var vw = window.innerWidth, vh = window.innerHeight;
+    var left = r.right + 8, top = r.top + r.height / 2 - h / 2;
+    // Stacked on a narrow window the rail is a strip, so the card drops below.
+    if (left + w > vw - 8) {
+      left = Math.max(8, Math.min(r.left, vw - w - 8));
+      top = r.bottom + 6;
+    }
+    top = Math.max(8, Math.min(top, vh - h - 8));
+    tipEl.style.left = left + "px";
+    tipEl.style.top = top + "px";
+  }
+
+  /* =======================================================================
+     Colour theme: system, light or dark
+     ---------------------------------------------------------------------
+     The script in <head> applied the saved choice before first paint; this
+     owns the toggle and keeps "system" following the OS while it is chosen.
+     ======================================================================= */
+
+  var THEME_KEY   = "mabo-ctl.theme";
+  var THEMES      = ["system", "light", "dark"];
+  var THEME_GLYPH = { system: "◐", light: "☀", dark: "☾" };
+  var btnTheme    = document.getElementById("btn-theme");
+  var themeWord   = document.getElementById("theme-word");
+  var darkQuery   = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
+  var themePref   = "system";
+
+  function applyTheme() {
+    var dark = themePref === "dark" || (themePref === "system" && !!darkQuery && darkQuery.matches);
+    document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
+    btnTheme.firstChild.textContent = THEME_GLYPH[themePref];
+    themeWord.textContent = themePref.charAt(0).toUpperCase() + themePref.slice(1);
+    btnTheme.title = "Colour theme: " + themePref + (themePref === "system"
+      ? " (currently " + (dark ? "dark" : "light") + ")" : "") + ". Click to change.";
+  }
+
+  (function () {
+    var saved = null;
+    try { saved = window.localStorage.getItem(THEME_KEY); } catch (e) { /* no storage */ }
+    if (THEMES.indexOf(saved) >= 0) { themePref = saved; }
+    applyTheme();
+  }());
+
+  btnTheme.addEventListener("click", function () {
+    themePref = THEMES[(THEMES.indexOf(themePref) + 1) % THEMES.length];
+    try { window.localStorage.setItem(THEME_KEY, themePref); }
+    catch (e) { /* no storage: the choice lasts for this page only */ }
+    applyTheme();
+  });
+
+  if (darkQuery) {
+    var onSystemTheme = function () { if (themePref === "system") { applyTheme(); } };
+    if (darkQuery.addEventListener) { darkQuery.addEventListener("change", onSystemTheme); }
+    else if (darkQuery.addListener) { darkQuery.addListener(onSystemTheme); }
+  }
+
+  /* =======================================================================
      Summary tiles
      ======================================================================= */
 
@@ -2737,24 +2969,81 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
 
   var activityEl   = document.getElementById("activity");
   var activityWrap = document.getElementById("activity-wrap");
-  var configChangeBanner = document.getElementById("banner");
-  var configChangeTitle = document.getElementById("banner-title");
-  var configChangeWhy = document.getElementById("banner-why");
+  var configChangeBanner = document.getElementById("config-banner");
+  var configChangeTitle = document.getElementById("config-banner-title");
+  var configChangeWhy = document.getElementById("config-banner-why");
   var btnConfigApply = document.getElementById("btn-config-apply");
 
+  // The config watcher's two announcements on /api/events. They mirror
+  // configChangedMsg and configCurrentMsg in internal/web/reload.go, and the
+  // banner is keyed on them, so the two must change together.
+  var CONFIG_CHANGED = "config change detected; reload configuration?";
+  var CONFIG_CURRENT = "configuration file matches the running configuration again";
+
+  // A reload ends in a page reload, which would wipe the activity strip that
+  // says what the reload did. The lines are carried across it in
+  // sessionStorage; without storage the reloaded page simply starts quiet.
+  var RELOAD_NOTE = "mabo-ctl.reload-note";
+
   function showConfigChange() {
-    configChangeTitle.textContent = "configuration change detected";
-    configChangeWhy.textContent = "reload the validated YAML snapshot? running services will not be restarted";
+    configChangeTitle.textContent = "mabo-ctl.yaml changed";
+    configChangeWhy.textContent = "Reloading applies it: running services whose command, directory, " +
+      "environment, port or tty changed restart, removed ones stop, and everything else keeps running.";
     btnConfigApply.hidden = false;
     configChangeBanner.hidden = false;
   }
 
+  function hideConfigChange() {
+    configChangeBanner.hidden = true;
+  }
+
+  function linesFromReload(res) {
+    var did = [];
+    if (res.restarted && res.restarted.length) { did.push("restarted " + res.restarted.join(", ")); }
+    if (res.stopped && res.stopped.length) { did.push("stopped " + res.stopped.join(", ")); }
+    var out = linesFromMutation({ operation: "configuration reload", ok: res.ok,
+      error: res.error, events: res.events, services: [] });
+    out[0].text += ": " + (did.length ? did.join("; ") : "no running service needed a restart");
+    return out;
+  }
+
+  function stashActivity(lines) {
+    try { window.sessionStorage.setItem(RELOAD_NOTE, JSON.stringify(lines.slice(0, MAX_ACTIVITY))); }
+    catch (e) { /* no storage: the reloaded page starts quiet */ }
+  }
+
+  function replayStashedActivity() {
+    var raw = null;
+    try {
+      raw = window.sessionStorage.getItem(RELOAD_NOTE);
+      window.sessionStorage.removeItem(RELOAD_NOTE);
+    } catch (e) { return; }
+    if (!raw) { return; }
+    var lines;
+    try { lines = JSON.parse(raw); } catch (e) { return; }
+    if (Object.prototype.toString.call(lines) !== "[object Array]") { return; }
+    var safe = [];
+    for (var i = 0; i < lines.length; i++) {
+      if (lines[i] && typeof lines[i].text === "string") {
+        safe.push({ kind: lines[i].kind === "err" ? "err" : (lines[i].kind === "ok" ? "ok" : ""), text: lines[i].text });
+      }
+    }
+    if (safe.length) { activity(safe); }
+  }
+
   btnConfigApply.addEventListener("click", function () {
+    if (!window.confirm("Reload mabo-ctl.yaml now? Running services whose command, directory, environment, " +
+        "port or tty changed will restart, running services it no longer declares will stop, and a " +
+        "dependency they need may start.")) { return; }
     btnConfigApply.disabled = true;
-    request("POST", "/api/config/reload", MUTATE_TIMEOUT).then(function () {
+    activity([{ text: "configuration reload requested…" }]);
+    request("POST", "/api/config/reload", MUTATE_TIMEOUT).then(function (res) {
+      // The new configuration is in force whether or not every service came
+      // back, so the page is rebuilt from it either way.
+      stashActivity(linesFromReload(res));
       window.location.reload();
     }).catch(function (err) {
-      activity([{ kind: "err", text: "configuration reload failed: " + err.message }]);
+      activity([{ kind: "err", text: "configuration not reloaded: " + err.message }]);
       btnConfigApply.disabled = false;
     });
   });
@@ -2842,13 +3131,15 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     window.open("http://localhost:" + port + "/", "_blank", "noopener,noreferrer");
   }
 
-  var btnStartAll = document.getElementById("btn-start-all");
-  var btnStopAll  = document.getElementById("btn-stop-all");
-  var btnRefresh  = document.getElementById("btn-refresh");
+  var btnStartAll   = document.getElementById("btn-start-all");
+  var btnRestartAll = document.getElementById("btn-restart-all");
+  var btnStopAll    = document.getElementById("btn-stop-all");
+  var btnRefresh    = document.getElementById("btn-refresh");
 
   function setGlobalBusy(on) {
     busyGlobal = on;
     btnStartAll.classList.toggle("busy", on && btnStartAll.dataset.active === "1");
+    btnRestartAll.classList.toggle("busy", on && btnRestartAll.dataset.active === "1");
     btnStopAll.classList.toggle("busy", on && btnStopAll.dataset.active === "1");
     paintGlobalButtons();
     for (var k in rows) {
@@ -2870,9 +3161,12 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     var noneUp = live === 0;
 
     btnStartAll.disabled = busyGlobal || total === 0 || allUp;
+    btnRestartAll.disabled = busyGlobal || noneUp;
     btnStopAll.disabled = busyGlobal || total === 0 || noneUp;
     btnStartAll.title = total === 0 ? "no services are declared"
       : (allUp ? "every service is already running" : "start every declared service");
+    btnRestartAll.title = noneUp ? "nothing is running"
+      : "restart the " + live + " running service" + (live === 1 ? "" : "s") + "; stopped ones stay stopped";
     btnStopAll.title = total === 0 ? "no services are declared"
       : (noneUp ? "nothing is running" : "stop every declared service");
   }
@@ -2881,7 +3175,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     if (busyGlobal) { return; }
     btn.dataset.active = "1";
     setGlobalBusy(true);
-    activity([{ text: verb + " requested for every service…" }]);
+    activity([{ text: verb + " requested…" }]);
     request("POST", path, MUTATE_TIMEOUT)
       .then(function (res) { activity(linesFromMutation(res)); })
       .catch(function (err) { activity([{ kind: "err", text: verb + " failed: " + err.message }]); })
@@ -2893,6 +3187,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
   }
 
   btnStartAll.addEventListener("click", function () { bulk("/api/start-all", "start-all", btnStartAll); });
+  btnRestartAll.addEventListener("click", function () { bulk("/api/restart-all", "restart-all", btnRestartAll); });
   btnStopAll.addEventListener("click", function () { bulk("/api/stop-all", "stop-all", btnStopAll); });
   btnRefresh.addEventListener("click", function () { pollNow(); });
 
@@ -3367,6 +3662,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
       // The filter belongs to the service list, so asking for it asks for the
       // list back: focusing an input inside a hidden view does nothing.
       showConfig(false);
+      if (railOn) { setRail(false, false); }
       filterEl.focus();
       filterEl.select();
       return;
@@ -3387,6 +3683,12 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     // has replaced. Moving or starting something the reader cannot see is worse
     // than doing nothing.
     if (configOpen()) { return; }
+
+    if (ev.key === "b") {
+      ev.preventDefault();
+      setRail(!railOn, true);
+      return;
+    }
 
     // Arrow keys inside the detail pane belong to whatever is scrolling there.
     var inDetail = t && t.closest && t.closest("#detail");
@@ -3418,7 +3720,9 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
      ======================================================================= */
 
   var pollTimer = 0;
-  var polling = false;
+  var pollWatchdog = 0;
+  var pollCtl = null;
+  var pollSeq = 0;
 
   function pollInterval() {
     return document.visibilityState === "hidden" ? POLL_HIDDEN_MS : POLL_VISIBLE_MS;
@@ -3431,20 +3735,36 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
 
   function pollNow() {
     clearTimeout(pollTimer);
-    if (polling) { return; }   // never let slow health probes stack up
-    polling = true;
-    request("GET", "/api/status", STATUS_TIMEOUT)
+    clearTimeout(pollWatchdog);
+    // A poll still in flight is not necessarily slow: after a sleep/wake or a
+    // frozen tab a fetch can hang without ever settling. Abandon it and start
+    // over, or a single stuck promise would latch the page forever.
+    if (pollCtl) { pollCtl.abort(); }
+    var seq = ++pollSeq;
+    var ctl = new AbortController();
+    pollCtl = ctl;
+    // The abort above is the normal way the old fetch settles. This is the
+    // backstop for a browser whose network stack never rejects it.
+    pollWatchdog = setTimeout(function () {
+      if (seq === pollSeq) { pollNow(); }
+    }, STATUS_TIMEOUT + 4000);
+
+    request("GET", "/api/status", STATUS_TIMEOUT, null, ctl)
       .then(function (list) {
+        if (seq !== pollSeq) { return; }   // a newer poll owns the page
         health.poll = "ok";
         health.pollWhy = "";
         applyStatuses(list || []);
       })
       .catch(function (err) {
+        if (seq !== pollSeq) { return; }
         health.poll = "down";
         health.pollWhy = err.message;
       })
       .then(function () {
-        polling = false;
+        if (seq !== pollSeq) { return; }
+        clearTimeout(pollWatchdog);
+        pollCtl = null;
         paintHealth();
         schedulePoll();
       });
@@ -3502,8 +3822,27 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
   }
 
   document.addEventListener("visibilitychange", function () {
-    if (document.visibilityState === "visible") { pollNow(); }
-    else { schedulePoll(); }
+    if (document.visibilityState === "visible") {
+      pollNow();
+      recoverStreams();
+    } else {
+      schedulePoll();
+    }
+  });
+
+  // A tab restored from the back/forward cache, and a machine that just came
+  // back online, both need the same thing: stop trusting connections that were
+  // opened before the interruption.
+  window.addEventListener("pageshow", function (ev) {
+    if (ev.persisted) {
+      pollNow();
+      recoverStreams();
+    }
+  });
+
+  window.addEventListener("online", function () {
+    pollNow();
+    recoverStreams();
   });
 
   // Uptime is derived from a timestamp, so it must tick between polls or it
@@ -3513,6 +3852,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
       if (owns.call(rows, k)) { rows[k].paintUptime(); }
     }
     detail.paintUptime();
+    if (tipRow) { paintTip(); }
   }, 1000);
 
   /* =======================================================================
@@ -3520,6 +3860,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
      ======================================================================= */
 
   var eventsES = null, eventsRetryAt = RECONNECT_MIN, eventsTimer = 0;
+  var eventsOpenedAt = 0;
 
   function openEvents() {
     closeEvents();
@@ -3529,12 +3870,14 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     var es;
     try { es = new EventSource("/api/events"); }
     catch (e) {
+      eventsOpenedAt = 0;
       health.events = "down";
       health.eventsWhy = "this browser cannot open an event stream";
       paintHealth();
       return;
     }
     eventsES = es;
+    eventsOpenedAt = Date.now();
 
     es.onopen = function () {
       eventsRetryAt = RECONNECT_MIN;
@@ -3549,9 +3892,14 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
       health.events = "live";
       paintHealth();
 
-      if (e.msg === "config change detected; reload configuration?") {
+      if (e.msg === CONFIG_CHANGED) {
         showConfigChange();
-        activity([{ text: "configuration changed; reload is waiting for confirmation" }]);
+        activity([{ text: "mabo-ctl.yaml changed; the reload is waiting for you to confirm it" }]);
+        return;
+      }
+      if (e.msg === CONFIG_CURRENT) {
+        hideConfigChange();
+        activity([{ text: "mabo-ctl.yaml matches the configuration in force again" }]);
         return;
       }
 
@@ -3607,7 +3955,28 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
       eventsES.close();
       eventsES = null;
     }
+    eventsOpenedAt = 0;
   }
+
+  // recoverStreams reopens a transport that is closed, or that has been stuck
+  // CONNECTING since before a sleep. An OPEN stream is left alone: reopening it
+  // would replay the tail and duplicate lines. EventSource reconnects after a
+  // clean drop, but a tab restored from sleep can sit in CONNECTING forever.
+  function recoverStreams() {
+    // Until the first service list arrives there is no pane or event stream to
+    // recover; loadServices owns its own retry and will open both on success.
+    if (!booted) { return; }
+    if (eventsES === null || eventsES.readyState === 2 ||
+        (eventsES.readyState === 0 && Date.now() - eventsOpenedAt > RECONNECT_MAX)) {
+      openEvents();
+    }
+    pane.recover();
+  }
+
+  // A tab that was visible before the lid closed is still visible after it, so
+  // neither visibilitychange nor online may fire on wake. This timer is the
+  // backstop that reopens a stream stuck in CONNECTING across a sleep.
+  setInterval(recoverStreams, RECONNECT_MAX);
 
   var soonTimer = 0;
   function pollSoon() {
@@ -3652,19 +4021,16 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     detailEl.appendChild(box);
   }
 
-  function boot() {
-    paintToken();
-    buildTiles();
-    paintTiles();
+  var booted = false;
+  var bootTimer = 0;
+  var bootRetryAt = 1000;
 
-    if (!TOKEN) {
-      activity([{
-        kind: "err",
-        text: "No session token found in this page, so start, stop and restart " +
-              "would be refused. Reopen the URL mabo-ctl printed."
-      }]);
-    }
-
+  // loadServices is the page's first request. A tab the browser reloaded while
+  // the machine was still waking can run it against a network stack that has
+  // not come back yet; retrying is what makes that recover on its own instead
+  // of leaving a dead "Cannot reach mabo-ctl" page until a manual reload.
+  function loadServices() {
+    clearTimeout(bootTimer);
     request("GET", "/api/services", STATUS_TIMEOUT).then(function (list) {
       services = list || [];
       clear(listEl);
@@ -3692,6 +4058,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
       var first = visibleNames();
       select(first.length ? first[0] : services[0].name, false);
 
+      booted = true;
       openEvents();
       pollNow();
     }).catch(function (err) {
@@ -3699,7 +4066,26 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
       health.pollWhy = err.message;
       paintHealth();
       fatal("Cannot reach mabo-ctl", err.message);
+      bootTimer = setTimeout(loadServices, bootRetryAt);
+      bootRetryAt = Math.min(bootRetryAt * 2, RECONNECT_MAX);
     });
+  }
+
+  function boot() {
+    paintToken();
+    buildTiles();
+    paintTiles();
+    replayStashedActivity();
+
+    if (!TOKEN) {
+      activity([{
+        kind: "err",
+        text: "No session token found in this page, so start, stop and restart " +
+              "would be refused. Reopen the URL mabo-ctl printed."
+      }]);
+    }
+
+    loadServices();
   }
 
   boot();

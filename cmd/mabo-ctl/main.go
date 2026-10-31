@@ -40,7 +40,6 @@ import (
 	"strings"
 
 	"github.com/maborak/mabo-ctl/internal/config"
-	"github.com/maborak/mabo-ctl/internal/console"
 	"github.com/maborak/mabo-ctl/internal/supervisor"
 	"github.com/maborak/mabo-ctl/internal/ui"
 )
@@ -89,7 +88,8 @@ type Env struct {
 	IsTTY func() bool
 	// Renderer overrides the renderer. Nil means one built from Stdout.
 	Renderer *ui.Renderer
-	// RunConsole runs the interactive console. Nil means console.Run.
+	// RunConsole runs the interactive console. Nil means the full-screen
+	// console with configuration reload wired in; see [app.runConsole].
 	RunConsole func(sup *supervisor.Supervisor) error
 	// OpenURL hands one URL to the platform browser opener. Nil means openURL.
 	OpenURL func(ctx context.Context, rawURL string) error
@@ -111,13 +111,12 @@ type Env struct {
 // defaultEnv returns the Env of the real process.
 func defaultEnv() *Env {
 	return &Env{
-		Args:       os.Args[1:],
-		Stdin:      os.Stdin,
-		Stdout:     os.Stdout,
-		Stderr:     os.Stderr,
-		IsTTY:      func() bool { return isCharDevice(os.Stdin) && isCharDevice(os.Stdout) },
-		RunConsole: console.Run,
-		OpenURL:    openURL,
+		Args:    os.Args[1:],
+		Stdin:   os.Stdin,
+		Stdout:  os.Stdout,
+		Stderr:  os.Stderr,
+		IsTTY:   func() bool { return isCharDevice(os.Stdin) && isCharDevice(os.Stdout) },
+		OpenURL: openURL,
 	}
 }
 
@@ -188,9 +187,6 @@ func normalize(e *Env) {
 	}
 	if e.IsTTY == nil {
 		e.IsTTY = func() bool { return false }
-	}
-	if e.RunConsole == nil {
-		e.RunConsole = console.Run
 	}
 	if e.OpenURL == nil {
 		e.OpenURL = openURL

@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/maborak/mabo-ctl/internal/redact"
@@ -227,7 +226,7 @@ func (s *Server) handleDocs(w http.ResponseWriter, r *http.Request) {
 	}
 	// The markers appear in the <rapi-doc> attributes (and once in a comment),
 	// so every occurrence must be replaced.
-	page := strings.ReplaceAll(apiDocsHTML, "__RAPIDOC_TOKEN__", s.token)
+	page := strings.ReplaceAll(apiDocsHTML, "__RAPIDOC_TOKEN__", s.sessionToken())
 	page = strings.ReplaceAll(page, "__RAPIDOC_SERVER__", "http://"+s.Addr())
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(page))
@@ -371,8 +370,9 @@ const unlockHTML = `<!doctype html>
 // buttons all 403 because the two halves disagreed about how the token arrives
 // is a failure worth twenty lines of belt and braces.
 func (s *Server) renderPage() []byte {
+	token := s.sessionToken()
 	data := map[string]any{
-		"Token":    s.token,
+		"Token":    token,
 		"Addr":     s.Addr(),
 		"URL":      s.URL(),
 		"Services": func() []string { names, _ := s.serviceNames(); return names }(),
@@ -389,10 +389,10 @@ func (s *Server) renderPage() []byte {
 			out = buf.Bytes()
 		}
 	}
-	if bytes.Contains(out, []byte(s.token)) {
+	if bytes.Contains(out, []byte(token)) {
 		return out
 	}
-	return injectToken(out, s.token)
+	return injectToken(out, token)
 }
 
 // injectToken puts the token into a page that did not ask for it, immediately
@@ -452,14 +452,6 @@ func (s *Server) handleServices(w http.ResponseWriter, _ *http.Request) {
 		out = append(out, info)
 	}
 	writeJSON(w, http.StatusOK, out)
-}
-
-func (s *Server) handleReloadConfig(w http.ResponseWriter, r *http.Request) {
-	if err := s.ReloadConfig(r.Context()); err != nil {
-		writeJSON(w, http.StatusUnprocessableEntity, errorResponse{Error: err.Error()})
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 // handleStatus emits exactly what `mabo-ctl status --json` emits.
@@ -564,6 +556,30 @@ func (s *Server) handleStopAll(w http.ResponseWriter, r *http.Request) {
 	s.mutate(w, r, opStop, nil)
 }
 
+// handleRestartAll restarts every service that is running now.
+//
+// It names the live services rather than passing nil. A nil restart is a stop
+// of everything followed by a start of the autostart selection, so a running
+// `autostart: false` service would be stopped and never come back, and a
+// service the operator deliberately left stopped would be started.
+func (s *Server) handleRestartAll(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	sts := s.controller().Status(ctx)
+	cancel()
+
+	var names []string
+	for _, st := range sts {
+		if st.Phase.Alive() {
+			names = append(names, st.Name)
+		}
+	}
+	if len(names) == 0 {
+		writeJSON(w, http.StatusConflict, errorResponse{Error: "nothing is running, so there is nothing to restart"})
+		return
+	}
+	s.mutate(w, r, opRestart, names)
+}
+
 // opKind names one supervisor operation.
 type opKind string
 
@@ -597,6 +613,11 @@ func (s *Server) mutateOne(w http.ResponseWriter, r *http.Request, kind opKind) 
 // each holding real processes — reachable by anyone holding the token, which
 // after a start is anyone with the page open.
 func (s *Server) mutate(w http.ResponseWriter, r *http.Request, kind opKind, names []string) {
+	if !s.lifecycleMu.TryRLock() {
+		writeJSON(w, http.StatusConflict, errorResponse{Error: "configuration reload in progress; retry when it finishes"})
+		return
+	}
+	defer s.lifecycleMu.RUnlock()
 	select {
 	case s.inflight <- struct{}{}:
 		defer func() { <-s.inflight }()
@@ -611,24 +632,7 @@ func (s *Server) mutate(w http.ResponseWriter, r *http.Request, kind opKind, nam
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), s.opTimeout())
 	defer cancel()
 
-	ev := make(chan supervisor.Event, streamBuffer)
-	var (
-		mu        sync.Mutex
-		collected []eventJSON
-	)
-	drained := make(chan struct{})
-	go func() {
-		defer close(drained)
-		for e := range ev {
-			s.events.publish(e)
-			mu.Lock()
-			if len(collected) < maxCollectedEvents {
-				collected = append(collected, toEventJSON(e))
-			}
-			mu.Unlock()
-		}
-	}()
-
+	ev, finish := s.collectEvents()
 	var err error
 	switch kind {
 	case opStart:
@@ -640,8 +644,7 @@ func (s *Server) mutate(w http.ResponseWriter, r *http.Request, kind opKind, nam
 	default:
 		err = fmt.Errorf("web: unknown operation %q", kind)
 	}
-	close(ev)
-	<-drained
+	collected := finish()
 
 	// A final event so a console that is only watching the stream sees the
 	// outcome, not just the transitions leading up to it.
@@ -659,9 +662,6 @@ func (s *Server) mutate(w http.ResponseWriter, r *http.Request, kind opKind, nam
 	}
 	if resp.Services == nil {
 		resp.Services = []string{}
-	}
-	if resp.Events == nil {
-		resp.Events = []eventJSON{}
 	}
 	if err != nil {
 		resp.Error = err.Error()

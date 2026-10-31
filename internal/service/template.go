@@ -33,17 +33,22 @@ func newExpander(names []string, ports map[string]int) *expander {
 // than the string "<no value>" silently reaching a command line. It returns an
 // error when the text does not parse, references an unknown service, or
 // references the port of a service that declares none.
+//
+// The error names the field and never quotes text: what may be an env value
+// holding a credential, and the message reaches stderr, the web console and its
+// event stream. The field name plus the template engine's own position is
+// enough to find the line. See docs/LANDMINES.md §4.
 func (e *expander) expand(svc, what, text string) (string, error) {
 	if !strings.Contains(text, "{{") {
 		return text, nil
 	}
 	tpl, err := template.New(svc + " " + what).Option("missingkey=error").Parse(text)
 	if err != nil {
-		return "", fmt.Errorf("service %q: %s %q: invalid template: %w", svc, what, text, err)
+		return "", fmt.Errorf("service %q: %s: invalid template: %w", svc, what, err)
 	}
 	var b strings.Builder
 	if err := tpl.Execute(&b, &portData{self: svc, exp: e}); err != nil {
-		return "", fmt.Errorf("service %q: %s %q: %w", svc, what, text, err)
+		return "", fmt.Errorf("service %q: %s: %w", svc, what, err)
 	}
 	return b.String(), nil
 }

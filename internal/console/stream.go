@@ -47,8 +47,12 @@ type (
 	// tickMsg is the periodic status-refresh trigger.
 	tickMsg time.Time
 
-	// statusMsg carries one completed Status call.
-	statusMsg struct{ statuses []supervisor.Status }
+	// statusMsg carries one completed Status call, tagged with the controller
+	// generation it was read from; see Model.ctrlGen.
+	statusMsg struct {
+		statuses []supervisor.Status
+		gen      int
+	}
 
 	// tailLineMsg is one log line, tagged with the session that produced it so
 	// a line from a cancelled tail can be recognised and dropped.
@@ -88,14 +92,14 @@ func tick() tea.Cmd {
 // A nil controller yields an empty snapshot rather than a panic: the console
 // renders "no services" and stays usable, which is a better failure than
 // losing the terminal to a stack trace.
-func refresh(ctrl Controller) tea.Cmd {
+func refresh(ctrl Controller, gen int) tea.Cmd {
 	return func() tea.Msg {
 		if ctrl == nil {
-			return statusMsg{}
+			return statusMsg{gen: gen}
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), statusTimeout)
 		defer cancel()
-		return statusMsg{statuses: ctrl.Status(ctx)}
+		return statusMsg{statuses: ctrl.Status(ctx), gen: gen}
 	}
 }
 

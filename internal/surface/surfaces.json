@@ -187,6 +187,7 @@
       "http:GET /{$} (index)",
       "http:POST /api/config/reload (mutate)",
       "http:POST /api/origins (mutate)",
+      "http:POST /api/restart-all (mutate)",
       "http:POST /api/start-all (mutate)",
       "http:POST /api/stop-all (mutate)",
       "http:POST /api/{svc}/restart (mutate)",

@@ -479,7 +479,28 @@ curl -s -X POST \
 
 ### `POST /api/config/reload`
 
-Apply the latest validated `mabo-ctl.yaml` without restarting running services.
+Apply `mabo-ctl.yaml` as it now reads on disk — the edit the console announced
+on `/api/events` with `config change detected; reload configuration?`.
+
+- A **running** service whose command, directory, environment (an `env_file`
+  included), port or `tty` changed is stopped under its old definition and
+  started under its new one. A dependency it needs that is down is started too.
+- A **running** service the file no longer declares is stopped.
+- **Every other service keeps running, untouched.** A colour, probe, `open`,
+  `ready_timeout`, `depends_on`, `autostart` or hook edit restarts nothing; the
+  new value applies from here on. Adding or removing a service does not restart
+  its siblings.
+- A port edited in the file is adopted for that service even though
+  `.mabo-ctl/run.env` pinned the old one; other services keep their pinned port.
+- A service a reload stopped and could not start again is started by the next
+  reload.
+- `console_access_key` replaces the session key at once unless the console was
+  started with `--access-key`; the old key, its cookie and every stream it
+  opened stop working. A `console_addr` edit applies when `serve` restarts.
+
+The reload runs to completion even if the client disconnects: one abandoned half
+way leaves services stopped that nothing starts again. Progress is published on
+`/api/events` as it happens.
 
 **Auth:** Token header required.
 
@@ -491,13 +512,32 @@ curl -s -X POST \
 
 **Request body:** none.
 
-**Response** `200 OK`:
+**Response** `200 OK` — the new configuration is in force:
 
 ```json
-{"ok": true}
+{
+  "ok": false,
+  "error": "services did not start: worker",
+  "stopped": ["legacy"],
+  "restarted": ["backend", "worker"],
+  "events": [
+    {"service": "worker", "phase": "failed", "msg": "failed: process died\n..."}
+  ]
+}
 ```
 
-**Errors:** `422` when the edited configuration cannot be loaded, validated or resolved. The previous configuration remains active.
+`ok` is `true` when every affected service was stopped and started cleanly. When
+it is `false`, `error` names what failed and `events` says why; like a start
+that fails, that is an outcome of the request, not an HTTP error.
+
+**Errors:**
+
+| Status | Body | When |
+|--------|------|------|
+| `409` | `{"error": "…"}` | A start, stop or restart is in progress; the reload was not attempted |
+| `422` | `{"error": "…"}` | Nothing was applied: the file did not load, validate or resolve, a service it needs cannot run, or a removed service survived its stop. The previous configuration remains in force |
+
+Start, stop and restart answer `409` while a reload runs, for the same reason.
 
 ---
 
@@ -549,7 +589,10 @@ limit.
 
 | Status | Body | When |
 |--------|------|------|
+| `409` | `{"error": "configuration reload in progress…"}` | A configuration reload is running; retry when it finishes |
 | `429` | `{"error": "too many operations in flight…"}` | Concurrency limit reached |
+
+Every start, stop and restart route answers `409` while a reload runs.
 
 ---
 
@@ -568,6 +611,36 @@ curl -s -X POST \
 **Request body:** none.
 
 **Response** `200 OK` — same shape as `/api/start-all` with `operation: "stop"`.
+
+---
+
+### `POST /api/restart-all`
+
+Restart every service that is running now (`running`, `ready`, `slow` or
+`degraded`). Stopped, failed and exited services are left alone, and the
+services are named explicitly, so `autostart: false` does not change what is
+restarted.
+
+**Auth:** Token header required.
+
+```bash
+curl -s -X POST \
+  -H 'X-Mabo-Ctl-Token: YOUR_TOKEN' \
+  http://127.0.0.1:7999/api/restart-all | jq
+```
+
+**Request body:** none.
+
+**Response** `200 OK` — same shape as `/api/start-all` with
+`operation: "restart"` and `services` naming the services that were running.
+
+**Errors:**
+
+| Status | Body | When |
+|--------|------|------|
+| `409` | `{"error": "nothing is running, so there is nothing to restart"}` | No service is running |
+| `409` | `{"error": "configuration reload in progress…"}` | A configuration reload is running |
+| `429` | `{"error": "too many operations in flight…"}` | Concurrency limit reached |
 
 ---
 
@@ -593,6 +666,7 @@ and `services: ["{svc}"]`.
 | Status | Body | When |
 |--------|------|------|
 | `404` | `{"error": "unknown service", "valid": [...]}` | `{svc}` not in the declared set |
+| `409` | `{"error": "configuration reload in progress…"}` | A configuration reload is running |
 | `429` | `{"error": "too many operations in flight…"}` | Concurrency limit reached |
 
 ---
@@ -840,6 +914,10 @@ All SSE routes share these conventions:
 - **Data is JSON** on a single `data:` line (no raw newlines possible)
 - **Heartbeats** are SSE comments (`: heartbeat`) at a fixed interval
 - **Reconnect** hint: 2 seconds
+- **Write deadline:** one write that cannot complete within 15 seconds ends
+  the stream, so a peer that stops reading cannot pin a handler forever. There
+  is no overall response timeout — a stream may legitimately stay open for
+  hours.
 
 When a stream ends (service stopped, tail returned, server shutting down), the
 handler sends an end event and closes the connection.

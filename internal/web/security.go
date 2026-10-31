@@ -106,6 +106,12 @@ func (r *statusRecorder) Flush() {
 	}
 }
 
+// Unwrap exposes the wrapped writer to http.ResponseController. The SSE
+// handlers use it to put a deadline on each write; without this method the
+// recorder would hide the connection's SetWriteDeadline and a stalled stream
+// could block forever.
+func (r *statusRecorder) Unwrap() http.ResponseWriter { return r.ResponseWriter }
+
 // guard is the middleware every request passes through: security headers, then
 // the Host check, then the Origin check.
 //
@@ -300,7 +306,7 @@ func (s *Server) trustedHost(hostport string) bool {
 func (s *Server) requireToken(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		got := r.Header.Get(tokenHeader)
-		if subtle.ConstantTimeCompare([]byte(got), []byte(s.token)) != 1 {
+		if subtle.ConstantTimeCompare([]byte(got), []byte(s.sessionToken())) != 1 {
 			http.Error(w, "forbidden: missing or invalid "+tokenHeader+" header; the session "+
 				"token is printed with the console URL and rendered into the page",
 				http.StatusForbidden)
@@ -388,7 +394,7 @@ func (s *Server) session(r *http.Request) (ok, fromQuery bool) {
 
 // tokenMatches compares got against the session token in constant time.
 func (s *Server) tokenMatches(got string) bool {
-	return subtle.ConstantTimeCompare([]byte(got), []byte(s.token)) == 1
+	return subtle.ConstantTimeCompare([]byte(got), []byte(s.sessionToken())) == 1
 }
 
 // setSessionCookie issues the cookie that lets a reload of the console page
@@ -410,7 +416,7 @@ func (s *Server) tokenMatches(got string) bool {
 func (s *Server) setSessionCookie(w http.ResponseWriter) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     s.cookieName(),
-		Value:    s.token,
+		Value:    s.sessionToken(),
 		Path:     "/",
 		HttpOnly: true,
 		Secure:   s.trustsANonLoopbackOrigin(),

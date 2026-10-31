@@ -140,14 +140,29 @@ credential into the SUPERVISED SERVICE's access log, which `/api/logs` and
 output mabo-ctl must not rewrite — but it is why credentials belong in a header,
 not a query string.
 
+The same shape again in config errors, diagnosed 2026-10-14 by audit. Every
+load error quoted the value that failed: `ParseEnvFile` echoed a malformed env
+line (`API_TOKEN: sk-live-…` — another syntax's whole secret), the validator
+quoted env and env_file values, cmd arguments and the health URL, and the
+template expander quoted the raw text of whatever it could not expand. Those
+errors reach stderr, the web console's 422 body and `/api/events`. The config
+reload route then added `redact.Args([]string{err.Error()})` to its 422 — an
+argv redactor run over free text, which cut at the first `=` and redacted the
+harmless tail while the secret before it went out verbatim. Verified live.
+
 **Fix.** `redact.URL` is applied where the string is BUILT, not where it is
-rendered. `internal/redact` remains the only implementation of the rules.
+rendered. `internal/redact` remains the only implementation of the rules. Config
+errors quote values through `redact.Value` / `redact.Args` / `redact.URL` by
+field, `Health.String()` redacts, and neither `ParseEnvFile` nor the template
+expander quotes the value at all — the file, line and field name find it.
 
 **Detector.**
 ```bash
 go test ./internal/supervisor/ -run TestStartEventsNeverQuoteAHealthURLCredential
+go test ./internal/config/ -run TestLoadErrorsNeverQuoteACredential
+go test ./internal/service/ -run TestTemplateErrorsNeverQuoteTheValue
 
-# Structural: every use of in.Health must be either redacted or one of the four
+# Structural: every use of in.Health must be either redacted or one of the
 # legitimate non-rendering uses. Prints nothing when clean; prints the offending
 # line when a new Event.Msg interpolates the URL raw. (An allowlist, not a
 # pattern match on Sprintf — the format strings contain parentheses of their own
@@ -155,7 +170,11 @@ go test ./internal/supervisor/ -run TestStartEventsNeverQuoteAHealthURLCredentia
 # class and a line-oriented grep. This version was verified by re-introducing
 # the bug and confirming it fires.)
 rg -n 'in\.Health' internal/supervisor/*.go | rg -v '_test\.go' \
-  | rg -v 'redact\.URL|Health: +in\.Health|in\.Health == ""|health\.Wait\(|\}\(i, in\.Health\)'
+  | rg -v 'redact\.URL|Health: +in\.Health|in\.Health == ""|health\.Wait(TCP|Exec)?\(|\}\(i, in\.Health\)'
+
+# Per-route redaction of free text: an argv redactor wrapped around one string.
+# Prints nothing when clean.
+rg -n 'redact\.Args\(\[\]string\{' internal cmd | rg -v '_test\.go'
 ```
 
 ---
@@ -244,9 +263,17 @@ port while mabo-ctl supervises it on another.
 `capture` now MERGES, because an earlier capture already removed the variable
 from the environment and re-reading would find nothing.
 
+The same shape in the configuration reload, diagnosed 2026-10-14 by audit: it
+hand-composed `service.Resolve` without the port-drift step, so a port edited in
+the YAML lost to `run.env` with no notice, and the reload then persisted the
+old port back. `app.reloadConfig` now adopts the declared port for exactly the
+services whose declaration changed (`service.Options.IgnoreRunEnvFor`) and
+captures through the same merge `capture` uses.
+
 **Detector.**
 ```bash
 go test ./cmd/mabo-ctl/
+go test ./cmd/mabo-ctl/ -run TestReloadAdoptsAnEditedPortAndKeepsAPinnedOne
 rg -n 'a\.loaded, a\.cfg' cmd/mabo-ctl/app.go   # every reset of these must be followed by load()+capture()
 ```
 
@@ -501,3 +528,86 @@ the stricter normaliser and still require HTTPS away from loopback.
 ```bash
 go test ./internal/web -run TestExplicitLANBindAcceptsItsOwnHTTPOrigin
 ```
+
+## 17. A ready dependency that was already running read as "declares no probe"
+
+**Shape.** A short-circuit that answers a different question than the one its
+caller asks. `startOne`'s "already running" branch returned `PhaseRunning`, and
+the `depends_ready_on` fold reads any phase but `ready` as not ready — so a live,
+READY dependency gated its dependant out, with the skip message "is running but
+declares no probe to become ready", false on both counts.
+
+**Where it bit us.** `internal/supervisor/supervisor.go` (`startOne`, the fold
+in `Start`), diagnosed 2026-10-14 by audit. Every `restart` of a readiness-gated
+dependant stopped it and then refused to start it again behind its own, healthy
+dependency; the configuration reload, which restarts changed services the same
+way, made it automatic. Verified live: the dependant ended at pid 0 while its
+dependency stayed ready.
+
+**Fix.** The already-running branch probes once (`runningPhase`) and returns the
+phase Status would derive: `ready`, or `slow`/`degraded` by the spawn time.
+
+**Detector.**
+```bash
+go test ./internal/supervisor/ -run TestRestartStartsAGatedDependantOfAReadyRunningDependency
+```
+
+## 18. An interrupted stop escalated straight to SIGKILL
+
+**Shape.** Treating "the waiter went away" as "the grace ran out". `awaitDeath`
+returns early on a cancelled context, and `stopOne` read that early return as a
+process that outlived its grace: it sent SIGKILL at once, ran the stop hooks on
+the dead context, and did the same to every service after it.
+
+**Where it bit us.** `internal/supervisor/supervisor.go` (`stopOne`), diagnosed
+2026-10-14 by audit. Quitting the full-screen console mid-stop, a web operation
+reaching its deadline, and — with the configuration reload — quitting
+mid-reload all turned a polite stop into a SIGKILL cascade with no grace at all.
+The console's own contract says cancelling an operation "never signals an
+already-spawned process".
+
+**Fix.** A cancelled stop is reported ("stop interrupted after SIGTERM, not
+escalating") and leaves the pid file naming the process; SIGKILL is earned only
+by the grace running out. `Stop` checks the context between services, `Reset`
+refuses to wipe state after an interrupted stop, and `ApplyReload` ignores
+cancellation altogether — a reload abandoned half way runs neither
+configuration.
+
+**Detector.**
+```bash
+go test ./internal/supervisor/ -run 'TestCancelledStopNeverEscalatesToSIGKILL|TestInterruptedResetKeepsTheStateDirectory|TestApplyReloadIgnoresCancellation'
+```
+
+## 19. A console resumed from sleep kept polling latched forever
+
+**Shape.** A boolean "request in flight" guard that only the request's own
+completion could clear. If the promise never settled — the case a laptop sleep,
+a frozen tab or a wedged network stack produces — the guard stayed true and
+every later poll returned early. A second, independent latch: `request` cleared
+its abort timer when headers arrived, so a body that stalled after the headers
+was unbounded.
+
+**Where it bit us.** `internal/web/console.html` (`request`, `pollNow`), reported
+2026-10-25 after the `mabo-ctl serve` consoles in tiktok-bot, legal-ai and
+amazon-watcher-backend went unresponsive across a laptop sleep while a fresh
+`curl` to the same server answered in milliseconds. EventSource connections
+stuck in CONNECTING had the same shape: the page only reopened them from
+`onerror`, which a stalled connection never fires.
+
+**Fix.** The poll carries an AbortController and a sequence number; a new poll
+abandons the old one and stale results are ignored, and a watchdog restarts the
+poll if the fetch never settles. The request timeout now covers the body, not
+just the headers. `visibilitychange`, `pageshow` (bfcache) and `online` reopen
+the event and log streams when they are closed or have been CONNECTING past the
+backoff ceiling. The page's first `/api/services` fetch retries with backoff, so
+a tab the browser reloaded while the machine was still waking does not sit on a
+dead "Cannot reach mabo-ctl" screen. On the server, every SSE write arms a
+`SetWriteDeadline` through `http.ResponseController` (the audit recorder now
+unwraps), so a peer that stops reading cannot pin a handler and its tail forever.
+
+**Detector.**
+```bash
+go test ./internal/web -run 'TestConsolePageRecoversFromAStalledTransport|TestSSEWriteArmsAndClearsAWriteDeadline|TestStatusRecorderUnwrapsForResponseController'
+```
+
+Full analysis: [RCA-2026-10-25-console-sleep.md](RCA-2026-10-25-console-sleep.md).

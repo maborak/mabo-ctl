@@ -45,6 +45,17 @@ type statusSource interface {
 	Status(ctx context.Context) []supervisor.Status
 }
 
+// residentStatus is the statusSource of a watcher that outlives configuration
+// reloads. It reads whichever supervisor the app last adopted, so a service an
+// edit added is watched and one it removed is not — where a watcher holding the
+// supervisor it started with kept watching a configuration no longer in force.
+type residentStatus struct{ a *app }
+
+// Status reports the statuses of the supervisor currently in force.
+func (r residentStatus) Status(ctx context.Context) []supervisor.Status {
+	return r.a.resident.Load().Status(ctx)
+}
+
 type notifier struct {
 	sup  statusSource
 	send notifySend

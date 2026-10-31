@@ -65,10 +65,13 @@ The controls, as of the current `main`:
 
 - **Loopback bind by default** (`127.0.0.1:7999`). A non-loopback `--addr`
   requires `--i-know-this-is-dangerous` and exits `2` without it.
-- **A per-run session token**, 32 random bytes. Required as the
-  `X-Mabo-Ctl-Token` **header** on every mutation — never a cookie, never a query
-  parameter, because both of those ride a cross-origin request and a custom
-  header cannot without a CORS preflight this server never answers.
+- **A per-run session token**, 32 random bytes, or the configured access key.
+  Required as the `X-Mabo-Ctl-Token` **header** on every mutation — never a
+  cookie, never a query parameter, because both of those ride a cross-origin
+  request and a custom header cannot without a CORS preflight this server never
+  answers. A `console_access_key` changed in `mabo-ctl.yaml` and applied through
+  the configuration reload replaces the key at once (unless `--access-key` was
+  given): the old key, its cookie and every stream it opened stop working.
 - **The console page and read routes** accept the token from the query, a
   `SameSite=Strict` `HttpOnly` cookie, or the header — a browser navigation
   cannot send a header and an `EventSource` cannot either. A browser with no

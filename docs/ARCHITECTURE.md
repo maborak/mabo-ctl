@@ -69,7 +69,9 @@ What `mabo-ctl start` actually does, in order:
 1. **Skip if already running** — the pid file is present *and* the process is
    alive *and* it is ours. Liveness alone is not ownership: a recycled pid is
    alive and belongs to someone else, so the check also verifies the process is
-   its own group leader, which every mabo-ctl child is by construction.
+   its own group leader, which every mabo-ctl child is by construction. A
+   skipped service with a readiness probe is probed once, so a
+   `depends_ready_on` dependant sees `ready` rather than a bare "running".
 2. **Take the cross-process start claim** — an `O_EXCL` create of
    `.mabo-ctl/pids/<svc>.pid.claim`, recording who is starting and since when. This
    is what stops a second mabo-ctl in another terminal from racing the same

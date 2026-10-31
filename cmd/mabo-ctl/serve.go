@@ -5,11 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
-	"time"
 
 	"github.com/spf13/cobra"
 
@@ -35,19 +34,27 @@ Authentication uses --access-key when supplied, then console_access_key from
 mabo-ctl.yaml, otherwise a new random key is generated for this run. Treat a
 configured key like a password and do not commit it to shared configuration.
 
-While it is serving, edits to mabo-ctl.yaml are detected and announced in the
-browser. The console applies a change only after you choose "Reload
-configuration"; invalid edits are rejected and the last valid configuration
-stays active. Reloading does not restart services already running.
+While it is serving, edits to mabo-ctl.yaml — and to any env_file it names — are
+detected and announced in the browser. Nothing changes until you choose "Reload
+& restart" and confirm. Then a running service whose command, directory,
+environment, port or tty changed is restarted under its new definition, a
+running service the file no longer declares is stopped, and every other
+service keeps running untouched; a colour, probe or hook edit restarts nothing.
+A port edited in the file is adopted for that service even though
+.mabo-ctl/run.env pinned the old one. An edit that does not load, validate or
+resolve is rejected and the configuration in force stays as it was. A new
+console_access_key in the file replaces the console's key at once unless
+--access-key was given; a console_addr edit applies when serve restarts.
 
-SECURITY: three of this server's routes start, stop and restart the commands in
-mabo-ctl.yaml, so anything that can reach it and satisfy its checks runs those
-commands as you. It is guarded on four sides:
+SECURITY: the routes that start, stop and restart services, and the one that
+reloads the configuration, run the commands in mabo-ctl.yaml, so anything that
+can reach this server and satisfy its checks runs those commands as you. It is
+guarded on four sides:
 
   * The default bind address is 127.0.0.1, reachable only from this machine.
   * A random session token is generated per run, printed once in the URL below,
-    and required as a header on every start, stop and restart. Treat the URL as
-    a password: whoever has it can run your dev stack.
+    and required as a header on every start, stop, restart and reload. Treat
+    the URL as a password: whoever has it can run your dev stack.
   * The Host and Origin headers must name the address mabo-ctl bound, so a page on
     the web cannot reach the console by pointing its own domain at 127.0.0.1.
     --allow-origin adds an origin to that check, which is what a console reached
@@ -195,7 +202,11 @@ func (a *app) serve(ctx context.Context, opt serveOptions) error {
 	if _, _, err := net.SplitHostPort(opt.Addr); err != nil {
 		return usageErrorf("--addr %q is not an address of the form host:port: %v", opt.Addr, err)
 	}
-	if opt.AccessKey == "" {
+	// keyFromConfig records that the key is the config's to set, so a reload
+	// that changes console_access_key rotates it. An --access-key on the
+	// command line outranks the file for the whole run.
+	keyFromConfig := opt.AccessKey == ""
+	if keyFromConfig {
 		if cfg, cfgErr := a.config(); cfgErr == nil {
 			opt.AccessKey = cfg.ConsoleAccessKey
 		}
@@ -223,6 +234,9 @@ func (a *app) serve(ctx context.Context, opt serveOptions) error {
 	// captured <NAME>_PORT variables, internal/state is the only package that
 	// may say where `.mabo-ctl` lives, and only the flag parser knows whether the
 	// config was given with --config or found by walking up.
+	//
+	// srv is captured by the reload below, which runs only once it is serving.
+	var srv *web.Server
 	makeConsole := func(addr string) (*web.Server, error) {
 		return web.New(sup, web.Options{
 			Addr:           addr,
@@ -233,13 +247,12 @@ func (a *app) serve(ctx context.Context, opt serveOptions) error {
 			ExplicitConfig: a.configPath != "",
 			AllowedOrigins: opt.AllowOrigins,
 			AccessKey:      opt.AccessKey,
-			Reload: func(ctx context.Context) (web.Controller, []service.Origin, string, bool, error) {
-				next, origins, stateDir, explicit, err := a.reloadForServe()
-				return next, origins, stateDir, explicit, err
+			Reload: func(ctx context.Context, ev chan<- supervisor.Event) (*web.Reloaded, error) {
+				return a.reloadServe(ctx, ev, srv, keyFromConfig)
 			},
 		})
 	}
-	srv, err := makeConsole(opt.Addr)
+	srv, err = makeConsole(opt.Addr)
 	if err != nil {
 		// A non-loopback address offered without the danger flag is a refusal to
 		// expose an RCE surface, not a runtime failure: it is exit 2, and the
@@ -296,15 +309,13 @@ func (a *app) serve(ctx context.Context, opt serveOptions) error {
 	}
 
 	if opt.Notify {
-		watcher := newNotifier(sup, sendDesktopNotification)
+		a.resident.Store(sup)
+		watcher := newNotifier(residentStatus{a}, sendDesktopNotification)
 		go watcher.watch(ctx)
 		fmt.Fprintln(a.env.Stderr, "Desktop notifications on: a dying service will announce itself.")
 	}
 
 	a.announceServe(srv, serveClosing)
-	if cfg, cfgErr := a.config(); cfgErr == nil {
-		go watchConfig(ctx, cfg.Path, srv)
-	}
 	if opt.Open {
 		if err := a.env.OpenURL(ctx, srv.URL()); err != nil {
 			// A missing xdg-open is not a reason to refuse to serve: the URL is
@@ -315,31 +326,57 @@ func (a *app) serve(ctx context.Context, opt serveOptions) error {
 	return srv.ListenAndServe(ctx)
 }
 
-// watchConfig reports edits once per file metadata change. It does not reload
-// automatically: editing YAML is often a multi-write operation, and applying
-// an intermediate document could change the stack while the operator is still
-// typing. The browser asks for confirmation and applies the final document.
-func watchConfig(ctx context.Context, path string, srv *web.Server) {
-	ticker := time.NewTicker(500 * time.Millisecond)
-	defer ticker.Stop()
-	var last os.FileInfo
-	if info, err := os.Stat(path); err == nil {
-		last = info
+// reloadServe is the console's [web.Options.Reload]: [app.reloadConfig], plus
+// the two settings that belong to the console rather than to the stack.
+//
+// A console_access_key the edit changed replaces the session key at once —
+// unless --access-key was given, which outranks the file for the whole run —
+// because a key edited in the file is very often a key being rotated after it
+// leaked, and a rotation that waits for a restart is not one. The new URL is
+// printed where the first one was. console_addr cannot move a listener that
+// is serving the request asking; the edit is reported, not applied.
+func (a *app) reloadServe(ctx context.Context, ev chan<- supervisor.Event, srv *web.Server, keyFromConfig bool) (*web.Reloaded, error) {
+	prev := a.cfg
+	r, err := a.reloadConfig(ctx, ev)
+	if r == nil {
+		return nil, err
 	}
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			info, err := os.Stat(path)
-			if err != nil {
-				continue
-			}
-			if last == nil || info.ModTime() != last.ModTime() || info.Size() != last.Size() {
-				last = info
-				srv.NotifyConfigChange()
+	cfg := r.sup.Config()
+	if cfg.ConsoleAddr != prev.ConsoleAddr {
+		notify(ev, supervisor.Event{Msg: fmt.Sprintf(
+			"console_addr changed in %s; this console keeps listening on %s until serve is restarted",
+			filepath.Base(cfg.Path), srv.Addr())})
+	}
+	if cfg.ConsoleAccessKey != prev.ConsoleAccessKey {
+		switch {
+		case !keyFromConfig:
+			notify(ev, supervisor.Event{Msg: "console_access_key changed, but --access-key outranks it for this run; the key is unchanged"})
+		case cfg.ConsoleAccessKey == "":
+			notify(ev, supervisor.Event{Msg: "console_access_key was removed; the console keeps its current key until serve is restarted"})
+		default:
+			if kerr := srv.SetAccessKey(cfg.ConsoleAccessKey); kerr != nil {
+				err = errors.Join(err, fmt.Errorf("console_access_key was not applied, the console keeps its current key: %w", kerr))
+			} else {
+				notify(ev, supervisor.Event{Msg: "console access key rotated from mabo-ctl.yaml; " +
+					"reopen the console with the new key — the old one, its cookie and its streams no longer work"})
+				fmt.Fprintf(a.env.Stderr, "mabo-ctl: console_access_key rotated from %s; the console URL is now:\n", cfg.Path)
+				fmt.Fprintln(a.env.Stdout, srv.URL())
 			}
 		}
+	}
+	return &web.Reloaded{
+		Controller: r.sup,
+		Origins:    r.origins,
+		Stopped:    r.report.Stopped,
+		Restarted:  r.report.Restarted,
+	}, err
+}
+
+// notify delivers e without blocking, as the supervisor's own events are.
+func notify(ev chan<- supervisor.Event, e supervisor.Event) {
+	select {
+	case ev <- e:
+	default:
 	}
 }
 

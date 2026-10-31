@@ -332,6 +332,7 @@ var mutatingPaths = []string{
 	"/api/backend/restart",
 	"/api/start-all",
 	"/api/stop-all",
+	"/api/restart-all",
 }
 
 // ---------------------------------------------------------------------------
@@ -806,6 +807,43 @@ func TestBulkMutationTargetsEveryService(t *testing.T) {
 					path, resp.Services)
 			}
 		}
+	}
+}
+
+// TestRestartAllRestartsOnlyWhatIsRunning pins the selection behind the
+// console's "Restart all". A nil restart would stop every service and then
+// start only the autostart selection, killing a running `autostart: false`
+// service for good and starting one the operator left stopped.
+func TestRestartAllRestartsOnlyWhatIsRunning(t *testing.T) {
+	t.Parallel()
+	ctrl := twoServices() // backend ready, frontend stopped
+	s := newRecorderServer(t, ctrl)
+
+	post := func() *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "http://"+recorderAddr+"/api/restart-all", nil)
+		req.Header.Set(tokenHeader, s.Token())
+		rec := httptest.NewRecorder()
+		s.h.ServeHTTP(rec, req)
+		return rec
+	}
+
+	if rec := post(); rec.Code != http.StatusOK {
+		t.Fatalf("POST /api/restart-all = %d, want 200: %s", rec.Code, rec.Body)
+	}
+	calls := ctrl.callsOf(opRestart)
+	if len(calls) != 1 || len(calls[0].names) != 1 || calls[0].names[0] != "backend" {
+		t.Fatalf("restart calls = %+v, want one restart naming only backend", calls)
+	}
+
+	ctrl.mu.Lock()
+	ctrl.statuses[0].Phase = supervisor.PhaseStopped
+	ctrl.mu.Unlock()
+	if rec := post(); rec.Code != http.StatusConflict {
+		t.Fatalf("POST /api/restart-all with nothing running = %d, want 409", rec.Code)
+	}
+	if n := len(ctrl.callsOf(opRestart)); n != 1 {
+		t.Errorf("a restart-all with nothing running reached the supervisor (%d calls); "+
+			"an empty selection means every service", n)
 	}
 }
 
@@ -2027,6 +2065,60 @@ func TestConsolePageKeepsDeclarationOrder(t *testing.T) {
 	}
 	if !strings.Contains(body, "for (var i = 0; i < services.length; i++)") {
 		t.Fatalf("paintList no longer walks the services array in declaration order:\n%s", body)
+	}
+}
+
+// TestConsolePageRecoversFromAStalledTransport pins the sleep/wake recovery.
+// A fetch that never settles after a resume used to leave the poll latch set
+// forever, so no later visibilitychange could restart it; a stream stuck in
+// CONNECTING had no recovery path either. The page must keep the watchdog and
+// the reopen hooks that make a resumed tab recover without a manual reload.
+func TestConsolePageRecoversFromAStalledTransport(t *testing.T) {
+	t.Parallel()
+	for _, want := range []string{
+		"pollWatchdog",
+		"pollCtl.abort()",
+		"recoverStreams()",
+		"LogPane.prototype.recover",
+		"eventsOpenedAt",
+		`addEventListener("pageshow"`,
+		`addEventListener("online"`,
+		"setInterval(recoverStreams",
+		"function loadServices(",
+		"bootTimer = setTimeout(loadServices",
+	} {
+		if !strings.Contains(consoleHTML, want) {
+			t.Errorf("console.html lost %q; a page resumed from sleep can stay frozen", want)
+		}
+	}
+}
+
+// TestConsolePageHasThemeSidebarAndRestartAll is the drift guard for the
+// page's chrome: the inline icon, the three-way theme resolved before first
+// paint, the collapsible sidebar with its hover card, and Restart all wired to
+// its route.
+func TestConsolePageHasThemeSidebarAndRestartAll(t *testing.T) {
+	t.Parallel()
+	for _, want := range []string{
+		`<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,`,
+		`:root[data-theme="dark"]`,
+		`setAttribute("data-theme"`,
+		`["system", "light", "dark"]`,
+		`id="btn-theme"`,
+		`id="btn-sidebar"`,
+		".split.rail",
+		"function setRail(",
+		`id="svc-tip"`,
+		"function paintTip(",
+		`id="btn-restart-all"`,
+		`"/api/restart-all"`,
+	} {
+		if !strings.Contains(consoleHTML, want) {
+			t.Errorf("console.html lost %q", want)
+		}
+	}
+	if strings.Contains(consoleHTML, "<footer") {
+		t.Error("console.html grew a footer back; the boilerplate it held was removed on purpose")
 	}
 }
 
