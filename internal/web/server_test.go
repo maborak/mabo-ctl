@@ -2109,6 +2109,81 @@ func TestDetailHeaderRepaintsItsButtonsOnEveryStatus(t *testing.T) {
 	}
 }
 
+// TestExplicitServiceSelectionOpensOutputBeforeTheSameServiceEarlyReturn
+// preserves navigation when the clicked service is already selected, while
+// passive polling and mirror synchronization leave their tab choice alone.
+func TestExplicitServiceSelectionOpensOutputBeforeTheSameServiceEarlyReturn(t *testing.T) {
+	t.Parallel()
+	from := strings.Index(consoleHTML, "  function select(name, focusRow) {")
+	if from < 0 {
+		t.Fatal("missing service selection")
+	}
+	body := consoleHTML[from:]
+	end := strings.Index(body, "\n  }")
+	if end < 0 {
+		t.Fatal("unterminated service selection")
+	}
+	body = body[:end]
+	show := strings.Index(body, `if (currentTab !== "terminal") { showTab("output"); }`)
+	same := strings.Index(body, "if (selected === name)")
+	viewGuard := strings.Index(body, `if (ROLE === "view" && !mirrorApplying && booted)`)
+	if show < 0 || same < show || viewGuard < 0 || viewGuard > show {
+		t.Error("explicit picks must open Output unless Terminal is active, before the same-service return but after the VIEW guard")
+	}
+	if !strings.Contains(body, "if (pane.all) { pane.bind(name); }") {
+		t.Error("clicking the selected service must leave merged output")
+	}
+}
+
+// TestSystemCommandsArePinnedAndNotReplayed detects LANDMINES §23: live
+// lifecycle events were replayed from HTTP responses and mixed into logs.
+func TestSystemCommandsArePinnedAndNotReplayed(t *testing.T) {
+	t.Parallel()
+	for _, want := range []string{
+		`aria-label="system commands"`,
+		`<strong>SYSTEM COMMANDS</strong>`,
+		`root.appendChild(activityWrap);`,
+		`activityIdle.hidden = false;`,
+	} {
+		if !strings.Contains(consoleHTML, want) {
+			t.Errorf("console lost %q", want)
+		}
+	}
+	// LogPane detaches the section until services arrive. All lookups must
+	// happen before that move; querying the document afterward returns nil.
+	pane := strings.Index(consoleHTML, "  var pane = new LogPane();")
+	for _, id := range []string{"activity-wrap", "activity", "activity-idle", "btn-clear-activity"} {
+		lookup := `document.getElementById("` + id + `")`
+		at := strings.Index(consoleHTML, lookup)
+		if pane < 0 || at < 0 || at > pane || strings.Contains(consoleHTML[pane:], lookup) {
+			t.Errorf("%s must be captured before LogPane detaches it", id)
+		}
+	}
+	for _, gone := range []string{
+		`pane.push("— " + text`,
+		`id="activity-wrap" hidden`,
+	} {
+		if strings.Contains(consoleHTML, gone) {
+			t.Errorf("console still contains %q", gone)
+		}
+	}
+	from := strings.Index(consoleHTML, "  function linesFromMutation(res) {")
+	if from < 0 {
+		t.Fatal("missing mutation result formatter")
+	}
+	body := consoleHTML[from:]
+	end := strings.Index(body, "\n  }")
+	if end < 0 {
+		t.Fatal("unterminated mutation result formatter")
+	}
+	if strings.Contains(body[:end], "res.events") {
+		t.Error("HTTP response replays lifecycle events already shown through SSE")
+	}
+	if !strings.Contains(body[:end], "res.error") {
+		t.Error("mutation failures must remain visible even without SSE")
+	}
+}
+
 // TestDetailPaneDoesNotRepeatTheLogTail is the detector for LANDMINES §22: a
 // dead service's JSON detail carries its log tail for the CLI, and the detail
 // pane rendered it while the log pane below showed the same lines.
@@ -2193,6 +2268,127 @@ func TestConsolePageHasNoClientSidePhaseReconciliation(t *testing.T) {
 	}
 }
 
+// TestConsoleOutputPresentationControls pins the native disclosure and range
+// controls, plus keeping state explanations outside the collapsible metadata.
+func TestConsoleOutputPresentationControls(t *testing.T) {
+	t.Parallel()
+	for _, want := range []string{
+		`background: color-mix(in srgb, var(--surface-2) 55%, transparent);`,
+		`var serviceConfig = el("details", "service-config");`,
+		`serviceConfig.open = false;`,
+		`serviceConfig.appendChild(cw);`,
+		`body.appendChild(this.detailLine);`,
+		`fontSize.type = "range";`,
+		`fontSize.setAttribute("aria-label", "Log font size");`,
+		`root.style.setProperty("--log-font-size", fontSize.value + "px");`,
+		`font-size: var(--log-font-size, 12px);`,
+	} {
+		if !strings.Contains(consoleHTML, want) {
+			t.Errorf("console lost %q", want)
+		}
+	}
+	ready := strings.Index(consoleHTML, `fact(dl, "ready in"`)
+	health := strings.Index(consoleHTML, `fact(dl, "health"`)
+	runtime := strings.Index(consoleHTML, `fact(dl, "runtime"`)
+	if ready < 0 || health < ready || runtime < health {
+		t.Error("Health must immediately follow Ready in, before Runtime")
+	}
+}
+
+// TestConsoleWorkspaceHasAccessibleSplittersAndOneDockedLogPane pins the
+// workspace structure without creating a second service log transport.
+func TestConsoleWorkspaceHasAccessibleSplittersAndOneDockedLogPane(t *testing.T) {
+	t.Parallel()
+	for _, want := range []string{
+		`--font: Monaco, Menlo, Consolas, "Liberation Mono", monospace;`,
+		`--mono: var(--font);`,
+		`id="terminal-workspace" hidden`, `id="terminal-output"`,
+		`aria-label="Resize services sidebar"`, `aria-label="Resize terminal and service output"`,
+		`handle.setPointerCapture(ev.pointerId)`, `ev.preventDefault(); ev.stopPropagation(); apply(value, true);`,
+		`mabo-ctl.sidebar-width`, `mabo-ctl.terminal-output-height`,
+		`terminalOutput.appendChild(detailEl);`, `stage.insertBefore(detailEl, configView);`,
+		`this.outputFontSize = 12; this.dockFontSize = 10;`,
+	} {
+		if !strings.Contains(consoleHTML, want) {
+			t.Errorf("workspace lost %q", want)
+		}
+	}
+	if strings.Count(consoleHTML, "new LogPane()") != 1 {
+		t.Error("docking must reuse the one service log pane")
+	}
+	if strings.Contains(consoleHTML, `<b>root</b>{{.}}`) {
+		t.Error("ROOT path chip returned to the header")
+	}
+}
+
+// TestConfigSectionsSeparateReadOnlyDataFromAdministrativeControls guards the
+// configuration navigation and the role-dependent administrative sections.
+func TestConfigSectionsSeparateReadOnlyDataFromAdministrativeControls(t *testing.T) {
+	t.Parallel()
+	for _, want := range []string{
+		`aria-label", "Configuration sections`,
+		`key: "overview", label: "Overview"`, `key: "services", label: "Services"`,
+		`key: "sharing", label: "Sharing & guests"`, `key: "security", label: "Security"`,
+		`nodes: [operatorTokenSection(), originsSection()]`,
+		`key === "overview" || key === "services" || (IS_OWNER && (key === "sharing" || key === "security"))`,
+		`"Live VIEW broadcast"`, `"Guest links"`, `"Guest sessions"`,
+	} {
+		if !strings.Contains(consoleHTML, want) {
+			t.Errorf("CONFIG lost %q", want)
+		}
+	}
+}
+
+// TestTerminalSyncDoesNotRaceItsInitialOpen detects LANDMINES §27: rapid tab
+// switches queued multiple first syncs before the first shell had attached.
+func TestTerminalSyncDoesNotRaceItsInitialOpen(t *testing.T) {
+	t.Parallel()
+	for _, want := range []string{
+		`if (this.syncing) { return; }`, `this.syncing = true;`,
+		`if (first && !self.order.length && !self.opening)`,
+		`self.syncing = false;`, `this.opening++;`, `self.opening--;`,
+		`if (owns.call(this.sessions, info.id)) { return; }`,
+	} {
+		if !strings.Contains(consoleHTML, want) {
+			t.Errorf("terminal initialization lost %q", want)
+		}
+	}
+}
+
+// TestMirrorPointerIsVisualOnly guards cursor privacy, accessibility and the
+// separation between visual click indicators and input events.
+func TestMirrorPointerIsVisualOnly(t *testing.T) {
+	t.Parallel()
+	for _, want := range []string{
+		`var mirrorNote = el("div", "access-banner mirror-note");`,
+		`mainColumn.insertBefore(mirrorNote, mainColumn.firstChild);`,
+		`READ ONLY · You can browse`, `WRITE ACCESS · You can start`, `VIEW · `, `BROADCASTING · `,
+		`document.addEventListener("pointermove"`, `document.addEventListener("pointerdown"`,
+		`target.closest("#cfg-access, #cfg-token, #cfg-origins, #terminal-view, .secret-input, [type=password]")`,
+		`Date.now() - lastClick.at < 1200`, `if (key === remoteClickKey) { return; }`,
+		`.mirror-cursor, .mirror-click {`, `pointer-events: none;`,
+		`@media (prefers-reduced-motion: reduce)`, `hideRemotePointer();`,
+	} {
+		if !strings.Contains(consoleHTML, want) {
+			t.Errorf("console lost %q", want)
+		}
+	}
+	start := strings.Index(consoleHTML, "  function paintRemotePointer(m) {")
+	if start < 0 {
+		t.Fatal("missing pointer renderer")
+	}
+	body := consoleHTML[start:]
+	end := strings.Index(body, "\n  }")
+	if end < 0 {
+		t.Fatal("unterminated pointer renderer")
+	}
+	for _, forbidden := range []string{"dispatchEvent", ".click()", "elementFromPoint"} {
+		if strings.Contains(body[:end], forbidden) {
+			t.Errorf("pointer renderer can replay input through %q", forbidden)
+		}
+	}
+}
+
 // TestConsolePageClassifiesAndFiltersLogLevels is the drift guard for the log
 // pane's severity filter. The classification lives entirely in the page's
 // JavaScript because the stream carries raw child output — the server never
@@ -2213,10 +2409,35 @@ func TestConsolePageClassifiesAndFiltersLogLevels(t *testing.T) {
 		`"All"`, `"Err"`, `"Warn"`, `"Info"`, `"Dbg"`, // the whole chip set
 		"setLevelFilter",               // chips actually drive the pane …
 		"rec.lvl === this.levelFilter", // … through the same matches() gate as the text filter
+		`.log-levels button[aria-pressed="true"]::before { visibility: visible; }`,
+		`background: var(--accent); border-color: var(--accent); color: var(--bg);`,
+		`this.separatorBox.type = "checkbox";`,
+		`self.body.classList.toggle("separated", self.separatorBox.checked);`,
+		`.log-body.separated .log-line + .log-line { border-top: 1px dashed var(--border-strong); }`,
 	} {
 		if !strings.Contains(consoleHTML, want) {
 			t.Errorf("console.html lost %q; the log level filter is not wired", want)
 		}
+	}
+}
+
+// TestGuestSessionCardsPreserveTheirNodesOnRefresh guards against losing the
+// operator's expanded connection details or button focus on every poll.
+func TestGuestSessionCardsPreserveTheirNodesOnRefresh(t *testing.T) {
+	t.Parallel()
+	for _, want := range []string{
+		`Search guest sessions`, `Filter guest session status`,
+		`var card = guestCards[g.id] || (guestCards[g.id] = guestCard(g));`,
+		`if (card.root !== cursor) { container.insertBefore(card.root, cursor); }`,
+		`Observed span`, `API requests`, `Blocked by role`, `Last action: `,
+		`Browser / OS (reported)`, `Connection details`,
+	} {
+		if !strings.Contains(consoleHTML, want) {
+			t.Errorf("guest sessions lost %q", want)
+		}
+	}
+	if strings.Contains(consoleHTML, "clear(shares); clear(guests);") {
+		t.Error("access refresh destroys guest cards and their disclosure/focus state")
 	}
 }
 

@@ -124,7 +124,12 @@ func TestTerminalRoundTrip(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- s.ListenAndServe(ctx) }()
-	t.Cleanup(func() { cancel(); <-done })
+	t.Cleanup(func() {
+		cancel()
+		if err := <-done; err != nil {
+			t.Errorf("ListenAndServe shutdown: %v", err)
+		}
+	})
 	base := "http://" + s.Addr()
 
 	post := func(path, body string) *http.Response {

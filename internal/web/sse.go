@@ -174,19 +174,16 @@ func newSSE(w http.ResponseWriter) (*sseWriter, bool) {
 	return &sseWriter{w: w, f: f}, true
 }
 
-// streamContext derives a stream's context from r and ties it to the session
-// token r was authenticated with, so [Server.SetAccessKey] ends the stream. The
-// token's lifetime is captured BEFORE the request is checked against the
-// current token again: a rotation landing between the route's guard and this
-// call is then caught by the check, and one landing after it cancels what was
-// captured. Either way no stream keeps running on a key that was rotated away.
+// streamContext rechecks the credential and captures its lifetime under the
+// authentication lock. Revocation or rotation then cancels the stream, including
+// when the credential changes between the route guard and this call.
 func (s *Server) streamContext(r *http.Request) (context.Context, context.CancelFunc, bool) {
-	life := s.tokenContext()
-	if ok, _ := s.session(r); !ok {
+	a, _, ok := s.requestAccess(r)
+	if !ok || a.Life.Err() != nil {
 		return nil, nil, false
 	}
 	ctx, cancel := context.WithCancel(r.Context())
-	stop := context.AfterFunc(life, cancel)
+	stop := context.AfterFunc(a.Life, cancel)
 	return ctx, func() { stop(); cancel() }, true
 }
 
@@ -297,7 +294,7 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 		for range lines { //nolint:revive // draining, the values are dead
 		}
 		if !reaped {
-			<-done
+			<-done //nolint:errcheck // The response is closed; only reap the canceled tail.
 		}
 	}()
 

@@ -2,12 +2,60 @@
 
 All notable changes to mabo-ctl are documented here.
 
-The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
-mabo-ctl aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html). It is
-**pre-1.0**: the `--json` status contract and the phase set are treated as
-stable, everything else may still move.
+The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
+[Semantic Versioning](https://semver.org/spec/v2.0.0.html). The status JSON
+contract and service phase names are stable.
 
 ## [Unreleased]
+
+## [1.3.0] - 2026-11-01
+
+### Added
+
+- Configuration change detection and confirmed reloads from the web console.
+- Opt-in web terminals with persistent shell sessions, scrollback and multiple
+  tabs. Enable with `serve --terminal` or `console_terminal: true`.
+- Scoped READ ONLY, VIEW and WRITE sharing links, operator-token rotation,
+  guest-session monitoring and link revocation.
+- VIEW synchronization for service selection, tabs, log controls, cursor and
+  click indicators. Clicks are displayed, never replayed as input.
+- Restart all for running services, log separators and font-size controls.
+
+### Changed
+
+- Tabbed web workspace with Monaco fonts, themes, a collapsible/resizable
+  sidebar and a compact service console below the resizable terminal pane.
+- CONFIG sections for Overview, Services, Sharing & guests, and Security.
+- Separate System Commands history from service output.
+
+### Fixed
+
+- Stalled status requests and streams after sleep or network interruptions.
+- Duplicate lifecycle messages and repeated log tails for failed services.
+- Stale service-action buttons and unclear severity-filter selection.
+- Terminal scrollback generating shell input, clipped terminal grids, duplicate
+  initial shells during rapid tab changes and duplicate client attachments.
+- Session tracking when multiple shared links are open in one browser.
+
+### Security
+
+- Build with Go 1.26.10 to address standard-library security advisories.
+- Guest permissions are enforced by a server-side route allowlist. WRITE permits
+  service lifecycle controls only; guests cannot access terminals or administer
+  configuration, origins, tokens or shares.
+- Revocation closes shared streams. Operator-token rotation invalidates all
+  shares. Invalid explicit credentials cannot fall back to an operator cookie.
+- Terminal access remains opt-in and loopback-only. VIEW excludes terminal
+  contents, credentials and administrative settings.
+
+### Upgrading
+
+- Rebuild or install the release, then restart `serve` and reload browser tabs.
+  Restarting `serve` closes web terminal sessions and invalidates shared links;
+  finish terminal work first. Managed services keep running.
+- Guest links, session history and token changes made in CONFIG are runtime-only.
+
+## Earlier releases (through v1.2.3)
 
 ### Changed
 

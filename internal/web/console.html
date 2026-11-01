@@ -37,6 +37,7 @@
   over control of the stack.
 -->
 <meta name="mabo-ctl-token" content="{{.Token}}">
+<meta name="mabo-ctl-role" content="{{.Role}}">
 
 <!--
   Everything this page needs is in this file. No CDN, no web font, no remote
@@ -119,10 +120,8 @@
 
   --r-sm: 4px; --r-md: 7px; --r-lg: 10px;
 
-  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue",
-          Arial, "Noto Sans", sans-serif;
-  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas,
-          "Liberation Mono", "Courier New", monospace;
+  --font: Monaco, Menlo, Consolas, "Liberation Mono", monospace;
+  --mono: var(--font);
 }
 
 /* The theme is chosen by the script in <head>, which resolves "system" against
@@ -419,23 +418,32 @@ input::placeholder { color: var(--text-faint); }
 .banner-in .why { color: var(--text-dim); }
 .banner[hidden] { display: none; }
 
-.activity-wrap { flex: none; position: relative; }
-.activity-wrap[hidden] { display: none; }
+.activity-wrap {
+  flex: none; border-bottom: 1px solid var(--border);
+  border-left: 2px solid var(--accent);
+  background: color-mix(in srgb, var(--surface-2) 55%, transparent);
+}
+.activity-head {
+  display: flex; align-items: center; gap: var(--sp-2);
+  padding: var(--sp-1) var(--sp-3); color: var(--accent);
+  font-family: var(--mono); font-size: 10px; letter-spacing: .08em;
+}
+.activity-head strong { font-weight: 600; }
+.activity-idle { color: var(--text-dim); letter-spacing: 0; }
 .activity {
-  margin: 0; padding: var(--sp-2) var(--sp-6) var(--sp-2) var(--sp-4);
-  max-height: 92px; overflow: auto;
-  border-bottom: 1px solid var(--border); background: var(--surface);
+  margin: 0; padding: 0 var(--sp-3);
+  max-height: 76px; overflow: auto; overscroll-behavior: contain;
 }
 .activity-clear {
-  position: absolute; top: 4px; right: var(--sp-3); z-index: 1;
+  margin-left: auto;
   padding: 0; width: 20px; height: 20px; line-height: 1;
   font-family: var(--mono); font-size: var(--fs-sm);
 }
 .op-line {
-  font-family: var(--mono); font-size: var(--fs-mono);
+  font-family: var(--mono); font-size: 11px;
   color: var(--text-dim); overflow-wrap: anywhere; padding: 1px 0;
 }
-.op-line .who { color: var(--text); font-weight: 600; }
+.op-line .who { color: var(--accent); font-weight: 400; }
 .op-line.err { color: var(--danger); }
 .op-line.ok  { color: var(--ok); }
 
@@ -455,9 +463,18 @@ main {
   grid-template-columns: 1fr;
 }
 .main-col { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.main-col, .sidebar { container-type: inline-size; }
+@container (max-width: 680px) {
+  .topbar .bar { flex-wrap: wrap; }
+  .topbar .where { flex: 1 1 100%; }
+}
+@container (max-width: 330px) {
+  .master .row, .master .row-head { grid-template-columns: 14px minmax(0, 1fr) 36px 34px; }
+  .master .c-pid, .master .c-up { display: none; }
+}
 
 .sidebar {
-  display: flex; flex-direction: column; min-width: 0; min-height: 0;
+  display: flex; flex-direction: column; min-width: 0; min-height: 0; position: relative;
   background: var(--surface); border-right: 1px solid var(--border);
   z-index: 21;
 }
@@ -770,6 +787,38 @@ main {
 .term-pane { position: absolute; inset: var(--sp-2); }
 .term-pane[hidden] { display: none; }
 .term-empty { margin: auto; padding: var(--sp-6); text-align: center; color: #a5b4fc; font-size: var(--fs-sm); }
+.resize-handle { touch-action: none; outline-offset: -2px; z-index: 30; }
+.resize-handle:hover, .resize-handle:focus-visible { background: var(--accent-soft); }
+.resize-handle:focus-visible { outline: 2px solid var(--focus); }
+.resize-handle::after { content: ""; display: block; background: var(--border-strong); }
+.sidebar-resizer { position: absolute; top: 0; bottom: 0; right: -4px; width: 8px; cursor: col-resize; }
+.sidebar-resizer::after { width: 2px; height: 100%; margin: 0 auto; }
+.split.rail .sidebar-resizer { display: none; }
+.output-resizer { cursor: row-resize; display: grid; place-items: center; }
+.output-resizer::after { height: 2px; width: 48px; }
+body.resizing { user-select: none; }
+body.resizing iframe { pointer-events: none; }
+.terminal-workspace {
+  flex: 1 1 auto; min-width: 0; min-height: 360px; display: grid;
+  grid-template-rows: minmax(160px, 1fr) 8px minmax(180px, var(--terminal-output-height, 220px));
+}
+.terminal-workspace > .tabview, .terminal-workspace .term-body { min-height: 0; }
+.terminal-output { display: flex; min-width: 0; min-height: 0; }
+.terminal-output > .detail { flex: 1 1 auto; }
+.terminal-output .detail-scroll { display: contents; }
+.terminal-output .detail-scroll > .facts, .terminal-output .service-config { display: none; }
+.terminal-output .detail-head { padding: 4px 8px; gap: 5px; flex-wrap: wrap; }
+.terminal-output .detail-head .svc-name { font-size: 12px; }
+.terminal-output .detail-head button, .terminal-output .log-bar button { font-size: 10px; padding: 2px 5px; }
+.terminal-output .log { min-height: 0; }
+.terminal-output .log-bar { padding: 4px 6px; gap: 4px; }
+.terminal-output .log-bar input, .terminal-output .log-bar label { font-size: 10px; }
+.terminal-output .log-bar .log-filter { flex-basis: 110px; width: 110px; }
+.terminal-output .activity { max-height: 42px; }
+.terminal-output .activity-head { padding: 2px 6px; font-size: 9px; }
+.terminal-output .op-line, .terminal-output .detail-line { font-size: 10px; }
+.terminal-output .detail-line { max-height: 3em; }
+.terminal-output .log-foot { font-size: 9px; }
 
 /* xterm.js's own stylesheet (@xterm/xterm 6.0.0, MIT), inlined because the
    CSP admits no external sheet. */
@@ -788,7 +837,7 @@ main {
 .xterm.column-select.focus{cursor: crosshair;}
 .xterm .xterm-accessibility:not(.debug), .xterm .xterm-message{position: absolute;left: 0;top: 0;bottom: 0;right: 0;z-index: 10;color: transparent;pointer-events: none;}
 .xterm .xterm-accessibility-tree:not(.debug) *::selection{color: transparent;}
-.xterm .xterm-accessibility-tree{font-family: monospace;user-select: text;white-space: pre;}
+.xterm .xterm-accessibility-tree{font-family: var(--mono);user-select: text;white-space: pre;}
 .xterm .xterm-accessibility-tree > div{transform-origin: left;width: fit-content;}
 .xterm .live-region{position: absolute;left: -9999px;width: 1px;height: 1px;overflow: hidden;}
 .xterm-dim{opacity: 1 !important;}
@@ -879,6 +928,15 @@ main {
 .fact dd.dim { color: var(--text-faint); }
 .fact dd a { color: var(--accent); text-decoration: none; }
 .fact dd a:hover { text-decoration: underline; }
+.fact.health dd { display: flex; align-items: baseline; min-width: 0; }
+.fact.health .ell { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fact.health .http-code { flex: none; }
+.service-config > summary {
+  padding: var(--sp-2) var(--sp-3); cursor: pointer;
+  font-size: var(--fs-xs); color: var(--text-dim);
+  border-bottom: 1px solid var(--border);
+}
+.detail-scroll > .detail-line, .detail-scroll > .alert { margin: var(--sp-2) var(--sp-3); }
 
 .http-code {
   display: inline-block; margin-left: 6px; padding: 0 5px;
@@ -991,10 +1049,97 @@ ol.argv-list li code { color: var(--text); }
 .log-body {
   margin: 0; padding: var(--sp-2) 0;
   background: var(--log-bg);
-  font-family: var(--mono); font-size: var(--fs-mono); line-height: 1.5;
+  font-family: var(--mono); font-size: var(--log-font-size, 12px); line-height: 1.5;
   height: 300px; overflow: auto; overflow-wrap: anywhere;
 }
 .log-line { padding: 0 var(--sp-3); white-space: pre-wrap; color: var(--text); }
+.log-body.separated .log-line { padding-top: var(--sp-2); padding-bottom: var(--sp-2); }
+.log-body.separated .log-line + .log-line { border-top: 1px dashed var(--border-strong); }
+.log-separators {
+  display: inline-flex; align-items: center; gap: var(--sp-1);
+  font-size: var(--fs-xs); color: var(--text-dim); cursor: pointer;
+}
+.log-separators input { margin: 0; accent-color: var(--accent); }
+.log-font {
+  display: inline-flex; align-items: center; gap: var(--sp-1);
+  font-family: var(--mono); font-size: var(--fs-xs); color: var(--text-dim);
+}
+.log-font input { width: 72px; margin: 0; accent-color: var(--accent); }
+.log-font output { min-width: 4ch; }
+.access-form { display: flex; flex-wrap: wrap; gap: var(--sp-2); margin: var(--sp-2) 0; align-items: center; }
+.access-form input, .access-form select, .share-url {
+  min-width: 0; max-width: 100%; padding: 5px 8px;
+  background: var(--surface-2); color: var(--text); border: 1px solid var(--border);
+  border-radius: var(--r-sm); font: inherit;
+}
+.secret-input { -webkit-text-security: disc; }
+.share-url { width: 100%; font-family: var(--mono); font-size: var(--fs-xs); }
+.access-list { display: grid; gap: var(--sp-2); margin: var(--sp-2) 0; }
+.access-entry { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); overflow-wrap: anywhere; }
+.access-entry .why { flex: 1 1 240px; margin: 0; }
+.guest-tools { display: flex; flex-wrap: wrap; gap: var(--sp-2); align-items: center; margin: var(--sp-3) 0; }
+.guest-tools input { flex: 1 1 220px; min-width: 0; }
+.guest-tools input, .guest-tools select {
+  padding: 6px 8px; border: 1px solid var(--border); border-radius: var(--r-sm);
+  background: var(--surface-2); color: var(--text); font: inherit;
+}
+.guest-summary { color: var(--text-dim); font-size: var(--fs-xs); }
+.guest-card.access-entry { display: block; padding: var(--sp-3); border: 1px solid var(--border); border-radius: var(--r-md); background: var(--surface-2); }
+.guest-card[hidden] { display: none; }
+.guest-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
+.guest-head strong { font-size: var(--fs-sm); }
+.guest-head button { margin-left: auto; }
+.guest-id { font: var(--fs-xs) var(--mono); color: var(--text-faint); }
+.guest-role, .guest-status {
+  padding: 1px 6px; border: 1px solid var(--border-strong); border-radius: var(--r-sm);
+  font-size: 10px; font-weight: 600; text-transform: uppercase;
+}
+.guest-role { color: var(--accent); background: var(--accent-soft); }
+.guest-status.active { color: var(--ok); background: var(--ph-ready-bg); }
+.guest-status.offline { color: var(--text-dim); }
+.guest-status.revoked { color: var(--danger); background: var(--danger-bg); }
+.guest-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: var(--sp-2) var(--sp-3); margin: var(--sp-3) 0; }
+.guest-facts dd { font-size: var(--fs-xs); }
+.guest-action { padding: var(--sp-2); border-left: 2px solid var(--border-strong); background: var(--surface); font-size: var(--fs-xs); }
+.guest-action.running { border-color: var(--accent); }
+.guest-action.failed { border-color: var(--danger); }
+.guest-action.completed { border-color: var(--ok); }
+.guest-technical { margin-top: var(--sp-2); font-size: var(--fs-xs); }
+.guest-technical > summary { cursor: pointer; color: var(--text-dim); }
+.guest-agent { display: block; overflow-wrap: anywhere; white-space: pre-wrap; color: var(--text-dim); margin-top: var(--sp-2); }
+.access-banner {
+  flex: none; padding: var(--sp-2) var(--sp-4);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border-bottom: 1px solid var(--border); color: var(--text);
+  font-size: var(--fs-xs); backdrop-filter: blur(6px);
+}
+.access-banner[hidden] { display: none; }
+.mirror-cursor, .mirror-click {
+  position: fixed; top: 0; left: 0; z-index: 2000; pointer-events: none;
+}
+.mirror-cursor { color: var(--accent); transition: transform .12s linear; }
+.mirror-cursor::before {
+  content: "➤"; display: block; font-size: 24px; line-height: 1;
+  transform: rotate(-135deg); text-shadow: 0 0 2px var(--surface);
+}
+.mirror-cursor span {
+  position: absolute; top: 18px; left: 18px; padding: 2px 5px;
+  background: var(--surface); border: 1px solid var(--accent);
+  border-radius: var(--r-sm); color: var(--text); font-size: 10px;
+}
+.mirror-click {
+  width: 30px; height: 30px; border: 2px solid var(--accent); border-radius: 50%;
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+}
+.mirror-click.pulse { animation: mirror-pulse .65s ease-out forwards; }
+@keyframes mirror-pulse {
+  from { opacity: .95; scale: .5; }
+  to { opacity: 0; scale: 2; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mirror-cursor { transition: none; }
+  .mirror-click.pulse { animation: none; }
+}
 .log-line.meta { color: var(--text-faint); font-style: italic; }
 .log-line.err  { color: var(--danger); }
 /* Severity tints applied by detectLevel(); info keeps the default ink so a
@@ -1005,9 +1150,12 @@ ol.argv-list li code { color: var(--text); }
 .log-line.ok        { color: var(--ok); }
 /* The severity chips sit between the text filter and the count. */
 .log-levels { display: inline-flex; gap: 2px; }
+.log-levels button::before { content: "✓ "; visibility: hidden; }
 .log-levels button.toggle[aria-pressed="true"] {
-  background: var(--surface-3); border-color: var(--border-strong); color: var(--text);
+  background: var(--accent); border-color: var(--accent); color: var(--bg);
+  font-weight: 700;
 }
+.log-levels button[aria-pressed="true"]::before { visibility: visible; }
 .log-empty {
   padding: var(--sp-4); color: var(--text-faint); text-align: center;
   font-family: var(--font); font-size: var(--fs-sm); font-style: italic;
@@ -1052,6 +1200,15 @@ ol.argv-list li code { color: var(--text); }
 .cfg-body { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .cfg-body:focus { outline: none; }
 .cfg-note { font-family: var(--mono); font-size: var(--fs-xs); color: var(--text-faint); }
+.cfg-nav {
+  position: sticky; top: 0; z-index: 3; display: flex; flex-wrap: wrap; gap: var(--sp-1);
+  padding: var(--sp-2) var(--sp-3); background: var(--surface); border-bottom: 1px solid var(--border);
+}
+.cfg-nav button[aria-selected="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.cfg-intro { margin: 0; padding: var(--sp-3); color: var(--text-dim); font-size: var(--fs-sm); border-bottom: 1px solid var(--border); }
+.access-group { border: 1px solid var(--border); border-radius: var(--r-md); padding: var(--sp-3); margin: var(--sp-3) 0; min-width: 0; }
+.access-group > legend { padding: 0 var(--sp-1); font-size: var(--fs-xs); font-weight: 700; color: var(--text); }
+.access-group > .why { color: var(--text-dim); font-size: var(--fs-sm); }
 
 .cfg-sec { padding: var(--sp-3); border-bottom: 1px solid var(--border); }
 
@@ -1173,6 +1330,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
      most half the pane before it starts scrolling on its own. */
   .log { min-height: 220px; }
   .detail-scroll { max-height: 52%; }
+  .terminal-workspace { min-height: 0; }
 }
 
 @supports (height: 100dvh) {
@@ -1187,7 +1345,6 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
   .bar { padding: var(--sp-2) var(--sp-3); gap: var(--sp-2); }
   main { padding: var(--sp-2); }
   .banner { padding: var(--sp-2) var(--sp-3) 0; }
-  .activity { padding-left: var(--sp-3); padding-right: var(--sp-5); }
   .where { flex-basis: 100%; }
 
   .row-head { display: none; }
@@ -1215,6 +1372,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
 /* Stacked, the sidebar sits above everything and the rail is a strip of
    glyphs rather than a column. */
 @media (max-width: 759px) {
+  .sidebar-resizer { display: none; }
   .sidebar { border-right: 0; border-bottom: 1px solid var(--border); }
   .sidebar .svc-list { max-height: 40vh; }
   .split.rail .svc-list { display: flex; flex-wrap: wrap; }
@@ -1274,6 +1432,10 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
       <span id="sort-note">declaration order</span>
     </div>
   </section>
+  <div class="resize-handle sidebar-resizer" id="sidebar-resizer" role="separator" tabindex="0"
+       aria-label="Resize services sidebar" aria-orientation="vertical" aria-controls="svc-list"
+       aria-valuemin="240" aria-valuemax="600" aria-valuenow="380"
+       title="Drag to resize sidebar; Left/Right arrows resize, double-click resets"></div>
 </aside>
 
 <div class="main-col">
@@ -1316,7 +1478,6 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     <div class="tiles" id="tiles" role="group" aria-label="services by phase"></div>
     <span class="total" id="total"><b id="total-n">0</b> services</span>
     <div class="spacer"></div>
-    {{with .Root}}<div class="where"><span title="{{.}}"><b>root</b>{{.}}</span></div>{{end}}
   </div>
 </header>
 
@@ -1340,9 +1501,13 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
   </div>
 </div>
 
-<div class="activity-wrap" id="activity-wrap" hidden>
-  <button type="button" class="ghost activity-clear" id="btn-clear-activity"
-          title="Dismiss these lines" aria-label="dismiss the operation log">&#215;</button>
+<div class="activity-wrap" id="activity-wrap" role="region" aria-label="system commands">
+  <div class="activity-head">
+    <strong>SYSTEM COMMANDS</strong>
+    <span class="activity-idle" id="activity-idle">No commands yet</span>
+    <button type="button" class="ghost activity-clear" id="btn-clear-activity"
+            title="Clear command history" aria-label="clear the system command history">&#215;</button>
+  </div>
   <div class="activity" id="activity" aria-live="polite" aria-label="recent operations"></div>
 </div>
 
@@ -1384,7 +1549,8 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
       <iframe id="api-frame" class="api-frame" title="mabo-ctl HTTP API reference"></iframe>
     </section>
 
-    <section class="panel tabview" id="terminal-view" aria-label="terminals" hidden>
+    <div class="terminal-workspace" id="terminal-workspace" hidden>
+    <section class="panel tabview" id="terminal-view" aria-label="terminals">
       {{if .Terminal}}
       <div class="panel-head term-head">
         <div class="term-tabs" id="term-tabs" role="tablist" aria-label="terminal sessions"></div>
@@ -1404,6 +1570,12 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
       </div>
       {{end}}
     </section>
+    <div class="resize-handle output-resizer" id="output-resizer" role="separator" tabindex="0"
+         aria-label="Resize terminal and service output" aria-orientation="horizontal"
+         aria-controls="terminal-view terminal-output" aria-valuemin="180" aria-valuemax="600" aria-valuenow="220"
+         title="Drag to resize terminal/output split; Up/Down arrows resize, double-click resets"></div>
+    <div class="terminal-output" id="terminal-output" aria-label="compact service console"></div>
+    </div>
   </div>
 </main>
 </div>
@@ -1454,6 +1626,26 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
   }
 
   var TOKEN = readToken();
+  var roleMeta = document.querySelector('meta[name="mabo-ctl-role"]');
+  var ROLE = roleMeta ? roleMeta.content : "read";
+  var IS_OWNER = ROLE === "owner";
+  var CAN_WRITE = IS_OWNER || ROLE === "write";
+  var mirrorApplying = false;
+  var accessEnded = false;
+
+  function credentialURL(path) {
+    return path + (path.indexOf("?") < 0 ? "?" : "&") + "token=" + encodeURIComponent(TOKEN);
+  }
+
+  function endGuestAccess() {
+    if (accessEnded) { return; }
+    accessEnded = true;
+    pane.stop();
+    closeEvents();
+    // A full navigation discards already-rendered logs and all reconnect timers.
+    // The explicit revoked credential cannot fall back to a different cookie.
+    window.location.replace("/?token=" + encodeURIComponent(TOKEN));
+  }
 
   // The printed URL carries the token, which then sits in the address bar,
   // in screenshots and in browser history. It is already held in memory and
@@ -1613,7 +1805,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
   function request(method, path, timeoutMs, body, ctl) {
     ctl = ctl || new AbortController();
     var timer = setTimeout(function () { ctl.abort(); }, timeoutMs);
-    var headers = { "Accept": "application/json" };
+    var headers = { "Accept": "application/json", "X-Mabo-Ctl-Token": TOKEN };
     if (method === "POST") {
       if (!TOKEN) {
         clearTimeout(timer);
@@ -1640,7 +1832,13 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
       // headers landed just before the laptop slept would hang this promise
       // forever.
       return res.text().then(function (body) {
-        if (!res.ok) { throw new Error(explainHTTP(res.status, body)); }
+        if (!res.ok) {
+          if (!IS_OWNER && (res.status === 401 || res.status === 403) &&
+              (path === "/api/status" || path === "/api/services" || path === "/api/mirror")) { endGuestAccess(); }
+          var failure = new Error(explainHTTP(res.status, body));
+          failure.status = res.status;
+          throw failure;
+        }
         if (res.status === 204) { return null; }
         try { return JSON.parse(body); }
         catch (e) { throw new Error("malformed response from " + path); }
@@ -1653,7 +1851,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
       if (ctl.signal.aborted) {
         throw new Error("request to " + path + " timed out");
       }
-      throw new Error(err && err.message ? err.message : "network error");
+      throw err && err.message ? err : new Error("network error");
     });
   }
 
@@ -1902,9 +2100,8 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
 
     // Severity chips. Pressed means "only this bucket", All is the reset — the
     // same one-toggle-per-state grammar as Stream/Pause/Follow, so nothing new
-    // is taught. They deliberately do NOT reuse the accent-blue pressed style:
-    // blue already means "transport active" on this bar, and a blue chip would
-    // read as a second stream control rather than a filter.
+    // is taught. The selected filter has a solid accent and checkmark, not the
+    // subtle surface tint that was indistinguishable from unselected chips.
     this.levelChips = el("span", "log-levels");
     this.levelChips.setAttribute("role", "group");
     this.levelChips.setAttribute("aria-label", "filter log lines by level");
@@ -1925,10 +2122,52 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     }
     bar.appendChild(this.levelChips);
 
+    var separators = el("label", "log-separators");
+    this.separatorBox = document.createElement("input");
+    this.separatorBox.type = "checkbox";
+    this.separatorBox.addEventListener("change", function () {
+      self.body.classList.toggle("separated", self.separatorBox.checked);
+      if (self.follow) { self.scrollToEnd(); }
+    });
+    separators.appendChild(this.separatorBox);
+    separators.appendChild(txt("Separators"));
+    separators.title = "Add spacing and dashed borders between log entries, not wrapped text rows";
+    bar.appendChild(separators);
+
+    var fontControl = el("label", "log-font");
+    fontControl.appendChild(txt("A−"));
+    var fontSize = document.createElement("input");
+    fontSize.type = "range";
+    fontSize.min = "10";
+    fontSize.max = "18";
+    fontSize.step = "1";
+    fontSize.value = "12";
+    fontSize.setAttribute("aria-label", "Log font size");
+    fontSize.setAttribute("aria-valuetext", "12 pixels");
+    var fontValue = el("output", null, "12px");
+    this.fontBox = fontSize; this.fontValue = fontValue;
+    this.outputFontSize = 12; this.dockFontSize = 10; this.compact = false;
+    fontValue.setAttribute("aria-live", "off");
+    fontSize.addEventListener("input", function () {
+      if (self.compact) { self.dockFontSize = Number(fontSize.value); }
+      else { self.outputFontSize = Number(fontSize.value); }
+      root.style.setProperty("--log-font-size", fontSize.value + "px");
+      fontSize.setAttribute("aria-valuetext", fontSize.value + " pixels");
+      fontValue.textContent = fontSize.value + "px";
+      if (self.follow) { self.scrollToEnd(); }
+    });
+    fontControl.appendChild(fontSize);
+    fontControl.appendChild(txt("A+"));
+    fontControl.appendChild(fontValue);
+    bar.appendChild(fontControl);
+
     this.count = el("span", "log-count", "0 lines");
     bar.appendChild(this.count);
 
     root.appendChild(bar);
+    // Pinned outside the scrolling/filterable service output. One global
+    // command history survives service switches and reports bulk actions too.
+    root.appendChild(activityWrap);
 
     this.body = el("div", "log-body");
     this.body.setAttribute("role", "log");
@@ -1990,9 +2229,19 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     this.root = root;
   }
 
-  // bind points the one pane at a different service. Closing the old transport
-  // FIRST is the whole point of this method. It also leaves merged mode: the
-  // sentinel name "all" is only ever set by bindAll.
+  // The dock has its own smaller default, without discarding the normal
+  // Output tab's chosen font size when the same pane moves between layouts.
+  LogPane.prototype.setCompact = function (on) {
+    this.compact = on;
+    var size = on ? this.dockFontSize : this.outputFontSize;
+    this.fontBox.value = String(size);
+    this.fontBox.setAttribute("aria-valuetext", size + " pixels");
+    this.fontValue.textContent = size + "px";
+    this.root.style.setProperty("--log-font-size", size + "px");
+  };
+
+  // bind points the one pane at a different service, closes the old transport
+  // first, and leaves merged mode. Only bindAll sets the sentinel name "all".
   LogPane.prototype.bind = function (name) {
     this.stop();
     this.name = name;
@@ -2209,7 +2458,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     var want = this.name;
     var url = "/api/stream/" + encodeURIComponent(want) + "?tail=" + TAIL_ON_OPEN;
     var es;
-    try { es = new EventSource(url); }
+    try { es = new EventSource(credentialURL(url)); }
     catch (e) {
       this.setState("down", "cannot open a stream in this browser");
       return;
@@ -2310,6 +2559,12 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     this.setState("off", note || "");
   };
 
+  // Keep references before LogPane moves this subtree off-document. The pane
+  // is mounted only after the asynchronous services request has completed.
+  var activityWrap = document.getElementById("activity-wrap");
+  var activityEl = document.getElementById("activity");
+  var activityIdle = document.getElementById("activity-idle");
+  var btnClearActivity = document.getElementById("btn-clear-activity");
   var pane = new LogPane();
 
   /* =======================================================================
@@ -2374,16 +2629,11 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
       select(svc.name, true);
     });
     root.addEventListener("keydown", function (ev) {
+      if (ev.target && ev.target.closest && ev.target.closest("button")) { return; }
       if (ev.key === "Enter" || ev.key === " " || ev.key === "Spacebar") {
         ev.preventDefault();
         select(svc.name, true);
       }
-    });
-    // A double click asks to SEE the service, which only the Output tab does;
-    // a single click selects without pulling the reader out of another tab.
-    root.addEventListener("dblclick", function (ev) {
-      if (ev.target && ev.target.closest && ev.target.closest("button")) { return; }
-      showTab("output");
     });
     root.addEventListener("mouseenter", function () { showTip(self); });
     root.addEventListener("mouseleave", hideTip);
@@ -2420,6 +2670,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
   // no explanation reads as a broken console; the phase is right there, so say
   // it.
   function setAction(btn, disabled, verb, name, why) {
+    if (!CAN_WRITE && verb !== "open") { disabled = true; why = "this link has " + ROLE + " access"; }
     btn.disabled = disabled;
     btn.title = disabled ? (why || verb + " " + name) : verb + " " + name;
   }
@@ -2629,10 +2880,18 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
       this.portEl    = fact(dl, "port", txt(svc.port ? String(svc.port) : "–"), !svc.port);
       this.uptimeEl  = fact(dl, "uptime", txt("–"), true);
       this.readyEl   = fact(dl, "ready in", txt("–"), true);
+      this.healthEl  = fact(dl, "health", txt("–"), true);
+      this.healthEl.parentNode.classList.add("health");
       this.runtimeEl = fact(dl, "runtime", txt(svc.runtime || "system"), !svc.runtime);
-      this.healthEl  = fact(dl, "health", txt("–"), true, true);
-      this.logPathEl = fact(dl, "log file", txt("–"), true, true);
       body.appendChild(dl);
+
+      var serviceConfig = el("details", "service-config");
+      serviceConfig.open = false;
+      serviceConfig.appendChild(el("summary", null, "Log file, command & arguments"));
+      var paths = el("dl", "facts");
+      this.logPathEl = fact(paths, "log file", txt("–"), true, true);
+      serviceConfig.appendChild(paths);
+      body.appendChild(serviceConfig);
 
       var cw = el("div", "cmd-wrap");
       var ch = el("div", "cmd-head");
@@ -2666,7 +2925,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
         var bad = el("div", "alert");
         bad.appendChild(el("b", null, "not startable: "));
         bad.appendChild(txt(svc.cmd_error));
-        cw.appendChild(bad);
+        body.appendChild(bad);
       }
 
       var chips = el("div", "chips");
@@ -2697,9 +2956,9 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
 
       this.detailLine = el("div", "detail-line");
       this.detailLine.hidden = true;
-      cw.appendChild(this.detailLine);
+      body.appendChild(this.detailLine);
 
-      body.appendChild(cw);
+      serviceConfig.appendChild(cw);
       detailEl.appendChild(body);
       this.scroll = body;
 
@@ -2838,11 +3097,18 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
      ======================================================================= */
 
   function select(name, focusRow) {
+    if (ROLE === "view" && !mirrorApplying && booted) { return; }
     if (!owns.call(rows, name)) { return; }
     // A deliberate pick (click, j/k) settles the selection for good.
-    if (focusRow) { autoSelect = false; }
+    if (focusRow) {
+      autoSelect = false;
+      if (currentTab !== "terminal") { showTab("output"); }
+    }
     if (selected === name) {
-      if (focusRow) { rows[name].root.focus(); }
+      if (focusRow) {
+        rows[name].root.focus();
+        if (pane.all) { pane.bind(name); }
+      }
       return;
     }
 
@@ -3196,13 +3462,11 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
   /* =======================================================================
      Operations
      ---------------------------------------------------------------------
-     Every result lands in one activity strip rather than in a per-service box,
+      Every result lands in one pinned system section rather than in a per-service box,
      so an operation started from a row the user then navigated away from is
      still reported somewhere they are looking.
      ======================================================================= */
 
-  var activityEl   = document.getElementById("activity");
-  var activityWrap = document.getElementById("activity-wrap");
   var configChangeBanner = document.getElementById("config-banner");
   var configChangeTitle = document.getElementById("config-banner-title");
   var configChangeWhy = document.getElementById("config-banner-why");
@@ -3223,7 +3487,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     configChangeTitle.textContent = "mabo-ctl.yaml changed";
     configChangeWhy.textContent = "Reloading applies it: running services whose command, directory, " +
       "environment, port or tty changed restart, removed ones stop, and everything else keeps running.";
-    btnConfigApply.hidden = false;
+    btnConfigApply.hidden = !IS_OWNER;
     configChangeBanner.hidden = false;
   }
 
@@ -3288,13 +3552,13 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     }
     var kept = activityEl.getElementsByClassName("op-line");
     while (kept.length > MAX_ACTIVITY) { activityEl.removeChild(kept[0]); }
-    activityWrap.hidden = false;
+    activityIdle.hidden = true;
     activityEl.scrollTop = activityEl.scrollHeight;
   }
 
-  document.getElementById("btn-clear-activity").addEventListener("click", function () {
+  btnClearActivity.addEventListener("click", function () {
     clear(activityEl);
-    activityWrap.hidden = true;
+    activityIdle.hidden = false;
   });
 
   function opRow(line) {
@@ -3304,27 +3568,20 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     return row;
   }
 
-  // A start that failed is not an HTTP failure: the request worked and the
-  // service refused. Both outcomes are rendered from the same event list the
-  // supervisor produced, so the console says what the terminal would.
+  // SSE owns live lifecycle progress; HTTP owns the final request outcome.
+  // Replaying res.events here duplicated the same progress after completion.
+  // The summary/error still reports the outcome if the event stream is down.
   function linesFromMutation(res) {
-    var out = [], evs = res.events || [];
+    var out = [];
     var head = res.operation + (res.ok ? " finished" : " reported a problem");
     if (res.services && res.services.length) { head += ": " + res.services.join(", "); }
     out.push({ kind: res.ok ? "ok" : "err", text: head });
-    for (var i = Math.max(0, evs.length - 8); i < evs.length; i++) {
-      var e = evs[i];
-      var t = (e.service ? e.service + " " : "") +
-              (e.phase ? "[" + e.phase + "] " : "") + (e.msg || "");
-      if (e.error) { t += (t ? " — " : "") + e.error; }
-      if (!t) { continue; }
-      out.push({ kind: e.error ? "err" : "", text: t });
-    }
     if (res.error) { out.push({ kind: "err", text: res.error }); }
     return out;
   }
 
   function mutate(name, op) {
+    if (!CAN_WRITE || accessEnded) { return; }
     if (busyGlobal || !owns.call(rows, name)) { return; }
     var row = rows[name];
     if (row.busy) { return; }
@@ -3394,9 +3651,9 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     var allUp = total > 0 && live === total;
     var noneUp = live === 0;
 
-    btnStartAll.disabled = busyGlobal || total === 0 || allUp;
-    btnRestartAll.disabled = busyGlobal || noneUp;
-    btnStopAll.disabled = busyGlobal || total === 0 || noneUp;
+    btnStartAll.disabled = !CAN_WRITE || busyGlobal || total === 0 || allUp;
+    btnRestartAll.disabled = !CAN_WRITE || busyGlobal || noneUp;
+    btnStopAll.disabled = !CAN_WRITE || busyGlobal || total === 0 || noneUp;
     btnStartAll.title = total === 0 ? "no services are declared"
       : (allUp ? "every service is already running" : "start every declared service");
     btnRestartAll.title = noneUp ? "nothing is running"
@@ -3406,6 +3663,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
   }
 
   function bulk(path, verb, btn) {
+    if (!CAN_WRITE || accessEnded) { return; }
     if (busyGlobal) { return; }
     btn.dataset.active = "1";
     setGlobalBusy(true);
@@ -3448,6 +3706,8 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
 
   var configLoaded = false;
   var configBusy   = false;
+  var configSection = "overview";
+  try { configSection = localStorage.getItem("mabo-ctl.config-section") || "overview"; } catch (e) {}
 
   var SOURCES = {
     "flag":    { cls: "src-flag",    hint: "--ports on the command line, which outranks everything else" },
@@ -3514,12 +3774,480 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
   function renderConfig(cfg) {
     clear(configBody);
     var list = cfg.services || [];
-    configBody.appendChild(configSource(cfg.source || {}));
-    configBody.appendChild(originsSection());
-    configBody.appendChild(configPorts(list));
-    configBody.appendChild(configServices(list));
-    loadOrigins();
+    var nav = el("nav", "cfg-nav"); nav.setAttribute("role", "tablist"); nav.setAttribute("aria-label", "Configuration sections");
+    configBody.appendChild(nav);
+    var sections = [
+      {key: "overview", label: "Overview", description: "Read-only repository settings and resolved ports. Paths identify this stack; they are not access settings.", nodes: [configSource(cfg.source || {}), configPorts(list)]},
+      {key: "services", label: "Services", description: "Read-only resolved commands, directories, environments and dependencies for each service.", nodes: [configServices(list)]}
+    ];
+    if (IS_OWNER) {
+      sections.push({key: "sharing", label: "Sharing & guests", description: "Create scoped guest links, broadcast your view, and inspect or revoke guest sessions.", nodes: [accessSection()]});
+      sections.push({key: "security", label: "Security", description: "Operator-only credentials and trusted browser origins. These controls change who can access this console.", nodes: [operatorTokenSection(), originsSection()]});
+    }
+    sections.forEach(function (section) {
+      var button = el("button", "ghost tiny", section.label); button.type = "button"; button.dataset.configSection = section.key;
+      button.id = "cfg-tab-" + section.key; button.setAttribute("role", "tab"); button.setAttribute("aria-controls", "cfg-panel-" + section.key);
+      button.disabled = ROLE === "view";
+      button.onclick = function () { setConfigSection(section.key, true); }; nav.appendChild(button);
+      var panel = el("div", "cfg-subpanel"); panel.id = "cfg-panel-" + section.key; panel.setAttribute("role", "tabpanel"); panel.setAttribute("aria-labelledby", button.id);
+      panel.appendChild(el("p", "cfg-intro", section.description));
+      section.nodes.forEach(function (node) { panel.appendChild(node); }); configBody.appendChild(panel);
+    });
+    nav.addEventListener("keydown", function (ev) {
+      if (ROLE === "view") { return; }
+      var buttons = Array.prototype.slice.call(nav.querySelectorAll("button")), at = buttons.indexOf(document.activeElement), next;
+      if (ev.key === "ArrowRight") { next = (at + 1) % buttons.length; }
+      else if (ev.key === "ArrowLeft") { next = (at + buttons.length - 1) % buttons.length; }
+      else if (ev.key === "Home") { next = 0; }
+      else if (ev.key === "End") { next = buttons.length - 1; }
+      else { return; }
+      ev.preventDefault(); ev.stopPropagation(); buttons[next].click(); buttons[next].focus();
+    });
+    setConfigSection(configSection, false);
   }
+
+  function setConfigSection(key, persist) {
+    var previous = configSection;
+    var allowed = key === "overview" || key === "services" || (IS_OWNER && (key === "sharing" || key === "security"));
+    configSection = allowed ? key : "overview";
+    configBody.querySelectorAll(".cfg-nav button").forEach(function (button) {
+      var active = button.dataset.configSection === configSection;
+      button.setAttribute("aria-selected", active ? "true" : "false"); button.tabIndex = active ? 0 : -1;
+    });
+    configBody.querySelectorAll(".cfg-subpanel").forEach(function (panel) { panel.hidden = panel.id !== "cfg-panel-" + configSection; });
+    if (previous !== configSection) { configBody.scrollTop = 0; }
+    if (persist) { try { localStorage.setItem("mabo-ctl.config-section", configSection); } catch (e) {} }
+    if (IS_OWNER && configSection === "sharing") { refreshAccess(); }
+    if (IS_OWNER && configSection === "security") { loadOrigins(); }
+  }
+
+  /* Shared links are capabilities, not accounts. Only the owner sees this
+     editor; the server independently enforces the same permission boundary. */
+  var broadcasting = false;
+  var mirrorSource = String(Date.now()) + "-" + Math.random().toString(36).slice(2);
+  try {
+    mirrorSource = sessionStorage.getItem("mabo-ctl.presenter") || mirrorSource;
+    sessionStorage.setItem("mabo-ctl.presenter", mirrorSource);
+    broadcasting = IS_OWNER && sessionStorage.getItem("mabo-ctl.broadcast") === "1";
+  } catch (e) { /* presentation still works without persistence */ }
+  var accessBusy = false;
+  var guestQuery = "", guestStatusFilter = "all", guestSnapshot = [];
+  var guestContainer = null, guestCards = Object.create(null), guestEmpty = null;
+  var mirrorBusy = false;
+  var mirrorNote = el("div", "access-banner mirror-note");
+  mirrorNote.setAttribute("role", "status");
+  var mainColumn = document.querySelector(".main-col");
+  mainColumn.insertBefore(mirrorNote, mainColumn.firstChild);
+
+  function setMirrorStatus(status) {
+    mirrorNote.hidden = IS_OWNER && !broadcasting;
+    var text = "";
+    if (IS_OWNER) { text = "BROADCASTING · VIEW guests can see your console cursor and clicks. " + (status || ""); }
+    else if (ROLE === "view") { text = "VIEW · " + (status || "waiting for operator") + " · Cursor and clicks are visual only; you cannot control services."; }
+    else if (ROLE === "write") { text = "WRITE ACCESS · You can start, stop and restart services. Configuration, terminals and access management are operator-only."; }
+    else { text = "READ ONLY · You can browse status, configuration and logs; you cannot change services."; }
+    if (mirrorNote.textContent !== text) { mirrorNote.textContent = text; }
+  }
+  setMirrorStatus("");
+
+  // Cursor sharing is ephemeral presentation, not input recording/replay.
+  // Resolve only these known regions and never send element text or values.
+  var pointerRegions = {
+    sidebar: ".sidebar", tabs: ".tabs", output: "#detail",
+    "cfg-source": "#cfg-source", "cfg-ports": "#cfg-ports", "cfg-services": "#cfg-services"
+  };
+  var lastPointer = null, lastClick = null, clickSequence = Date.now();
+  var pointerDirty = false, lastMirrorPublish = 0;
+  var remoteClickKey = "", clickTimer = 0;
+  var cursor = el("div", "mirror-cursor"), clickRipple = el("div", "mirror-click");
+  cursor.appendChild(el("span", null, "Operator"));
+  cursor.setAttribute("aria-hidden", "true"); clickRipple.setAttribute("aria-hidden", "true");
+  cursor.hidden = true; clickRipple.hidden = true;
+  document.body.appendChild(cursor); document.body.appendChild(clickRipple);
+
+  function pointAt(x, y) {
+    var target = document.elementFromPoint(x, y);
+    if (!target || target.closest("#cfg-access, #cfg-token, #cfg-origins, #terminal-view, .secret-input, [type=password]")) { return null; }
+    for (var region in pointerRegions) {
+      if (!owns.call(pointerRegions, region)) { continue; }
+      var node = target.closest(pointerRegions[region]);
+      if (!node) { continue; }
+      var rect = node.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) { return null; }
+      return {region: region, x: Math.max(0, Math.min(1, (x - rect.left) / rect.width)),
+        y: Math.max(0, Math.min(1, (y - rect.top) / rect.height))};
+    }
+    return null;
+  }
+
+  document.addEventListener("pointermove", function (ev) {
+    if (!IS_OWNER || !broadcasting) { return; }
+    lastPointer = {x: ev.clientX, y: ev.clientY}; pointerDirty = true;
+  }, {passive: true});
+  document.addEventListener("pointerdown", function (ev) {
+    if (!IS_OWNER || !broadcasting || ev.button !== 0) { return; }
+    var point = pointAt(ev.clientX, ev.clientY);
+    lastPointer = {x: ev.clientX, y: ev.clientY};
+    lastClick = point ? {point: point, sequence: clickSequence = Math.max(Date.now(), clickSequence + 1), at: Date.now()} : null;
+    pointerDirty = true;
+  }, {passive: true});
+  function forgetPointer() { lastPointer = null; lastClick = null; pointerDirty = true; }
+  document.documentElement.addEventListener("pointerleave", forgetPointer);
+  window.addEventListener("blur", forgetPointer);
+  document.addEventListener("visibilitychange", function () { if (document.hidden) { forgetPointer(); } });
+
+  function projectedPoint(point) {
+    if (!point || !owns.call(pointerRegions, point.region)) { return null; }
+    var node = document.querySelector(pointerRegions[point.region]);
+    if (!node) { return null; }
+    var rect = node.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) { return null; }
+    var x = rect.left + point.x * rect.width, y = rect.top + point.y * rect.height;
+    if (x < 0 || y < 0 || x > window.innerWidth || y > window.innerHeight) { return null; }
+    return {x: x, y: y};
+  }
+
+  function hideRemotePointer() {
+    cursor.hidden = true; clickRipple.hidden = true; clearTimeout(clickTimer);
+  }
+
+  function paintRemotePointer(m) {
+    var point = projectedPoint(m.pointer);
+    cursor.hidden = !point;
+    if (point) { cursor.style.transform = "translate(" + point.x + "px," + point.y + "px)"; }
+    if (!m.click) { return; }
+    var key = m.source + "/" + m.click.sequence;
+    if (key === remoteClickKey) { return; }
+    remoteClickKey = key;
+    var click = projectedPoint(m.click.point);
+    if (!click) { return; }
+    clickRipple.style.left = (click.x - 15) + "px"; clickRipple.style.top = (click.y - 15) + "px";
+    clickRipple.hidden = false;
+    clickRipple.classList.remove("pulse");
+    void clickRipple.offsetWidth; // restart the one bounded ripple for this new click
+    clickRipple.classList.add("pulse");
+    clearTimeout(clickTimer); clickTimer = setTimeout(function () { clickRipple.hidden = true; }, 700);
+  }
+
+  function accessField(form, label, placeholder, secret) {
+    var input = el("input", secret ? "secret-input" : null);
+    input.type = "text";
+    input.placeholder = placeholder;
+    input.setAttribute("aria-label", label);
+    input.autocomplete = "off";
+    input.spellcheck = false;
+    input.maxLength = secret ? 256 : 80;
+    form.appendChild(input);
+    return input;
+  }
+
+  function accessMessage(text, error) {
+    var node = document.querySelector("#cfg-access .access-message");
+    if (node) { node.textContent = text; node.className = "access-message why" + (error ? " err" : ""); }
+  }
+
+  function operatorTokenSection() {
+    var sec = el("section", "cfg-sec");
+    sec.id = "cfg-token";
+    sec.appendChild(el("h3", null, "Operator token"));
+    sec.appendChild(el("p", "why", "This is your full-control credential, not a guest link. Changing it revokes old operator sessions and every shared link. Runtime-only: YAML and CLI settings are not edited."));
+    var message = el("p", "why"); message.setAttribute("role", "status");
+    var rotate = el("form", "access-form");
+    var nextToken = accessField(rotate, "New operator token", "New operator token (blank = generate)", true);
+    var rotateButton = el("button", "ghost", "Change operator token");
+    rotate.appendChild(rotateButton);
+    rotate.onsubmit = function (ev) {
+      ev.preventDefault();
+      if (!window.confirm("Change the operator token? All old operator sessions and shared links will be revoked. This is runtime-only; it does not edit mabo-ctl.yaml.")) { return; }
+      rotateButton.disabled = true;
+      request("POST", "/api/access/token", STATUS_TIMEOUT, {token: nextToken.value}).then(function () {
+        nextToken.value = "";
+        window.location.reload(); // the response sets the replacement HttpOnly cookie
+      }).catch(function (err) { rotateButton.disabled = false; message.textContent = err.message; });
+    };
+    sec.appendChild(rotate);
+    sec.appendChild(message);
+    return sec;
+  }
+
+  function accessSection() {
+    var sec = el("section", "cfg-sec"); sec.id = "cfg-access";
+    sec.appendChild(el("h3", null, "Sharing & guests"));
+    sec.appendChild(el("p", "why", "Links expire when serve stops. READ ONLY explores independently; VIEW follows your broadcast; WRITE can start, stop and restart services. No guest can edit configuration, manage access or use terminals. Logs may contain application secrets. Share only with people you trust."));
+    sec.appendChild(el("p", "why", "Use this browser's reachable origin. Loopback URLs work only on this machine; remote access still needs an existing trusted HTTPS tunnel or an explicitly enabled LAN listener."));
+    sec.appendChild(el("p", "access-message why"));
+    var shareGroup = el("fieldset", "access-group"); shareGroup.appendChild(el("legend", null, "Guest links")); sec.appendChild(shareGroup);
+    var form = el("form", "access-form");
+    var name = accessField(form, "Share name", "Person or share name", false);
+    name.required = true;
+    var role = el("select");
+    role.setAttribute("aria-label", "Share access");
+    [["read", "READ ONLY"], ["view", "VIEW (mirror)"], ["write", "WRITE (service controls)"]].forEach(function (item) {
+      var opt = el("option", null, item[1]); opt.value = item[0]; role.appendChild(opt);
+    });
+    form.appendChild(role);
+    var secret = accessField(form, "Custom share token", "Custom token (blank = generate)", true);
+    secret.minLength = 16;
+    var create = el("button", "primary", "Create share link");
+    form.appendChild(create);
+    var link = el("input", "share-url");
+    link.readOnly = true;
+    link.hidden = true;
+    link.setAttribute("aria-label", "New share URL — copy and send this link");
+    var copy = el("button", "ghost tiny", "Copy link");
+    copy.type = "button"; copy.hidden = true;
+    copy.onclick = function () { copyText(link.value, copy, "Copy link"); };
+    form.onsubmit = function (ev) {
+      ev.preventDefault(); create.disabled = true;
+      var chosenRole = role.value;
+      request("POST", "/api/access/shares", STATUS_TIMEOUT, {name: name.value, role: chosenRole, token: secret.value}).then(function (res) {
+        secret.value = "";
+        link.value = window.location.origin + "/?token=" + encodeURIComponent(res.token);
+        link.hidden = false; copy.hidden = false;
+        accessMessage("Copy this link now. Its token is shown only at creation.", false);
+        if (chosenRole === "view") { setBroadcast(true, true); }
+        refreshAccess();
+      }).catch(function (err) { accessMessage(err.message, true); }).then(function () { create.disabled = false; });
+    };
+    shareGroup.appendChild(form); shareGroup.appendChild(link); shareGroup.appendChild(copy);
+    var shares = el("div", "access-list"); shares.id = "access-shares"; shareGroup.appendChild(shares);
+    var broadcastGroup = el("fieldset", "access-group"); broadcastGroup.appendChild(el("legend", null, "Live VIEW broadcast")); sec.appendChild(broadcastGroup);
+    var broadcast = el("label", "access-form");
+    var check = el("input"); check.type = "checkbox"; check.id = "broadcast-tab"; check.checked = broadcasting;
+    check.onchange = function () { setBroadcast(check.checked, check.checked); };
+    broadcast.appendChild(check); broadcast.appendChild(txt("Broadcast this tab to VIEW links (takes over other operator tabs)"));
+    broadcastGroup.appendChild(broadcast);
+    var guestGroup = el("fieldset", "access-group"); guestGroup.appendChild(el("legend", null, "Guest sessions")); sec.appendChild(guestGroup);
+    guestGroup.appendChild(el("p", "why", "Browser sessions, not verified people; tabs using the same link and browser cookie are grouped. Browser/OS are self-reported; the peer address may be a proxy. Active means an authenticated request within 15 seconds, not human activity. Terminate revokes the whole link for everyone using it."));
+    var summary = el("div", "guest-summary"); summary.id = "guest-summary"; summary.setAttribute("role", "status"); guestGroup.appendChild(summary);
+    var tools = el("div", "guest-tools");
+    var search = el("input"); search.type = "search"; search.placeholder = "Search name, role, address, browser, action or session…";
+    search.setAttribute("aria-label", "Search guest sessions"); search.value = guestQuery;
+    search.addEventListener("input", function () { guestQuery = search.value; renderGuestSessions(guestSnapshot); }); tools.appendChild(search);
+    var statusFilter = el("select"); statusFilter.setAttribute("aria-label", "Filter guest session status");
+    [["all", "All sessions"], ["active", "Active"], ["offline", "Offline"], ["revoked", "Revoked"]].forEach(function (item) {
+      var option = el("option", null, item[1]); option.value = item[0]; statusFilter.appendChild(option);
+    });
+    statusFilter.value = guestStatusFilter;
+    statusFilter.addEventListener("change", function () { guestStatusFilter = statusFilter.value; renderGuestSessions(guestSnapshot); }); tools.appendChild(statusFilter); guestGroup.appendChild(tools);
+    var guests = el("div", "access-list"); guests.id = "access-guests"; guestGroup.appendChild(guests);
+    return sec;
+  }
+
+  function revokeAccess(id) {
+    if (!window.confirm("Revoke this shared link and disconnect everyone using it?")) { return; }
+    request("POST", "/api/access/shares/" + encodeURIComponent(id) + "/revoke", STATUS_TIMEOUT, {}).then(function () {
+      accessMessage("Share revoked; its sessions and streams have been disconnected.", false); refreshAccess();
+    }).catch(function (err) { accessMessage(err.message, true); });
+  }
+
+  function refreshAccess() {
+    if (!IS_OWNER || accessBusy || !document.getElementById("access-shares")) { return; }
+    accessBusy = true;
+    request("GET", "/api/access", STATUS_TIMEOUT).then(function (data) {
+      var shares = document.getElementById("access-shares"), guests = document.getElementById("access-guests");
+      if (!shares || !guests) { return; }
+      clear(shares);
+      if (!data.shares.length) { shares.appendChild(el("p", "why", "No shared links.")); }
+      data.shares.forEach(function (s) {
+        var row = el("div", "access-entry");
+        row.appendChild(el("span", "why", s.name + " · " + s.role.toUpperCase() + " · created " + new Date(s.created_at).toLocaleString()));
+        var revoke = el("button", "ghost tiny", "Revoke link");
+        revoke.onclick = function () { revokeAccess(s.id); }; row.appendChild(revoke); shares.appendChild(row);
+      });
+      renderGuestSessions(data.guests || []);
+    }).catch(function (err) { accessMessage(err.message, true); }).then(function () { accessBusy = false; });
+  }
+
+  function guestState(g, now) {
+    return g.revoked ? "revoked" : (now - Date.parse(g.last_seen) < 15000 ? "active" : "offline");
+  }
+
+  function guestClient(agent) {
+    var browser = "Unknown browser", os = "Unknown OS", match;
+    var browsers = [[/Edg(?:e|A|iOS)?\/([\d.]+)/, "Edge"], [/OPR\/([\d.]+)/, "Opera"],
+      [/(?:Firefox|FxiOS)\/([\d.]+)/, "Firefox"], [/(?:Chrome|CriOS)\/([\d.]+)/, "Chrome"], [/Version\/([\d.]+).*Safari\//, "Safari"]];
+    for (var i = 0; i < browsers.length; i++) {
+      match = browsers[i][0].exec(agent || "");
+      if (match) { browser = browsers[i][1] + " " + match[1].split(".")[0]; break; }
+    }
+    if (/iPhone|iPad|iPod/.test(agent)) { os = "iOS / iPadOS"; }
+    else if (/Android/.test(agent)) { os = "Android"; }
+    else if (/Windows NT/.test(agent)) { os = "Windows"; }
+    else if (/CrOS/.test(agent)) { os = "ChromeOS"; }
+    else if (/Macintosh|Mac OS X/.test(agent)) { os = "macOS"; }
+    else if (/Linux/.test(agent)) { os = "Linux"; }
+    return browser + " · " + os;
+  }
+
+  function guestAgo(value, now) {
+    var at = Date.parse(value);
+    if (!isFinite(at)) { return "–"; }
+    var elapsed = Math.max(0, now - at);
+    return elapsed < 2000 ? "just now" : fmtDuration(elapsed) + " ago";
+  }
+
+  function guestCard(g) {
+    var card = {root: el("article", "access-entry guest-card")};
+    var head = el("header", "guest-head");
+    card.name = el("strong"); head.appendChild(card.name);
+    card.id = el("code", "guest-id"); head.appendChild(card.id);
+    card.role = el("span", "guest-role"); head.appendChild(card.role);
+    card.status = el("span", "guest-status"); head.appendChild(card.status);
+    card.terminate = el("button", "ghost tiny", "Terminate / revoke link"); card.terminate.type = "button";
+    card.terminate.onclick = function () { revokeAccess(g.share_id); }; head.appendChild(card.terminate); card.root.appendChild(head);
+    var facts = el("dl", "guest-facts");
+    card.client = fact(facts, "Browser / OS (reported)", txt(""));
+    card.address = fact(facts, "Peer address", txt("")); card.address.title = "Socket peer; may be a proxy. Forwarded addresses and geolocation are not inferred.";
+    card.joined = fact(facts, "First opened", txt(""));
+    card.seen = fact(facts, "Last seen", txt(""));
+    card.span = fact(facts, "Observed span", txt("")); card.span.title = "First open to now, last seen or revocation; may include offline gaps, not continuous human activity.";
+    card.opens = fact(facts, "Page opens", txt(""));
+    card.opens.title = "Console page opens/reloads for this link and browser; same-link tabs are grouped.";
+    card.requests = fact(facts, "API requests", txt("")); card.requests.title = "Authenticated requests, including automatic polling; not mouse or click counts.";
+    card.actions = fact(facts, "Service actions", txt(""));
+    card.root.appendChild(facts);
+    card.action = el("div", "guest-action"); card.root.appendChild(card.action);
+    card.technical = el("details", "guest-technical"); card.technical.appendChild(el("summary", null, "Connection details"));
+    var technical = el("dl", "guest-facts");
+    card.session = fact(technical, "Session ID", txt(g.id));
+    card.share = fact(technical, "Share ID", txt(g.share_id));
+    card.route = fact(technical, "Last API route", txt(""));
+    card.denied = fact(technical, "Blocked by role", txt(""));
+    card.denied.title = "Authenticated role denials, not invalid-token or Host/Origin refusals.";
+    card.revoked = fact(technical, "Revoked at", txt(""));
+    card.technical.appendChild(technical);
+    card.agent = el("code", "guest-agent"); card.technical.appendChild(card.agent);
+    card.root.appendChild(card.technical);
+    return card;
+  }
+
+  function renderGuestSessions(list) {
+    guestSnapshot = list;
+    var container = document.getElementById("access-guests");
+    if (!container) { return; }
+    if (container !== guestContainer) {
+      guestContainer = container; guestCards = Object.create(null);
+      guestEmpty = el("p", "why"); container.appendChild(guestEmpty);
+    }
+    var now = Date.now(), counts = {active: 0, offline: 0, revoked: 0}, rank = {active: 0, offline: 1, revoked: 2};
+    var ordered = list.slice().sort(function (a, b) {
+      return rank[guestState(a, now)] - rank[guestState(b, now)] || Date.parse(b.joined_at) - Date.parse(a.joined_at) || a.id.localeCompare(b.id);
+    });
+    var keep = Object.create(null), cursor = container.firstElementChild, shown = 0;
+    ordered.forEach(function (g) {
+      keep[g.id] = true;
+      var state = guestState(g, now), client = guestClient(g.browser), action = g.last_action;
+      counts[state]++;
+      var search = [g.name, g.role, state, g.address, g.browser, client, g.id, g.share_id,
+        action ? action.operation + " " + action.services.join(" ") + " " + action.outcome : ""].join(" ").toLowerCase();
+      var visible = (guestStatusFilter === "all" || guestStatusFilter === state) && search.indexOf(guestQuery.trim().toLowerCase()) >= 0;
+      var card = guestCards[g.id] || (guestCards[g.id] = guestCard(g));
+      card.root.hidden = !visible; if (visible) { shown++; }
+      card.name.textContent = g.name;
+      card.id.textContent = "#" + g.id.slice(0, 8); card.id.title = g.id;
+      card.role.textContent = g.role === "read" ? "read only" : g.role;
+      card.status.className = "guest-status " + state; card.status.textContent = state;
+      card.terminate.hidden = !!g.revoked;
+      card.client.textContent = client; card.client.title = "Self-reported browser information, not verified device identity.";
+      card.address.textContent = g.address || "Unknown";
+      card.joined.textContent = new Date(g.joined_at).toLocaleString();
+      card.seen.textContent = guestAgo(g.last_seen, now); card.seen.title = new Date(g.last_seen).toLocaleString();
+      var end = g.revoked_at ? Date.parse(g.revoked_at) : (state === "active" ? now : Date.parse(g.last_seen));
+      card.span.textContent = fmtDuration(Math.max(0, end - Date.parse(g.joined_at)));
+      card.opens.textContent = String(g.page_opens || 1);
+      card.requests.textContent = String(g.requests || 0); card.actions.textContent = String(g.actions || 0);
+      card.route.textContent = g.last_request || "No API requests yet"; card.denied.textContent = String(g.denied_requests || 0);
+      card.revoked.textContent = g.revoked_at ? new Date(g.revoked_at).toLocaleString() : "Not revoked";
+      card.agent.textContent = g.browser || "Browser report not supplied";
+      card.action.className = "guest-action" + (action ? " " + action.outcome : "");
+      card.action.textContent = action ? "Last action: " + action.operation + " " + (action.services.length ? action.services.join(", ") : "all services") + " · " + action.outcome + " · " + guestAgo(action.finished_at || action.started_at, now) : "No service actions performed";
+      card.action.title = action ? "Started " + new Date(action.started_at).toLocaleString() + (action.finished_at ? "; finished " + new Date(action.finished_at).toLocaleString() : "") : "Only accepted start/stop/restart operations are counted; no input or activity history is recorded.";
+      if (card.root !== cursor) { container.insertBefore(card.root, cursor); }
+      cursor = card.root.nextElementSibling;
+    });
+    Object.keys(guestCards).forEach(function (id) { if (!keep[id]) { guestCards[id].root.remove(); delete guestCards[id]; } });
+    guestEmpty.hidden = shown > 0;
+    guestEmpty.textContent = list.length ? "No sessions match these filters." : "No guests have joined yet. Create a link above and open it in another browser.";
+    var summary = document.getElementById("guest-summary");
+    var text = counts.active + " active · " + counts.offline + " offline · " + counts.revoked + " revoked · showing " + shown + " of " + list.length + " browser sessions";
+    if (summary && summary.textContent !== text) { summary.textContent = text; }
+  }
+
+  function setBroadcast(on, takeover) {
+    broadcasting = on;
+    if (!on) { forgetPointer(); }
+    setMirrorStatus("");
+    try { sessionStorage.setItem("mabo-ctl.broadcast", on ? "1" : "0"); } catch (e) {}
+    var check = document.getElementById("broadcast-tab"); if (check) { check.checked = on; }
+    if (mirrorBusy) { setTimeout(function () { publishMirror(takeover); }, 500); }
+    else { publishMirror(takeover); }
+  }
+
+  function publishMirror(takeover) {
+    if (!IS_OWNER || !booted || mirrorBusy) { return; }
+    mirrorBusy = true;
+    pointerDirty = false; lastMirrorPublish = Date.now();
+    var metadata = detailEl.querySelector(".service-config");
+    var font = pane.root.querySelector(".log-font input");
+    var safePointer = broadcasting && currentTab !== "terminal" && lastPointer ? pointAt(lastPointer.x, lastPointer.y) : null;
+    var safeClick = broadcasting && currentTab !== "terminal" && lastClick && Date.now() - lastClick.at < 1200
+      ? {point: lastClick.point, sequence: lastClick.sequence} : null;
+    request("POST", "/api/mirror", STATUS_TIMEOUT, {
+      source: mirrorSource, active: broadcasting, takeover: !!takeover, service: selected || "",
+      tab: currentTab || "output", config_section: configSection, all: pane.all, filter: pane.filter.slice(0, 512), level: pane.levelFilter,
+      paused: pane.paused, follow: pane.follow,
+      scroll: Math.max(0, Math.min(1, pane.body.scrollTop / Math.max(1, pane.body.scrollHeight - pane.body.clientHeight))),
+      separators: pane.separatorBox.checked, font_size: Number(font.value), details: !!(metadata && metadata.open),
+      pointer: safePointer, click: safeClick
+    }).then(function () { setMirrorStatus(broadcasting ? "Following this tab." : ""); }).catch(function (err) {
+      if (err.status === 400 || err.status === 403 || err.status === 409) {
+        broadcasting = false;
+        try { sessionStorage.setItem("mabo-ctl.broadcast", "0"); } catch (e) {}
+        var check = document.getElementById("broadcast-tab"); if (check) { check.checked = false; }
+        forgetPointer(); setMirrorStatus("Broadcast stopped");
+      } else {
+        // Sleep/wake and temporary network loss must not disable sharing.
+        // The normal heartbeat retries once this request's deadline expires.
+        setMirrorStatus("Broadcast reconnecting…");
+      }
+      accessMessage(err.message, true);
+    }).then(function () { mirrorBusy = false; });
+  }
+
+  function receiveMirror() {
+    if (ROLE !== "view" || !booted || mirrorBusy || accessEnded) { return; }
+    mirrorBusy = true;
+    request("GET", "/api/mirror", STATUS_TIMEOUT).then(function (m) {
+      setMirrorStatus(m.active ? "following operator" : "waiting for operator broadcast");
+      if (!m.active) { hideRemotePointer(); return; }
+      mirrorApplying = true;
+      try {
+        if (m.service && owns.call(rows, m.service)) { select(m.service, false); }
+        if (m.all !== pane.all) { if (m.all) { pane.bindAll(); } else { pane.bind(selected); } }
+        if (pane.filter !== m.filter || pane.levelFilter !== m.level) {
+          pane.filter = m.filter; pane.filterBox.value = m.filter; pane.setLevelFilter(m.level);
+        }
+        if (pane.paused !== m.paused) { pane.togglePause(); }
+        pane.setFollow(m.follow);
+        pane.separatorBox.checked = m.separators;
+        pane.body.classList.toggle("separated", m.separators);
+        var font = pane.root.querySelector(".log-font input"); font.value = String(m.font_size);
+        font.dispatchEvent(new Event("input"));
+        var metadata = detailEl.querySelector(".service-config"); if (metadata) { metadata.open = m.details; }
+        if (m.follow) { pane.scrollToEnd(); } else { pane.body.scrollTop = m.scroll * Math.max(0, pane.body.scrollHeight - pane.body.clientHeight); }
+        showTab(m.tab);
+        setConfigSection(m.config_section || "overview", false);
+        paintRemotePointer(m);
+      } finally { mirrorApplying = false; }
+    }).catch(function (err) { hideRemotePointer(); setMirrorStatus(err.message); }).then(function () { mirrorBusy = false; });
+  }
+
+  setInterval(function () {
+    if (IS_OWNER && broadcasting && (pointerDirty || Date.now() - lastMirrorPublish >= 500)) { publishMirror(false); }
+    if (ROLE === "view") { receiveMirror(); }
+  }, 100);
+  setInterval(function () { if (IS_OWNER && configOpen() && configSection === "sharing") { refreshAccess(); } }, 3000);
 
   /* =======================================================================
      Trusted origins
@@ -3663,6 +4391,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
   // directory is where the persisted ports that outrank it live.
   function configSource(src) {
     var sec = el("section", "cfg-sec");
+    sec.id = "cfg-source";
     sec.appendChild(el("h3", null, "source"));
     sec.appendChild(el("p", "why",
       "mabo-ctl finds its configuration by walking UP the directory tree, so the " +
@@ -3704,6 +4433,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
 
   function configPorts(list) {
     var sec = el("section", "cfg-sec");
+    sec.id = "cfg-ports";
     sec.appendChild(el("h3", null, "ports — resolved, and why"));
     sec.appendChild(el("p", "why",
       "Precedence, highest first: --ports on the command line, then a " +
@@ -3765,6 +4495,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
 
   function configServices(list) {
     var sec = el("section", "cfg-sec");
+    sec.id = "cfg-services";
     sec.appendChild(el("h3", null, "services — resolved"));
     sec.appendChild(el("p", "why",
       // NOT the literal port template: this page is executed as a Go
@@ -3867,12 +4598,24 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     output:   document.getElementById("detail"),
     config:   configView,
     api:      document.getElementById("api-view"),
-    terminal: document.getElementById("terminal-view")
+    terminal: document.getElementById("terminal-workspace")
   };
   var tabButtons = document.querySelectorAll(".tabs .tab");
   var apiFrame = document.getElementById("api-frame");
 
   var TAB_KEY = "mabo-ctl.tab";
+  var terminalOutput = document.getElementById("terminal-output");
+  var stage = document.querySelector(".stage");
+
+  function placeServiceOutput(docked) {
+    if (docked) {
+      terminalOutput.appendChild(detailEl);
+      detailEl.hidden = false;
+    } else if (detailEl.parentElement !== stage) {
+      stage.insertBefore(detailEl, configView);
+    }
+    pane.setCompact(docked);
+  }
 
   // No token in the frame's URL: this page already holds the session cookie,
   // and a credential in a URL is one more place for it to be copied from.
@@ -3881,27 +4624,103 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
   }
 
   function showTab(name) {
+    if (ROLE === "view" && !mirrorApplying && booted) { return; }
+    if (!IS_OWNER && name === "terminal") { name = "output"; }
     if (!owns.call(TAB_VIEWS, name) || name === currentTab) { return; }
     currentTab = name;
     try { window.localStorage.setItem(TAB_KEY, name); } catch (e) { /* no storage */ }
     for (var k in TAB_VIEWS) {
       if (owns.call(TAB_VIEWS, k)) { TAB_VIEWS[k].hidden = k !== name; }
     }
+    placeServiceOutput(name === "terminal");
     for (var i = 0; i < tabButtons.length; i++) {
       var b = tabButtons[i];
       b.setAttribute("aria-selected", b.dataset.tab === name ? "true" : "false");
     }
     hideTip();
-    if (name === "output") { unseenOutput = 0; paintTabBadges(); }
+    if (name === "output" || name === "terminal") { unseenOutput = 0; paintTabBadges(); }
     if (name === "config") {
       loadConfig(false);
       configBody.focus();
     } else if (name === "api" && !apiFrame.getAttribute("src")) {
       apiFrame.setAttribute("src", apiSrc());
     } else if (name === "terminal") {
+      applyOutputHeight(outputHeight, false);
       terminals.show();
     }
   }
+
+  /* One pointer/keyboard splitter implementation for the two actual panes.
+     It changes layout only; no keys or mouse events are sent to a terminal. */
+  var sidebarWidth = 380, outputHeight = 220;
+  var sidebarResize = document.getElementById("sidebar-resizer");
+  var outputResize = document.getElementById("output-resizer");
+  function savedSize(key, fallback) {
+    try { var value = Number(localStorage.getItem(key)); return isFinite(value) && value > 0 ? value : fallback; }
+    catch (e) { return fallback; }
+  }
+  function sidebarBounds() { return [240, Math.max(240, Math.min(600, window.innerWidth - 480))]; }
+  function outputBounds() {
+    var height = TAB_VIEWS.terminal.clientHeight || Math.max(360, window.innerHeight - 180);
+    return [180, Math.max(180, height - 160 - 8)];
+  }
+  function sizeAria(handle, value, bounds) {
+    handle.setAttribute("aria-valuemin", String(bounds[0]));
+    handle.setAttribute("aria-valuemax", String(Math.round(bounds[1])));
+    handle.setAttribute("aria-valuenow", String(Math.round(value)));
+    handle.setAttribute("aria-valuetext", Math.round(value) + " pixels");
+  }
+  function applySidebarWidth(value, persist) {
+    var bounds = window.innerWidth >= 760 ? sidebarBounds() : [240, 600];
+    sidebarWidth = Math.max(bounds[0], Math.min(bounds[1], value));
+    document.documentElement.style.setProperty("--side-w", sidebarWidth + "px");
+    sizeAria(sidebarResize, sidebarWidth, bounds);
+    if (persist) { try { localStorage.setItem("mabo-ctl.sidebar-width", String(sidebarWidth)); } catch (e) {} }
+  }
+  function applyOutputHeight(value, persist) {
+    var bounds = outputBounds();
+    outputHeight = Math.max(bounds[0], Math.min(bounds[1], value));
+    TAB_VIEWS.terminal.style.setProperty("--terminal-output-height", outputHeight + "px");
+    sizeAria(outputResize, outputHeight, bounds);
+    if (persist) { try { localStorage.setItem("mabo-ctl.terminal-output-height", String(outputHeight)); } catch (e) {} }
+  }
+  function installSplitter(handle, vertical, getValue, apply, bounds, reset) {
+    var drag = null;
+    handle.addEventListener("pointerdown", function (ev) {
+      if (ev.button !== 0) { return; }
+      ev.preventDefault();
+      handle.focus({preventScroll: true});
+      drag = {pointer: ev.pointerId, at: vertical ? ev.clientY : ev.clientX, value: getValue()};
+      handle.setPointerCapture(ev.pointerId); document.body.classList.add("resizing");
+    });
+    handle.addEventListener("pointermove", function (ev) {
+      if (!drag || ev.pointerId !== drag.pointer) { return; }
+      var delta = (vertical ? ev.clientY : ev.clientX) - drag.at;
+      apply(drag.value + (vertical ? -delta : delta), false);
+    });
+    function stop(ev) {
+      if (!drag || ev.pointerId !== drag.pointer) { return; }
+      var pointer = drag.pointer; drag = null; document.body.classList.remove("resizing");
+      if (handle.hasPointerCapture(pointer)) { handle.releasePointerCapture(pointer); }
+      if (ev.type === "pointerup") { apply(getValue(), true); }
+    }
+    handle.addEventListener("pointerup", stop); handle.addEventListener("pointercancel", stop); handle.addEventListener("lostpointercapture", stop);
+    handle.addEventListener("dblclick", function () { apply(reset, true); });
+    handle.addEventListener("keydown", function (ev) {
+      var step = ev.shiftKey ? 48 : 16, value = getValue(), range = bounds();
+      if (ev.key === (vertical ? "ArrowUp" : "ArrowRight")) { value += step; }
+      else if (ev.key === (vertical ? "ArrowDown" : "ArrowLeft")) { value -= step; }
+      else if (ev.key === "Home") { value = range[0]; }
+      else if (ev.key === "End") { value = range[1]; }
+      else { return; }
+      ev.preventDefault(); ev.stopPropagation(); apply(value, true);
+    });
+  }
+  applySidebarWidth(savedSize("mabo-ctl.sidebar-width", 380), false);
+  applyOutputHeight(savedSize("mabo-ctl.terminal-output-height", 220), false);
+  installSplitter(sidebarResize, false, function () { return sidebarWidth; }, applySidebarWidth, sidebarBounds, 380);
+  installSplitter(outputResize, true, function () { return outputHeight; }, applyOutputHeight, outputBounds, 220);
+  window.addEventListener("resize", function () { applySidebarWidth(sidebarWidth, false); applyOutputHeight(outputHeight, false); });
 
   /* Tab badges: Terminal (n) is how many shells are open; Output (+n) is how
      many log lines arrived while another tab was showing. */
@@ -3911,7 +4730,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
   var badgeTerminal = document.getElementById("badge-terminal");
 
   function noteUnseenOutput() {
-    if (currentTab === "output") { return; }
+    if (currentTab === "output" || currentTab === "terminal") { return; }
     unseenOutput++;
     paintTabBadges();
   }
@@ -3971,6 +4790,8 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     libState: "",      // "", "loading", "ready", "failed"
     libWaiters: [],
     synced: false,
+    syncing: false,
+    opening: 0,
 
     enabled: function () { return !!this.body; },
 
@@ -4008,6 +4829,8 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     // sync attaches every terminal the server has that this page does not, and
     // on the first visit opens one so the tab is never an empty box.
     sync: function (first) {
+      if (this.syncing) { return; }
+      this.syncing = true;
       var self = this;
       request("GET", "/api/terminals", STATUS_TIMEOUT).then(function (list) {
         self.synced = true;
@@ -4016,12 +4839,12 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
           if (!owns.call(self.sessions, list[i].id)) { self.attach(list[i]); }
         }
         setTerminalCount(self.openCount());
-        if (first && !self.order.length) { self.open(); return; }
+        if (first && !self.order.length && !self.opening) { self.open(); return; }
         if (!self.active && self.order.length) { self.activate(self.order[self.order.length - 1]); }
         self.paintEmpty();
       }).catch(function (err) {
         self.note.textContent = err.message;
-      });
+      }).then(function () { self.syncing = false; });
     },
 
     openCount: function () {
@@ -4045,6 +4868,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
 
     open: function () {
       var self = this;
+      this.opening++;
       var size = this.estimateSize();
       this.note.textContent = "starting a shell…";
       request("POST", "/api/terminals", STATUS_TIMEOUT, size).then(function (info) {
@@ -4053,7 +4877,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
         self.activate(info.id);
       }).catch(function (err) {
         self.note.textContent = "could not start a shell: " + err.message;
-      });
+      }).then(function () { self.opening--; });
     },
 
     // estimateSize guesses the grid the pane will hold, so the shell starts at
@@ -4064,6 +4888,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     },
 
     attach: function (info) {
+      if (owns.call(this.sessions, info.id)) { return; }
       var self = this, id = info.id;
       var pane = el("div", "term-pane");
       pane.hidden = true;
@@ -4133,7 +4958,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     // screen is reset first; the server ends with {end:true} when the shell exits.
     stream: function (s) {
       var self = this;
-      var es = new EventSource("/api/terminals/" + encodeURIComponent(s.id) + "/stream");
+      var es = new EventSource(credentialURL("/api/terminals/" + encodeURIComponent(s.id) + "/stream"));
       s.es = es;
       es.onopen = function () { if (!s.dead) { s.term.reset(); } };
       es.onmessage = function (ev) {
@@ -4504,7 +5329,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     paintHealth();
 
     var es;
-    try { es = new EventSource("/api/events"); }
+    try { es = new EventSource(credentialURL("/api/events")); }
     catch (e) {
       eventsOpenedAt = 0;
       health.events = "down";
@@ -4557,9 +5382,6 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
       var text = (e.phase ? "[" + e.phase + "] " : "") + (e.msg || "");
       if (e.error) { text += (text ? " — " : "") + e.error; }
       if (!text) { return; }
-      if (e.service && e.service === selected) {
-        pane.push("— " + text, e.error ? "err" : "meta");
-      }
       activity([{ kind: e.error ? "err" : "", text: (e.service ? e.service + " " : "") + text }]);
       pollSoon();
     };
@@ -4644,7 +5466,8 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     }
     // A prefix, never the whole credential: a screenshot of this page must not
     // hand over control of the stack.
-    tokenVal.textContent = TOKEN.slice(0, 8) + "…";
+    tokenVal.textContent = IS_OWNER ? TOKEN.slice(0, 8) + "…" : ROLE.toUpperCase();
+    btnCopyToken.hidden = !IS_OWNER;
     btnCopyToken.addEventListener("click", function () {
       copyText(TOKEN, btnCopyToken, "Copy");
     });
@@ -4696,6 +5519,14 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
       select(first.length ? first[0] : services[0].name, false);
 
       booted = true;
+      if (!IS_OWNER) {
+        var terminalTab = document.querySelector('[data-tab="terminal"]');
+        if (terminalTab) { terminalTab.hidden = true; }
+      }
+      if (ROLE === "view") {
+        document.querySelectorAll(".tabs button, .log-bar button, .log-bar input").forEach(function (b) { b.disabled = true; });
+        receiveMirror();
+      }
       openEvents();
       pollNow();
     }).catch(function (err) {

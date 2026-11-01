@@ -678,3 +678,108 @@ the CLI keep the full detail, because there the tail is the only copy.
 ```bash
 go test ./internal/web -run TestDetailPaneDoesNotRepeatTheLogTail
 ```
+
+## 23. Command progress was replayed after the command finished
+
+**Shape.** The console rendered lifecycle events from `/api/events`, then
+rendered the same events again from the mutation's HTTP response. Selected
+service events were also mixed into the service log pane.
+
+**Where it bit us.** `internal/web/console.html`, reported 2026-10-31: restarting
+a service showed stopping, stopped, starting and ready a second time after
+"restart finished", making one restart look like two.
+
+**Fix.** SSE owns live progress; mutation responses render only the final
+outcome and error (also available when SSE is disconnected). System commands
+have their own compact, always-present section inside Output, outside its log
+scroll/filter/pause controls. They are never inserted into child output.
+
+**Detector.**
+```bash
+go test ./internal/web -run TestSystemCommandsArePinnedAndNotReplayed
+```
+
+## 24. Moving the command section broke console initialization
+
+**Shape.** DOM lookup depends on attachment. Moving the command history into
+the not-yet-mounted log pane detached its subtree. Later initialization used
+`document.getElementById` for its elements, got null and threw while installing
+the Clear handler. Syntax and formatter-only tests did not exercise startup.
+
+**Where it bit us.** `internal/web/console.html`, reported 2026-10-31 after
+integrating System Commands into Output: console initialization stopped before
+the services request and controls were wired up.
+
+**Fix.** Capture the section, history, idle label and Clear button references
+before constructing `LogPane`. All later updates use those references, even
+while the pane is detached awaiting the asynchronous services response.
+Verified in headless Chrome: startup, Start, Restart, one set of lifecycle
+messages, separate child output, and Clear retaining the visible section, with
+no JavaScript exceptions.
+
+**Detector.** The ordering guard rejects document lookups after construction:
+```bash
+go test ./internal/web -run TestSystemCommandsArePinnedAndNotReplayed
+```
+
+## 25. The selected log severity filter was visually indistinct
+
+**Shape.** The filter's `aria-pressed` state updated correctly, but its selected
+style used a surface tint and subtle border almost identical to an unselected
+button. The selected level was difficult to identify, especially on hover.
+
+**Where it bit us.** `internal/web/console.html`, reported 2026-10-31: clicking
+All, Err or Warn did not visibly mark the chosen filter.
+
+**Fix.** Use a solid accent background with contrasting text, bold weight and
+a checkmark, so selection does not depend on a subtle color difference. The
+selected style retains precedence over hover in both themes.
+
+**Detector.**
+```bash
+go test ./internal/web -run TestConsolePageClassifiesAndFiltersLogLevels
+```
+
+## 26. Opening another shared link displaced guest session tracking
+
+**Shape.** The one browser tracking cookie named a record tied to one share.
+Opening a different share replaced the cookie, so requests from the earlier
+tab no longer updated its record even though its credential remained valid.
+Its last-seen time froze and the operator could mistake it for an offline guest.
+
+**Where it bit us.** `internal/web/access.go`, diagnosed 2026-11-01 while
+improving the guest dashboard. Two shared links in the same cookie jar could
+not retain independent presence/request counters.
+
+**Fix.** Keep the random browser cookie stable and derive an opaque record ID
+from browser ID plus share ID. Same-link tabs stay grouped; different links
+update independent records. Derivation also avoids exposing the tracking cookie
+in the operator's access-list JSON. Action attribution follows the mutation's
+header alone, even if a different valid share appears in the query.
+
+**Detector.**
+```bash
+go test ./internal/web -run 'TestGuestTrackingKeepsDifferentLinksSeparateInOneBrowser|TestGuestSessionDetailsCountRequestsAndRealActionOutcomes'
+```
+
+## 27. Rapid Terminal tab switches opened multiple initial shells
+
+**Shape.** Queued library-load callbacks each started a "first" terminal sync.
+Before the first shell had attached, multiple empty-list responses each opened
+another shell. A concurrent sync could also attach an open response's shell a
+second time in the same page.
+
+**Where it bit us.** `internal/web/console.html` (`terminals.sync/open/attach`),
+reproduced 2026-11-01 while browser-testing the resizable terminal workspace.
+Quick Terminal → Output → Terminal navigation created two initial shells,
+instead of preserving the one requested by visiting Terminal.
+
+**Fix.** Serialize terminal synchronization, count pending opens before deciding
+whether an initial shell is needed, and make attach idempotent by terminal ID.
+Explicit **+ New** still supports multiple sessions. Browser proof includes rapid
+tab changes, one initial PTY, resize/refit and reattachment after page reload.
+
+**Detector.**
+```bash
+go test ./internal/web -run TestTerminalSyncDoesNotRaceItsInitialOpen
+```

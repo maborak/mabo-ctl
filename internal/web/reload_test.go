@@ -200,7 +200,12 @@ func TestNoConfigWatchWithoutReload(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- s.ListenAndServe(ctx) }()
-	defer func() { cancel(); <-done }()
+	defer func() {
+		cancel()
+		if err := <-done; err != nil {
+			t.Errorf("ListenAndServe shutdown: %v", err)
+		}
+	}()
 
 	if err := os.WriteFile(path, []byte(watchedYAML+"# edited\n"), 0o600); err != nil {
 		t.Fatal(err)

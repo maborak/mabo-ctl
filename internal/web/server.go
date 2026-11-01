@@ -65,6 +65,7 @@ package web
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -286,6 +287,12 @@ type Server struct {
 	token        string
 	tokenLife    context.Context
 	endTokenLife context.CancelFunc
+	// Shared capabilities, their bounded visitor history and presentation state
+	// are in-memory for this serve run and guarded by mu.
+	shares          map[string]*sharedAccess
+	usedShareHashes map[[32]byte]struct{}
+	guests          map[string]*guestAccess
+	mirror          mirrorView
 
 	// tmpl is the parsed console page, or nil when the page could not be
 	// parsed as a template and must be served verbatim instead.
@@ -494,17 +501,23 @@ func (s *Server) routes() *http.ServeMux {
 	// different handlers under two different guards: GET /api/origins reads the
 	// list, POST /api/origins replaces it.
 	handlers := map[string]http.HandlerFunc{
-		"GET /{$}":              s.handleIndex,
-		"GET /health":           s.handleHealth,
-		"GET /api/services":     s.handleServices,
-		"GET /api/config":       s.handleConfig,
-		"GET /api/status":       s.handleStatus,
-		"GET /api/logs/{svc}":   s.handleLogs,
-		"GET /api/stream/all":   s.handleStreamAll,
-		"GET /api/stream/{svc}": s.handleStream,
-		"GET /api/events":       s.handleEvents,
-		"GET /api/origins":      s.handleGetOrigins,
-		"GET /api/history":      s.handleHistory,
+		"GET /{$}":                            s.handleIndex,
+		"GET /health":                         s.handleHealth,
+		"GET /api/services":                   s.handleServices,
+		"GET /api/config":                     s.handleConfig,
+		"GET /api/status":                     s.handleStatus,
+		"GET /api/logs/{svc}":                 s.handleLogs,
+		"GET /api/stream/all":                 s.handleStreamAll,
+		"GET /api/stream/{svc}":               s.handleStream,
+		"GET /api/events":                     s.handleEvents,
+		"GET /api/origins":                    s.handleGetOrigins,
+		"GET /api/history":                    s.handleHistory,
+		"GET /api/access":                     s.handleAccess,
+		"GET /api/mirror":                     s.handleGetMirror,
+		"POST /api/access/token":              s.handleRotateToken,
+		"POST /api/access/shares":             s.handleCreateShare,
+		"POST /api/access/shares/{id}/revoke": s.handleRevokeShare,
+		"POST /api/mirror":                    s.handleSetMirror,
 
 		"POST /api/origins":       s.handleSetOrigins,
 		"POST /api/config/reload": s.handleReloadConfig,
@@ -591,15 +604,6 @@ func (s *Server) sessionToken() string {
 	return s.token
 }
 
-// tokenContext is done once the token current at the call has been replaced.
-// A stream ties its lifetime to it, so a rotated key closes every stream the
-// old key opened instead of leaving them reading the stack.
-func (s *Server) tokenContext() context.Context {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.tokenLife
-}
-
 // SetAccessKey replaces the session token. From the next request on, every
 // page, cookie and header holding the old token is refused, and every stream
 // it opened is closed; the operator reopens the console with the new key. It
@@ -613,10 +617,19 @@ func (s *Server) SetAccessKey(key string) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if _, used := s.usedShareHashes[sha256.Sum256([]byte(key))]; used {
+		return errors.New("web: an operator token cannot reuse a shared token")
+	}
 	if s.token == key {
 		return nil
 	}
 	s.token = key
+	for _, share := range s.shares {
+		share.cancel()
+	}
+	s.shares = nil
+	s.revokeGuestsLocked("")
+	s.mirror = mirrorView{}
 	s.endTokenLife()
 	s.tokenLife, s.endTokenLife = context.WithCancel(context.Background())
 	return nil

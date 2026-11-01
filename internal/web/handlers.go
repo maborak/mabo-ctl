@@ -212,7 +212,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 // fetches the spec itself from /api/openapi.yaml (both same-origin requests,
 // authenticated by the session cookie or the api-key header).
 func (s *Server) handleDocs(w http.ResponseWriter, r *http.Request) {
-	ok, fromQuery := s.session(r)
+	a, fromQuery, ok := s.requestAccess(r)
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 
@@ -227,11 +227,11 @@ func (s *Server) handleDocs(w http.ResponseWriter, r *http.Request) {
 	// only by the console it belongs to.
 	w.Header().Set("X-Frame-Options", "SAMEORIGIN")
 	if fromQuery {
-		s.setSessionCookie(w)
+		s.setCredentialCookie(w, a.Credential)
 	}
 	// The markers appear in the <rapi-doc> attributes (and once in a comment),
 	// so every occurrence must be replaced.
-	page := strings.ReplaceAll(apiDocsHTML, "__RAPIDOC_TOKEN__", s.sessionToken())
+	page := strings.ReplaceAll(apiDocsHTML, "__RAPIDOC_TOKEN__", a.Credential)
 	page = strings.ReplaceAll(page, "__RAPIDOC_SERVER__", "http://"+s.Addr())
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(page))
@@ -281,7 +281,7 @@ func (s *Server) handleOpenAPI(w http.ResponseWriter, r *http.Request) {
 // response still contains no token, which is the property that matters and the
 // one the regression test pins.
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
-	ok, fromQuery := s.session(r)
+	a, fromQuery, ok := s.requestAccess(r)
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 
@@ -295,10 +295,14 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Security-Policy", contentSecurityPolicy)
 	if fromQuery {
-		s.setSessionCookie(w)
+		s.setCredentialCookie(w, a.Credential)
+	}
+	if err := s.joinGuest(w, r, a); err != nil {
+		http.Error(w, "could not establish guest access", http.StatusForbidden)
+		return
 	}
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(s.renderPage())
+	_, _ = w.Write(s.renderPageFor(a))
 }
 
 // unlockHTML is the page an unauthenticated browser gets: a box for the session
@@ -324,12 +328,12 @@ const unlockHTML = `<!doctype html>
   * { box-sizing: border-box; }
   body { margin:0; min-height:100vh; display:grid; place-items:center;
          background:var(--bg); color:var(--fg); padding:24px;
-         font:14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+          font:13px/1.5 Monaco, Menlo, Consolas, monospace; }
   .card { width:100%; max-width:30rem; background:var(--card); border:1px solid var(--line);
           border-radius:8px; padding:24px; }
   h1 { margin:0 0 4px; font-size:16px; }
   p { margin:0 0 16px; color:var(--dim); }
-  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size:12px; }
+   code { font-family: Monaco, Menlo, Consolas, monospace; font-size:12px; }
   form { display:flex; gap:8px; }
   /* Masked with CSS rather than type="password".
      A password input invites the browser's password manager to offer to SAVE
@@ -340,7 +344,7 @@ const unlockHTML = `<!doctype html>
      same shoulder-surfing protection with none of that. */
   input { flex:1 1 auto; min-width:0; padding:8px 10px; border:1px solid var(--line);
           border-radius:6px; background:var(--bg); color:var(--fg);
-          font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size:12px;
+           font-family: Monaco, Menlo, Consolas, monospace; font-size:12px;
           -webkit-text-security: disc; text-security: disc; }
   button { padding:8px 14px; border:1px solid var(--accent); border-radius:6px;
            background:var(--accent); color:#fff; font-weight:600; cursor:pointer; }
@@ -375,13 +379,19 @@ const unlockHTML = `<!doctype html>
 // buttons all 403 because the two halves disagreed about how the token arrives
 // is a failure worth twenty lines of belt and braces.
 func (s *Server) renderPage() []byte {
-	token := s.sessionToken()
+	a, _ := s.credentialAccess(s.sessionToken())
+	return s.renderPageFor(a)
+}
+
+func (s *Server) renderPageFor(a accessGrant) []byte {
+	token := a.Credential
 	data := map[string]any{
 		"Token":    token,
+		"Role":     a.Role,
 		"Addr":     s.Addr(),
-		"URL":      s.URL(),
+		"URL":      "/?token=" + token,
 		"Services": func() []string { names, _ := s.serviceNames(); return names }(),
-		"Terminal": s.terminals != nil,
+		"Terminal": s.terminals != nil && a.Role == "owner",
 	}
 	if cfg := s.controller().Config(); cfg != nil {
 		data["Root"] = cfg.Root
@@ -637,6 +647,7 @@ func (s *Server) mutate(w http.ResponseWriter, r *http.Request, kind opKind, nam
 
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), s.opTimeout())
 	defer cancel()
+	finishGuestAction := s.beginGuestAction(r, string(kind), names)
 
 	ev, finish := s.collectEvents()
 	var err error
@@ -651,6 +662,7 @@ func (s *Server) mutate(w http.ResponseWriter, r *http.Request, kind opKind, nam
 		err = fmt.Errorf("web: unknown operation %q", kind)
 	}
 	collected := finish()
+	finishGuestAction(err == nil)
 
 	// A final event so a console that is only watching the stream sees the
 	// outcome, not just the transitions leading up to it.
