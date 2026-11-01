@@ -16,6 +16,13 @@ import (
 // and cheap because an event is three short strings.
 const subscriberBuffer = 256
 
+// sseWriteTimeout bounds one write to a stream. The server deliberately has no
+// WriteTimeout because an SSE response may legitimately live for hours; a
+// single write that cannot finish in this long means the peer is gone or has
+// stopped reading, and returning lets the browser reconnect instead of pinning
+// a handler and its tail forever.
+const sseWriteTimeout = 15 * time.Second
+
 // broker fans one stream of supervisor events out to every open console.
 //
 // It exists because supervisor.Event sends are NON-BLOCKING by design: the
@@ -167,6 +174,19 @@ func newSSE(w http.ResponseWriter) (*sseWriter, bool) {
 	return &sseWriter{w: w, f: f}, true
 }
 
+// streamContext rechecks the credential and captures its lifetime under the
+// authentication lock. Revocation or rotation then cancels the stream, including
+// when the credential changes between the route guard and this call.
+func (s *Server) streamContext(r *http.Request) (context.Context, context.CancelFunc, bool) {
+	a, _, ok := s.requestAccess(r)
+	if !ok || a.Life.Err() != nil {
+		return nil, nil, false
+	}
+	ctx, cancel := context.WithCancel(r.Context())
+	stop := context.AfterFunc(a.Life, cancel)
+	return ctx, func() { stop(); cancel() }, true
+}
+
 // retry tells the browser how soon to reconnect after a drop.
 func (s *sseWriter) retry(d time.Duration) error {
 	return s.write("retry: " + fmt.Sprint(d.Milliseconds()) + "\n\n")
@@ -196,6 +216,13 @@ func (s *sseWriter) send(v any) error {
 
 // write emits raw bytes and flushes.
 func (s *sseWriter) write(text string) error {
+	// Arm a deadline for THIS write and clear it afterwards. A deadline left on
+	// the connection would leak into the next request on a keep-alive
+	// connection, and Go refuses to extend a deadline that has already passed.
+	rc := http.NewResponseController(s.w)
+	_ = rc.SetWriteDeadline(time.Now().Add(sseWriteTimeout))
+	defer func() { _ = rc.SetWriteDeadline(time.Time{}) }()
+
 	if _, err := s.w.Write([]byte(text)); err != nil {
 		return err
 	}
@@ -232,8 +259,14 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	ctx, cancel, ok := s.streamContext(r)
+	if !ok {
+		http.Error(w, "forbidden: the session token was rotated", http.StatusForbidden)
+		return
+	}
 	sse, ok := newSSE(w)
 	if !ok {
+		cancel()
 		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
 		return
 	}
@@ -241,7 +274,7 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	s.streams.Add(1)
 	defer s.streams.Add(-1)
 
-	ctx, cancel := context.WithCancel(r.Context())
+	ctrl := s.controller()
 	lines := make(chan string, streamBuffer)
 	done := make(chan error, 1)
 	go func() {
@@ -250,7 +283,7 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 				done <- fmt.Errorf("web: tailing %s panicked: %v", svc, rec)
 			}
 		}()
-		done <- s.ctrl.Tail(ctx, svc, tailCount(r.URL.Query().Get("tail")), true, lines)
+		done <- ctrl.Tail(ctx, svc, tailCount(r.URL.Query().Get("tail")), true, lines)
 	}()
 
 	// reaped records that the tail's outcome has already been collected below,
@@ -261,7 +294,7 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 		for range lines { //nolint:revive // draining, the values are dead
 		}
 		if !reaped {
-			<-done
+			<-done //nolint:errcheck // The response is closed; only reap the canceled tail.
 		}
 	}()
 
@@ -303,6 +336,12 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 // It reads a broker subscription rather than a supervisor channel; see [broker]
 // for why a single channel would starve every console but the first.
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel, ok := s.streamContext(r)
+	if !ok {
+		http.Error(w, "forbidden: the session token was rotated", http.StatusForbidden)
+		return
+	}
+	defer cancel()
 	sse, ok := newSSE(w)
 	if !ok {
 		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
@@ -314,10 +353,19 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 
 	events, release := s.events.subscribe()
 	defer release()
+	// A page that connects after the edit was announced still has to offer the
+	// reload, so the pending announcement is replayed to every new stream.
+	s.mu.Lock()
+	pending := s.configPending
+	s.mu.Unlock()
+	if pending {
+		if err := sse.send(toEventJSON(supervisor.Event{Msg: configChangedMsg})); err != nil {
+			return
+		}
+	}
 
 	_ = sse.retry(2 * time.Second)
 
-	ctx := r.Context()
 	hb := time.NewTicker(s.heartbeat)
 	defer hb.Stop()
 
@@ -366,8 +414,14 @@ func (s *Server) handleStreamAll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ctx, cancel, ok := s.streamContext(r)
+	if !ok {
+		http.Error(w, "forbidden: the session token was rotated", http.StatusForbidden)
+		return
+	}
 	sse, ok := newSSE(w)
 	if !ok {
+		cancel()
 		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
 		return
 	}
@@ -375,7 +429,7 @@ func (s *Server) handleStreamAll(w http.ResponseWriter, r *http.Request) {
 	s.streams.Add(1)
 	defer s.streams.Add(-1)
 
-	ctx, cancel := context.WithCancel(r.Context())
+	ctrl := s.controller()
 	merged := make(chan streamMsg, streamBuffer)
 	tail := tailCount(r.URL.Query().Get("tail"))
 
@@ -395,7 +449,7 @@ func (s *Server) handleStreamAll(w http.ResponseWriter, r *http.Request) {
 					done <- fmt.Errorf("web: tailing %s panicked: %v", name, rec)
 				}
 			}()
-			done <- s.ctrl.Tail(ctx, name, tail, true, lines)
+			done <- ctrl.Tail(ctx, name, tail, true, lines)
 		}()
 
 		// The end-reporter: when this service's tail returns, say so — with

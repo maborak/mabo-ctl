@@ -148,7 +148,10 @@ rules enforced at load:
 At start time, the existing per-level fold gains an `unready` map: services
 that settled at `slow`, `degraded`, or `running`-without-probe are recorded
 there, and the next level's services with gated edges on them are skipped
-with an explicit "gates on its readiness" message. The safety argument is
+with an explicit "gates on its readiness" message. A dependency the start
+finds **already running** is probed once and settles at the phase Status would
+give it — `ready`, or `slow`/`degraded` — so restarting a gated service behind
+a healthy dependency starts it (docs/LANDMINES.md §17). The safety argument is
 unchanged and load-bearing: both maps are written only **between** levels,
 never during one, because every dependency of a level-N service is final by
 the time level N is scheduled (the same reasoning the `failed` map always

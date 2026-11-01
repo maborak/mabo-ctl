@@ -37,7 +37,21 @@ Three front ends over ONE supervisor:
    mutations, Host+Origin validated. It can start and stop processes, so treat
    every guard on it as security-critical. It is the one TCP listener in the
    repo; the tty broker additionally holds a `.mabo-ctl/tty/*.sock` unix-domain
-   socket for local PTY IPC, which is not a network surface.
+   socket for local PTY IPC, which is not a network surface. Its opt-in
+   Terminal tab (`serve --terminal`, `supervisor.Terminals`) runs interactive
+   shells: loopback bind and loopback Host/Origin only, never through
+   `--allow-origin` — keep that gate in `internal/web/terminal.go`.
+   CONFIG can mint in-memory READ/VIEW/WRITE sharing capabilities (not user
+   accounts). `internal/web/access.go` owns their closed, server-side route
+   allowlist: WRITE means service lifecycle only; no guest gets terminals,
+   configuration reload, origin editing or access administration. Revocation
+   cancels the share's streams; operator-token rotation revokes every share.
+   Explicit invalid credentials must never fall back to an operator cookie.
+   VIEW synchronizes non-security presentation state, never terminal contents
+   or security forms. Its cursor/click overlays use a closed set of safe regions
+   and never replay input; do not turn pointer sharing into event recording.
+   Guest tracking is scoped by browser cookie plus share ID; that cookie is
+   attribution only, never authorization. Poll counters are not human activity.
 
 ### Non-goals — out of scope by declaration, never gaps
 

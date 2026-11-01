@@ -18,6 +18,14 @@ info:
 
     ## Security
 
+    Operator credentials have full access. Shared roles are server-enforced:
+    `read` reads stack/configuration/logs, `view` adds presentation mirroring,
+    and `write` adds only service lifecycle controls. No guest can use terminals,
+    edit configuration/trusted origins, rotate tokens or manage shares. An invalid
+    explicit query/header credential never falls back to an operator cookie.
+    Shares and guest history are in-memory for this serve run. Revocation closes
+    existing streams; it cannot undo an accepted action or erase copied data.
+
     Every response carries: `X-Content-Type-Options: nosniff`,
     `Referrer-Policy: no-referrer`, `X-Frame-Options: DENY`,
     `Cache-Control: no-store`. No `Access-Control-Allow-*` headers are set.
@@ -26,7 +34,7 @@ info:
 
     Credential-shaped values in health URLs, command arguments, and environment
     values are replaced with `[redacted]` by `internal/redact`.
-  version: "0.1.0"
+  version: "1.3.0"
   contact:
     name: mabo-ctl
     url: https://github.com/maborak/mabo-ctl
@@ -292,22 +300,35 @@ paths:
   /api/config/reload:
     post:
       summary: Reload configuration
-      description: Apply the latest validated mabo-ctl.yaml without restarting running services.
+      description: >-
+        Apply mabo-ctl.yaml as it now reads on disk. A running service whose
+        command, directory, environment, port or tty changed is restarted under
+        its new definition; a running service the file no longer declares is
+        stopped; every other service keeps running. A changed declared port is
+        adopted even when .mabo-ctl/run.env pinned the old one. The reload runs
+        to completion even if the client disconnects.
       security:
         - tokenHeader: []
       responses:
         "200":
-          description: Configuration reloaded
+          description: >-
+            The new configuration is in force. ok is false when a service could
+            not be stopped or started; error says which, events say why.
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  ok:
-                    type: boolean
-                required: [ok]
+                $ref: "#/components/schemas/ReloadResponse"
+        "409":
+          description: A start, stop or restart is in progress; the reload was not attempted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "422":
-          description: Configuration could not be loaded, validated or resolved; the previous snapshot remains active.
+          description: >-
+            Nothing was applied — the file did not load, validate or resolve, a
+            service it needs cannot run, or a removed service survived its stop —
+            and the previous configuration remains in force.
           content:
             application/json:
               schema:
@@ -326,6 +347,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/MutationResponse"
+        "409":
+          description: A configuration reload is in progress; retry when it finishes
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "429":
           description: Too many operations in flight
           content:
@@ -346,6 +373,40 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/MutationResponse"
+        "409":
+          description: A configuration reload is in progress; retry when it finishes
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          description: Too many operations in flight
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/restart-all:
+    post:
+      summary: Restart running services
+      description: >-
+        Restart every service that is running now (running, ready, slow or
+        degraded). Stopped, failed and exited services are left alone.
+      security:
+        - tokenHeader: []
+      responses:
+        "200":
+          description: Operation result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MutationResponse"
+        "409":
+          description: Nothing is running, or a configuration reload is in progress
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "429":
           description: Too many operations in flight
           content:
@@ -368,6 +429,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/MutationResponse"
+        "409":
+          description: A configuration reload is in progress; retry when it finishes
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "404":
           description: Unknown service
           content:
@@ -396,6 +463,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/MutationResponse"
+        "409":
+          description: A configuration reload is in progress; retry when it finishes
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "404":
           description: Unknown service
           content:
@@ -418,12 +491,198 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/MutationResponse"
+        "409":
+          description: A configuration reload is in progress; retry when it finishes
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "404":
           description: Unknown service
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorWithValid"
+
+  /api/terminals:
+    get:
+      summary: List terminals
+      description: >-
+        The open Terminal-tab shells, oldest first. 404 unless serve runs with
+        --terminal (or console_terminal true); 403 unless the request comes from
+        a browser on this machine at the loopback address.
+      security:
+        - sessionCookie: []
+        - sessionHeader: []
+        - queryToken: []
+      responses:
+        "200":
+          description: Open terminals
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Terminal"
+        "403":
+          $ref: "#/components/responses/TerminalNotLocal"
+        "404":
+          $ref: "#/components/responses/TerminalOff"
+    post:
+      summary: Open a terminal
+      description: Start a login shell on a pty in the repository root, running as you.
+      security:
+        - tokenHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TerminalSize"
+      responses:
+        "200":
+          description: The new terminal
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Terminal"
+        "429":
+          description: 16 terminals are already open
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          $ref: "#/components/responses/TerminalNotLocal"
+        "404":
+          $ref: "#/components/responses/TerminalOff"
+
+  "/api/terminals/{id}/stream":
+    get:
+      summary: Terminal output (SSE)
+      description: >-
+        The scrollback as one frame marked "replay": true, then live output,
+        then {"end": true} when the shell exits. data is base64-encoded pty
+        output. A client must not answer terminal queries found in the replay
+        frame.
+      security:
+        - sessionCookie: []
+        - sessionHeader: []
+        - queryToken: []
+      parameters:
+        - $ref: "#/components/parameters/terminalId"
+      responses:
+        "200":
+          description: Server-sent events of {"data":"<base64>"} or {"end":true}
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        "403":
+          $ref: "#/components/responses/TerminalNotLocal"
+        "404":
+          description: Unknown terminal, or the terminal is off
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  "/api/terminals/{id}/input":
+    post:
+      summary: Type into a terminal
+      security:
+        - tokenHeader: []
+      parameters:
+        - $ref: "#/components/parameters/terminalId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data]
+              properties:
+                data:
+                  type: string
+                  description: Text to write to the shell, up to 1 MiB
+      responses:
+        "204":
+          description: Delivered
+        "403":
+          $ref: "#/components/responses/TerminalNotLocal"
+        "404":
+          description: Unknown terminal, or the terminal is off
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "410":
+          description: The terminal has ended
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  "/api/terminals/{id}/resize":
+    post:
+      summary: Resize a terminal
+      security:
+        - tokenHeader: []
+      parameters:
+        - $ref: "#/components/parameters/terminalId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TerminalSize"
+      responses:
+        "204":
+          description: Resized
+        "403":
+          $ref: "#/components/responses/TerminalNotLocal"
+        "404":
+          description: Unknown terminal, or the terminal is off
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  "/api/terminals/{id}/close":
+    post:
+      summary: Close a terminal
+      description: SIGHUP to the shell's session, then SIGKILL after 2 seconds.
+      security:
+        - tokenHeader: []
+      parameters:
+        - $ref: "#/components/parameters/terminalId"
+      responses:
+        "204":
+          description: Closed
+        "403":
+          $ref: "#/components/responses/TerminalNotLocal"
+        "404":
+          description: Unknown terminal, or the terminal is off
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /assets/xterm.js:
+    get:
+      summary: Terminal emulator bundle
+      description: xterm.js 6.0.0 with its fit and web-links addons, vendored (MIT).
+      security:
+        - sessionCookie: []
+        - sessionHeader: []
+        - queryToken: []
+      responses:
+        "200":
+          description: JavaScript
+          content:
+            application/javascript:
+              schema:
+                type: string
 
   /api-docs:
     get:
@@ -493,6 +752,168 @@ paths:
         "401":
           description: Session token required
 
+  /api/access:
+    get:
+      summary: Operator only — list shares and guest browser sessions
+      responses:
+        "200":
+          description: Bounded in-memory access history; secrets are never listed
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [shares, guests]
+                properties:
+                  shares:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/SharedAccess'
+                  guests:
+                    type: array
+                    maxItems: 256
+                    items:
+                      $ref: '#/components/schemas/GuestAccess'
+        "403":
+          description: Missing operator credential
+
+  /api/access/token:
+    post:
+      summary: Operator only — rotate the operator token and revoke all shares
+      description: Runtime-only. Sets a replacement HttpOnly cookie; old credentials and streams cease working. Blank generates a random key. Previously shared tokens cannot be promoted to operator.
+      security:
+        - sessionHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                token:
+                  type: string
+                  maxLength: 256
+                  description: Blank generates; otherwise at least four ASCII letters/digits or . _ ~ -; must differ from current token
+      responses:
+        "200":
+          description: New operator credential; do not log
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:
+                    type: string
+        "400":
+          description: Invalid, unchanged or previously shared token
+        "403":
+          description: Operator header required
+
+  /api/access/shares:
+    post:
+      summary: Operator only — create a scoped sharing capability
+      description: Maximum 32 active links and 128 creations per serve run. Blank token generates a random key; previously used tokens cannot be reused. This does not publish the loopback listener or relax Host/Origin guards.
+      security:
+        - sessionHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, role]
+              properties:
+                name:
+                  type: string
+                  minLength: 1
+                  maxLength: 80
+                role:
+                  type: string
+                  enum: [read, view, write]
+                token:
+                  type: string
+                  maxLength: 256
+                  description: Blank generates; otherwise at least 16 ASCII letters/digits or . _ ~ -
+      responses:
+        "201":
+          description: Secret shown once; form the URL using the browser's reachable origin
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  share:
+                    $ref: '#/components/schemas/SharedAccess'
+                  token:
+                    type: string
+        "400":
+          description: Invalid name, role or custom token
+        "403":
+          description: Operator header required
+        "409":
+          description: Token already used
+        "429":
+          description: Share limit reached
+
+  /api/access/shares/{id}/revoke:
+    post:
+      summary: Operator only — terminate all sessions using this share
+      security:
+        - sessionHeader: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Token invalidated and streams cancelled; all guests using this link lose access
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+        "403":
+          description: Operator header required
+        "404":
+          description: Unknown or already revoked link
+
+  /api/mirror:
+    get:
+      summary: Operator or VIEW only — current presentation state
+      description: VIEW polls every 100ms. Inactive when the publisher has not updated within five seconds. Synchronizes navigation/log controls and visual cursor/click indicators, not screen pixels or historical log buffers. Never replays input or carries terminal contents, credentials, clipboard or security form values. Positions are normalized within known non-security regions; no motion/click history is stored.
+      responses:
+        "200":
+          description: Current presentation state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MirrorView'
+        "403":
+          description: VIEW or operator credential required
+    post:
+      summary: Operator only — broadcast non-security presentation state
+      description: A different active source receives 409 unless takeover is true. The server maps terminal to output and removes pointers/clicks for terminal or inactive broadcasts. Only known non-security pointer regions are allowed. Clients publish motion at most 10 times per second and idle heartbeats every 500ms. Valid service names are required unless empty. Publishing heartbeats are not audit-logged; refusals are.
+      security:
+        - sessionHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MirrorView'
+      responses:
+        "200":
+          description: Presentation accepted
+        "400":
+          description: Invalid presentation state
+        "403":
+          description: Operator header required
+        "409":
+          description: Another operator tab holds the five-second publishing lease
+
 components:
   securitySchemes:
     sessionCookie:
@@ -529,8 +950,51 @@ components:
         type: string
         pattern: "^[a-zA-Z0-9][a-zA-Z0-9_-]*$"
       description: Declared service name
+    terminalId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Terminal id from GET /api/terminals
+
+  responses:
+    TerminalOff:
+      description: The terminal is off; serve was started without --terminal
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    TerminalNotLocal:
+      description: Not a browser on this machine at the loopback address
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
 
   schemas:
+    Terminal:
+      type: object
+      required: [id, pid, started_at]
+      properties:
+        id:
+          type: string
+        pid:
+          type: integer
+        started_at:
+          type: string
+          format: date-time
+    TerminalSize:
+      type: object
+      properties:
+        cols:
+          type: integer
+          minimum: 2
+          maximum: 1000
+        rows:
+          type: integer
+          minimum: 2
+          maximum: 500
     ServiceInfo:
       type: object
       properties:
@@ -726,6 +1190,40 @@ components:
           items:
             $ref: "#/components/schemas/EventJSON"
 
+    ReloadResponse:
+      type: object
+      example:
+        ok: false
+        error: "services did not start: worker"
+        stopped: [legacy]
+        restarted: [backend, worker]
+        events:
+          - service: worker
+            phase: failed
+            msg: "failed: process died"
+      properties:
+        ok:
+          type: boolean
+          description: Every affected service was stopped and started cleanly
+        error:
+          type: string
+          description: What failed when ok is false
+        stopped:
+          type: array
+          items:
+            type: string
+          description: Running services the new configuration removed, stopped
+        restarted:
+          type: array
+          items:
+            type: string
+          description: Services started under their new definition
+        events:
+          type: array
+          items:
+            $ref: "#/components/schemas/EventJSON"
+      required: [ok, stopped, restarted, events]
+
     OriginsResponse:
       type: object
       example:
@@ -758,6 +1256,177 @@ components:
           items:
             $ref: "#/components/schemas/EventJSON"
           description: Ring contents, oldest first (max 50)
+
+    SharedAccess:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        role:
+          type: string
+          enum: [read, view, write]
+        created_at:
+          type: string
+          format: date-time
+
+    GuestAccess:
+      type: object
+      description: Browser-and-link identity, not a verified person. Same-link tabs are grouped; different links in one browser retain independent records. Address is the socket peer (may be a proxy); browser is the unverified User-Agent. UI considers last_seen within 15 seconds active, not human activity. Session ID does not expose the browser cookie. Only the latest service action is retained; no request bodies, queries or action error contents.
+      properties:
+        id:
+          type: string
+        share_id:
+          type: string
+        name:
+          type: string
+        role:
+          type: string
+          enum: [read, view, write]
+        address:
+          type: string
+        browser:
+          type: string
+        joined_at:
+          type: string
+          format: date-time
+        last_seen:
+          type: string
+          format: date-time
+        revoked:
+          type: boolean
+        revoked_at:
+          type: string
+          format: date-time
+        page_opens:
+          type: integer
+          minimum: 1
+          description: Console opens/reloads for this link and browser
+        requests:
+          type: integer
+          minimum: 0
+          description: Authenticated guarded requests including polls and role denials; no browser attribution without the visitor cookie
+        denied_requests:
+          type: integer
+          minimum: 0
+          description: Valid guest credential blocked by role, not invalid tokens or Host/Origin refusals
+        actions:
+          type: integer
+          minimum: 0
+          description: Accepted service lifecycle operations, not HTTP polls or clicks
+        last_request:
+          type: string
+          description: HTTP method and route template only; no raw paths or queries
+        last_action:
+          $ref: '#/components/schemas/GuestAction'
+
+    GuestAction:
+      type: object
+      properties:
+        operation:
+          type: string
+          enum: [start, stop, restart]
+        services:
+          type: array
+          items:
+            type: string
+          description: Requested services; empty means all
+        outcome:
+          type: string
+          enum: [running, completed, failed]
+          description: Actual supervisor outcome, independent of HTTP status
+        started_at:
+          type: string
+          format: date-time
+        finished_at:
+          type: string
+          format: date-time
+
+    MirrorView:
+      type: object
+      properties:
+        source:
+          type: string
+          minLength: 1
+          maxLength: 80
+        active:
+          type: boolean
+        takeover:
+          type: boolean
+          description: POST only; explicitly replace another active publisher
+        updated_at:
+          type: string
+          format: date-time
+          description: Server-set timestamp
+        service:
+          type: string
+        tab:
+          type: string
+          enum: [output, config, api, terminal]
+          description: Terminal is accepted only on publish and normalized to output; no terminal contents are mirrored
+        config_section:
+          type: string
+          enum: [overview, services, sharing, security]
+          description: Only overview/services are returned. Sharing/security publish values are mapped to overview, suppressing pointer/click data while the private section is open. Omission defaults to overview.
+        all:
+          type: boolean
+        filter:
+          type: string
+          maxLength: 512
+        level:
+          type: string
+          enum: ['', error, warn, info, debug]
+        paused:
+          type: boolean
+        follow:
+          type: boolean
+        scroll:
+          type: number
+          minimum: 0
+          maximum: 1
+        separators:
+          type: boolean
+        font_size:
+          type: integer
+          minimum: 10
+          maximum: 18
+        details:
+          type: boolean
+        pointer:
+          type: object
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/MirrorPoint'
+        click:
+          type: object
+          nullable: true
+          required: [point, sequence]
+          properties:
+            point:
+              $ref: '#/components/schemas/MirrorPoint'
+            sequence:
+              type: integer
+              format: int64
+              minimum: 1
+              maximum: 9007199254740991
+              description: De-duplicates a brief visual ripple; never an input event to replay
+
+    MirrorPoint:
+      type: object
+      required: [region, x, y]
+      properties:
+        region:
+          type: string
+          enum: [sidebar, tabs, output, cfg-source, cfg-ports, cfg-services]
+        x:
+          type: number
+          minimum: 0
+          maximum: 1
+        y:
+          type: number
+          minimum: 0
+          maximum: 1
 
     Error:
       type: object

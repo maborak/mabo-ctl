@@ -899,9 +899,6 @@ func TestParseColorVocabulary(t *testing.T) {
 
 func TestRunRejectsANilSupervisor(t *testing.T) {
 	t.Parallel()
-	if err := Run(nil); !errors.Is(err, ErrNoSupervisor) {
-		t.Errorf("Run(nil) = %v, want ErrNoSupervisor", err)
-	}
 	if err := RunWith(nil, Options{}); !errors.Is(err, ErrNoSupervisor) {
 		t.Errorf("RunWith(nil, …) = %v, want ErrNoSupervisor", err)
 	}
@@ -954,7 +951,7 @@ func TestConsoleFollowsARealSupervisorTail(t *testing.T) {
 	sup := supervisor.New(&config.Config{Root: root}, st,
 		[]service.Instance{{Name: "web", Dir: root, Port: 7100, Color: "green"}})
 
-	// The plain Run path learns the declared colours from the supervisor.
+	// The console learns the declared colours from the supervisor.
 	if got := serviceColors(sup); got["web"] != "green" {
 		t.Errorf("serviceColors = %v, want web declared green", got)
 	}

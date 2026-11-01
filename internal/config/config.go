@@ -69,9 +69,19 @@ type Config struct {
 	// ConsoleAccessKey is the optional access key for `mabo-ctl serve`. Empty
 	// means serve generates a random key for this run.
 	ConsoleAccessKey string
+	// ConsoleTerminal enables the web console's Terminal tab, which runs
+	// interactive shells as the operator. Off unless set; `serve --terminal`
+	// enables it for one run.
+	ConsoleTerminal bool
 	// ActiveProfiles is the profile set in force, when one was requested and
 	// passed validation; nil means "no profile selection", not "no profiles".
 	ActiveProfiles []string
+
+	// sources are the env_file paths Load read, recorded before any profile
+	// filtering, and revision fingerprints them together with the YAML bytes
+	// Load parsed. They are the baseline [Config.Changed] compares against.
+	sources  []string
+	revision [32]byte
 }
 
 // Spec is a service exactly as declared. Cmd/Env and the parts of Health hold
@@ -399,6 +409,7 @@ func Load(path string) (*Config, error) {
 		Shells:           doc.Shells,
 		ConsoleAddr:      doc.ConsoleAddr,
 		ConsoleAccessKey: doc.ConsoleAccessKey,
+		ConsoleTerminal:  doc.ConsoleTerminal,
 		StopGrace:        DefaultStopGrace,
 		ReadyTimeout:     DefaultReadyTimeout,
 	}
@@ -413,6 +424,10 @@ func Load(path string) (*Config, error) {
 	}
 
 	if err := cfg.validate(); err != nil {
+		return nil, err
+	}
+	cfg.sources = cfg.envFiles()
+	if cfg.revision, err = fingerprint(abs, data, cfg.sources); err != nil {
 		return nil, err
 	}
 	return cfg, nil
@@ -572,6 +587,7 @@ type fileDoc struct {
 	ReadyTimeout     *durationValue `yaml:"ready_timeout"`
 	ConsoleAddr      string         `yaml:"console_addr"`
 	ConsoleAccessKey string         `yaml:"console_access_key"`
+	ConsoleTerminal  bool           `yaml:"console_terminal"`
 	Services         []specDoc      `yaml:"services"`
 	Checks           []Check        `yaml:"checks"`
 	Shells           []Shell        `yaml:"shells"`
@@ -710,7 +726,12 @@ func ParseEnvFile(path string) (map[string]string, error) {
 		}
 		k, v, ok := strings.Cut(line, "=")
 		if !ok {
-			return nil, fmt.Errorf("config: %s line %d: %q is not KEY=VALUE; env files hold one VARIABLE=value per line", path, i+1, line)
+			// The line itself is NOT quoted. An env file is where credentials
+			// live, and the likeliest malformed line is one written in another
+			// syntax — `API_TOKEN: sk-live-…` — whose whole value is the secret.
+			// This error reaches stderr, the web console and its event stream;
+			// the file and line number are enough to find it.
+			return nil, fmt.Errorf("config: %s line %d is not KEY=VALUE; env files hold one VARIABLE=value per line", path, i+1)
 		}
 		out[strings.TrimSpace(k)] = strings.TrimSpace(v)
 	}

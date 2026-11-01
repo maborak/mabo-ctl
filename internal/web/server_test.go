@@ -332,6 +332,7 @@ var mutatingPaths = []string{
 	"/api/backend/restart",
 	"/api/start-all",
 	"/api/stop-all",
+	"/api/restart-all",
 }
 
 // ---------------------------------------------------------------------------
@@ -806,6 +807,43 @@ func TestBulkMutationTargetsEveryService(t *testing.T) {
 					path, resp.Services)
 			}
 		}
+	}
+}
+
+// TestRestartAllRestartsOnlyWhatIsRunning pins the selection behind the
+// console's "Restart all". A nil restart would stop every service and then
+// start only the autostart selection, killing a running `autostart: false`
+// service for good and starting one the operator left stopped.
+func TestRestartAllRestartsOnlyWhatIsRunning(t *testing.T) {
+	t.Parallel()
+	ctrl := twoServices() // backend ready, frontend stopped
+	s := newRecorderServer(t, ctrl)
+
+	post := func() *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "http://"+recorderAddr+"/api/restart-all", nil)
+		req.Header.Set(tokenHeader, s.Token())
+		rec := httptest.NewRecorder()
+		s.h.ServeHTTP(rec, req)
+		return rec
+	}
+
+	if rec := post(); rec.Code != http.StatusOK {
+		t.Fatalf("POST /api/restart-all = %d, want 200: %s", rec.Code, rec.Body)
+	}
+	calls := ctrl.callsOf(opRestart)
+	if len(calls) != 1 || len(calls[0].names) != 1 || calls[0].names[0] != "backend" {
+		t.Fatalf("restart calls = %+v, want one restart naming only backend", calls)
+	}
+
+	ctrl.mu.Lock()
+	ctrl.statuses[0].Phase = supervisor.PhaseStopped
+	ctrl.mu.Unlock()
+	if rec := post(); rec.Code != http.StatusConflict {
+		t.Fatalf("POST /api/restart-all with nothing running = %d, want 409", rec.Code)
+	}
+	if n := len(ctrl.callsOf(opRestart)); n != 1 {
+		t.Errorf("a restart-all with nothing running reached the supervisor (%d calls); "+
+			"an empty selection means every service", n)
 	}
 }
 
@@ -2030,6 +2068,192 @@ func TestConsolePageKeepsDeclarationOrder(t *testing.T) {
 	}
 }
 
+// TestConsolePageRecoversFromAStalledTransport pins the sleep/wake recovery.
+// A fetch that never settles after a resume used to leave the poll latch set
+// forever, so no later visibilitychange could restart it; a stream stuck in
+// CONNECTING had no recovery path either. The page must keep the watchdog and
+// the reopen hooks that make a resumed tab recover without a manual reload.
+func TestConsolePageRecoversFromAStalledTransport(t *testing.T) {
+	t.Parallel()
+	for _, want := range []string{
+		"pollWatchdog",
+		"pollCtl.abort()",
+		"recoverStreams()",
+		"LogPane.prototype.recover",
+		"eventsOpenedAt",
+		`addEventListener("pageshow"`,
+		`addEventListener("online"`,
+		"setInterval(recoverStreams",
+		"function loadServices(",
+		"bootTimer = setTimeout(loadServices",
+	} {
+		if !strings.Contains(consoleHTML, want) {
+			t.Errorf("console.html lost %q; a page resumed from sleep can stay frozen", want)
+		}
+	}
+}
+
+// TestDetailHeaderRepaintsItsButtonsOnEveryStatus is the detector for
+// LANDMINES §20: the detail header's buttons kept the phase they were mounted
+// with, so a running service offered Start and greyed out Stop.
+func TestDetailHeaderRepaintsItsButtonsOnEveryStatus(t *testing.T) {
+	t.Parallel()
+	from := strings.Index(consoleHTML, "    applyStatus: function (st) {")
+	if from < 0 {
+		t.Fatal("console.html has no detail applyStatus")
+	}
+	body := consoleHTML[from:]
+	end := strings.Index(body, "\n    },")
+	if end < 0 || !strings.Contains(body[:end], "this.paintButtons();") {
+		t.Error("detail.applyStatus does not repaint the header buttons from the new phase")
+	}
+}
+
+// TestExplicitServiceSelectionOpensOutputBeforeTheSameServiceEarlyReturn
+// preserves navigation when the clicked service is already selected, while
+// passive polling and mirror synchronization leave their tab choice alone.
+func TestExplicitServiceSelectionOpensOutputBeforeTheSameServiceEarlyReturn(t *testing.T) {
+	t.Parallel()
+	from := strings.Index(consoleHTML, "  function select(name, focusRow) {")
+	if from < 0 {
+		t.Fatal("missing service selection")
+	}
+	body := consoleHTML[from:]
+	end := strings.Index(body, "\n  }")
+	if end < 0 {
+		t.Fatal("unterminated service selection")
+	}
+	body = body[:end]
+	show := strings.Index(body, `if (currentTab !== "terminal") { showTab("output"); }`)
+	same := strings.Index(body, "if (selected === name)")
+	viewGuard := strings.Index(body, `if (ROLE === "view" && !mirrorApplying && booted)`)
+	if show < 0 || same < show || viewGuard < 0 || viewGuard > show {
+		t.Error("explicit picks must open Output unless Terminal is active, before the same-service return but after the VIEW guard")
+	}
+	if !strings.Contains(body, "if (pane.all) { pane.bind(name); }") {
+		t.Error("clicking the selected service must leave merged output")
+	}
+}
+
+// TestSystemCommandsArePinnedAndNotReplayed detects LANDMINES §23: live
+// lifecycle events were replayed from HTTP responses and mixed into logs.
+func TestSystemCommandsArePinnedAndNotReplayed(t *testing.T) {
+	t.Parallel()
+	for _, want := range []string{
+		`aria-label="system commands"`,
+		`<strong>SYSTEM COMMANDS</strong>`,
+		`root.appendChild(activityWrap);`,
+		`activityIdle.hidden = false;`,
+	} {
+		if !strings.Contains(consoleHTML, want) {
+			t.Errorf("console lost %q", want)
+		}
+	}
+	// LogPane detaches the section until services arrive. All lookups must
+	// happen before that move; querying the document afterward returns nil.
+	pane := strings.Index(consoleHTML, "  var pane = new LogPane();")
+	for _, id := range []string{"activity-wrap", "activity", "activity-idle", "btn-clear-activity"} {
+		lookup := `document.getElementById("` + id + `")`
+		at := strings.Index(consoleHTML, lookup)
+		if pane < 0 || at < 0 || at > pane || strings.Contains(consoleHTML[pane:], lookup) {
+			t.Errorf("%s must be captured before LogPane detaches it", id)
+		}
+	}
+	for _, gone := range []string{
+		`pane.push("— " + text`,
+		`id="activity-wrap" hidden`,
+	} {
+		if strings.Contains(consoleHTML, gone) {
+			t.Errorf("console still contains %q", gone)
+		}
+	}
+	from := strings.Index(consoleHTML, "  function linesFromMutation(res) {")
+	if from < 0 {
+		t.Fatal("missing mutation result formatter")
+	}
+	body := consoleHTML[from:]
+	end := strings.Index(body, "\n  }")
+	if end < 0 {
+		t.Fatal("unterminated mutation result formatter")
+	}
+	if strings.Contains(body[:end], "res.events") {
+		t.Error("HTTP response replays lifecycle events already shown through SSE")
+	}
+	if !strings.Contains(body[:end], "res.error") {
+		t.Error("mutation failures must remain visible even without SSE")
+	}
+}
+
+// TestDetailPaneDoesNotRepeatTheLogTail is the detector for LANDMINES §22: a
+// dead service's JSON detail carries its log tail for the CLI, and the detail
+// pane rendered it while the log pane below showed the same lines.
+func TestDetailPaneDoesNotRepeatTheLogTail(t *testing.T) {
+	t.Parallel()
+	if strings.Contains(consoleHTML, "this.detailLine.textContent = st.detail") {
+		t.Error("detail.applyStatus binds the raw detail; the log pane already owns the tail")
+	}
+	from := strings.Index(consoleHTML, "  function visibleDetail(st) {")
+	if from < 0 {
+		t.Fatal("console.html has no visibleDetail")
+	}
+	body := consoleHTML[from:]
+	end := strings.Index(body, "\n  }")
+	if end < 0 {
+		t.Fatal("visibleDetail is unterminated")
+	}
+	body = body[:end]
+	for _, want := range []string{
+		`st.phase !== "exited" && st.phase !== "failed"`,
+		`st.detail.indexOf("\n")`,
+		`st.detail.slice(0, nl)`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("visibleDetail lost %q", want)
+		}
+	}
+	if !strings.Contains(consoleHTML, "var detail = visibleDetail(st);") {
+		t.Error("detail.applyStatus does not route the detail through visibleDetail")
+	}
+}
+
+// TestConsolePageHasThemeSidebarAndRestartAll is the drift guard for the
+// page's chrome: the inline icon, the three-way theme resolved before first
+// paint, the collapsible sidebar with its hover card, and Restart all wired to
+// its route.
+func TestConsolePageHasThemeSidebarAndRestartAll(t *testing.T) {
+	t.Parallel()
+	for _, want := range []string{
+		`<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,`,
+		`:root[data-theme="dark"]`,
+		`setAttribute("data-theme"`,
+		`["system", "light", "dark"]`,
+		`id="btn-theme"`,
+		`id="btn-sidebar"`,
+		".split.rail",
+		"function setRail(",
+		`id="svc-tip"`,
+		"function paintTip(",
+		`id="btn-restart-all"`,
+		`"/api/restart-all"`,
+		`data-tab="output"`, `data-tab="config"`, `data-tab="api"`, `data-tab="terminal"`,
+		"function showTab(",
+		`id="api-frame"`,
+		`"/assets/xterm.js"`,
+		`"/api/terminals"`,
+		`id="badge-output"`, `id="badge-terminal"`, "function noteUnseenOutput(",
+		"if (!s.replaying)",
+		"linkHandler: {", `/^https?:\/\//i.test(uri)`, // OSC 8 links: http(s) only // replayed queries are never answered (LANDMINES §21)
+		"button.primary:hover:not(:disabled) { background: var(--accent)",
+	} {
+		if !strings.Contains(consoleHTML, want) {
+			t.Errorf("console.html lost %q", want)
+		}
+	}
+	if strings.Contains(consoleHTML, "<footer") {
+		t.Error("console.html grew a footer back; the boilerplate it held was removed on purpose")
+	}
+}
+
 // TestConsolePageHasNoClientSidePhaseReconciliation checks that the workaround
 // deleted alongside this feature stays deleted. The server now persists the
 // death it observes, so the page has no reason to remember one — and a page
@@ -2040,6 +2264,127 @@ func TestConsolePageHasNoClientSidePhaseReconciliation(t *testing.T) {
 	for _, gone := range []string{"reconcileFailed", "failedSince"} {
 		if strings.Contains(consoleHTML, gone) {
 			t.Errorf("console.html still mentions %s; the server answers this question now", gone)
+		}
+	}
+}
+
+// TestConsoleOutputPresentationControls pins the native disclosure and range
+// controls, plus keeping state explanations outside the collapsible metadata.
+func TestConsoleOutputPresentationControls(t *testing.T) {
+	t.Parallel()
+	for _, want := range []string{
+		`background: color-mix(in srgb, var(--surface-2) 55%, transparent);`,
+		`var serviceConfig = el("details", "service-config");`,
+		`serviceConfig.open = false;`,
+		`serviceConfig.appendChild(cw);`,
+		`body.appendChild(this.detailLine);`,
+		`fontSize.type = "range";`,
+		`fontSize.setAttribute("aria-label", "Log font size");`,
+		`root.style.setProperty("--log-font-size", fontSize.value + "px");`,
+		`font-size: var(--log-font-size, 12px);`,
+	} {
+		if !strings.Contains(consoleHTML, want) {
+			t.Errorf("console lost %q", want)
+		}
+	}
+	ready := strings.Index(consoleHTML, `fact(dl, "ready in"`)
+	health := strings.Index(consoleHTML, `fact(dl, "health"`)
+	runtime := strings.Index(consoleHTML, `fact(dl, "runtime"`)
+	if ready < 0 || health < ready || runtime < health {
+		t.Error("Health must immediately follow Ready in, before Runtime")
+	}
+}
+
+// TestConsoleWorkspaceHasAccessibleSplittersAndOneDockedLogPane pins the
+// workspace structure without creating a second service log transport.
+func TestConsoleWorkspaceHasAccessibleSplittersAndOneDockedLogPane(t *testing.T) {
+	t.Parallel()
+	for _, want := range []string{
+		`--font: Monaco, Menlo, Consolas, "Liberation Mono", monospace;`,
+		`--mono: var(--font);`,
+		`id="terminal-workspace" hidden`, `id="terminal-output"`,
+		`aria-label="Resize services sidebar"`, `aria-label="Resize terminal and service output"`,
+		`handle.setPointerCapture(ev.pointerId)`, `ev.preventDefault(); ev.stopPropagation(); apply(value, true);`,
+		`mabo-ctl.sidebar-width`, `mabo-ctl.terminal-output-height`,
+		`terminalOutput.appendChild(detailEl);`, `stage.insertBefore(detailEl, configView);`,
+		`this.outputFontSize = 12; this.dockFontSize = 10;`,
+	} {
+		if !strings.Contains(consoleHTML, want) {
+			t.Errorf("workspace lost %q", want)
+		}
+	}
+	if strings.Count(consoleHTML, "new LogPane()") != 1 {
+		t.Error("docking must reuse the one service log pane")
+	}
+	if strings.Contains(consoleHTML, `<b>root</b>{{.}}`) {
+		t.Error("ROOT path chip returned to the header")
+	}
+}
+
+// TestConfigSectionsSeparateReadOnlyDataFromAdministrativeControls guards the
+// configuration navigation and the role-dependent administrative sections.
+func TestConfigSectionsSeparateReadOnlyDataFromAdministrativeControls(t *testing.T) {
+	t.Parallel()
+	for _, want := range []string{
+		`aria-label", "Configuration sections`,
+		`key: "overview", label: "Overview"`, `key: "services", label: "Services"`,
+		`key: "sharing", label: "Sharing & guests"`, `key: "security", label: "Security"`,
+		`nodes: [operatorTokenSection(), originsSection()]`,
+		`key === "overview" || key === "services" || (IS_OWNER && (key === "sharing" || key === "security"))`,
+		`"Live VIEW broadcast"`, `"Guest links"`, `"Guest sessions"`,
+	} {
+		if !strings.Contains(consoleHTML, want) {
+			t.Errorf("CONFIG lost %q", want)
+		}
+	}
+}
+
+// TestTerminalSyncDoesNotRaceItsInitialOpen detects LANDMINES §27: rapid tab
+// switches queued multiple first syncs before the first shell had attached.
+func TestTerminalSyncDoesNotRaceItsInitialOpen(t *testing.T) {
+	t.Parallel()
+	for _, want := range []string{
+		`if (this.syncing) { return; }`, `this.syncing = true;`,
+		`if (first && !self.order.length && !self.opening)`,
+		`self.syncing = false;`, `this.opening++;`, `self.opening--;`,
+		`if (owns.call(this.sessions, info.id)) { return; }`,
+	} {
+		if !strings.Contains(consoleHTML, want) {
+			t.Errorf("terminal initialization lost %q", want)
+		}
+	}
+}
+
+// TestMirrorPointerIsVisualOnly guards cursor privacy, accessibility and the
+// separation between visual click indicators and input events.
+func TestMirrorPointerIsVisualOnly(t *testing.T) {
+	t.Parallel()
+	for _, want := range []string{
+		`var mirrorNote = el("div", "access-banner mirror-note");`,
+		`mainColumn.insertBefore(mirrorNote, mainColumn.firstChild);`,
+		`READ ONLY · You can browse`, `WRITE ACCESS · You can start`, `VIEW · `, `BROADCASTING · `,
+		`document.addEventListener("pointermove"`, `document.addEventListener("pointerdown"`,
+		`target.closest("#cfg-access, #cfg-token, #cfg-origins, #terminal-view, .secret-input, [type=password]")`,
+		`Date.now() - lastClick.at < 1200`, `if (key === remoteClickKey) { return; }`,
+		`.mirror-cursor, .mirror-click {`, `pointer-events: none;`,
+		`@media (prefers-reduced-motion: reduce)`, `hideRemotePointer();`,
+	} {
+		if !strings.Contains(consoleHTML, want) {
+			t.Errorf("console lost %q", want)
+		}
+	}
+	start := strings.Index(consoleHTML, "  function paintRemotePointer(m) {")
+	if start < 0 {
+		t.Fatal("missing pointer renderer")
+	}
+	body := consoleHTML[start:]
+	end := strings.Index(body, "\n  }")
+	if end < 0 {
+		t.Fatal("unterminated pointer renderer")
+	}
+	for _, forbidden := range []string{"dispatchEvent", ".click()", "elementFromPoint"} {
+		if strings.Contains(body[:end], forbidden) {
+			t.Errorf("pointer renderer can replay input through %q", forbidden)
 		}
 	}
 }
@@ -2064,10 +2409,35 @@ func TestConsolePageClassifiesAndFiltersLogLevels(t *testing.T) {
 		`"All"`, `"Err"`, `"Warn"`, `"Info"`, `"Dbg"`, // the whole chip set
 		"setLevelFilter",               // chips actually drive the pane …
 		"rec.lvl === this.levelFilter", // … through the same matches() gate as the text filter
+		`.log-levels button[aria-pressed="true"]::before { visibility: visible; }`,
+		`background: var(--accent); border-color: var(--accent); color: var(--bg);`,
+		`this.separatorBox.type = "checkbox";`,
+		`self.body.classList.toggle("separated", self.separatorBox.checked);`,
+		`.log-body.separated .log-line + .log-line { border-top: 1px dashed var(--border-strong); }`,
 	} {
 		if !strings.Contains(consoleHTML, want) {
 			t.Errorf("console.html lost %q; the log level filter is not wired", want)
 		}
+	}
+}
+
+// TestGuestSessionCardsPreserveTheirNodesOnRefresh guards against losing the
+// operator's expanded connection details or button focus on every poll.
+func TestGuestSessionCardsPreserveTheirNodesOnRefresh(t *testing.T) {
+	t.Parallel()
+	for _, want := range []string{
+		`Search guest sessions`, `Filter guest session status`,
+		`var card = guestCards[g.id] || (guestCards[g.id] = guestCard(g));`,
+		`if (card.root !== cursor) { container.insertBefore(card.root, cursor); }`,
+		`Observed span`, `API requests`, `Blocked by role`, `Last action: `,
+		`Browser / OS (reported)`, `Connection details`,
+	} {
+		if !strings.Contains(consoleHTML, want) {
+			t.Errorf("guest sessions lost %q", want)
+		}
+	}
+	if strings.Contains(consoleHTML, "clear(shares); clear(guests);") {
+		t.Error("access refresh destroys guest cards and their disclosure/focus state")
 	}
 }
 

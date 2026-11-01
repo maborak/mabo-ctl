@@ -533,7 +533,10 @@ func TestTailFollowStopsOnContextCancel(t *testing.T) {
 
 	cancel()
 	select {
-	case <-done:
+	case err := <-done:
+		if err != nil && !errors.Is(err, context.Canceled) {
+			t.Fatalf("Tail after cancellation: %v", err)
+		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("Tail did not return after its context was cancelled: the goroutine is leaked")
 	}

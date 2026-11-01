@@ -44,6 +44,18 @@ A `GET` without a valid session gets the unlock page (HTML form to paste the
 token). A `GET` with a valid session gets the console page. A `POST` without
 the header gets `403`.
 
+The operator token has full access. Shared tokens have server-enforced scopes:
+`read` reads stack/configuration/logs and navigates independently, `view` also
+reads the operator's presentation state, and `write` adds only service
+start/stop/restart (including bulk actions). Guests cannot access terminals,
+trusted origins, access management or configuration reload. The page and API
+reference receive the presented credential, never an upgraded operator token.
+Explicit query credentials take precedence over headers, then cookies; an
+invalid explicit credential never falls back to a more privileged cookie.
+Mutations still require the credential in a header. SSE URLs carry the page's
+credential so concurrent browser tabs cannot change one another's scope via
+the shared cookie.
+
 No `Access-Control-Allow-*` headers are ever set — cross-origin scripts cannot
 read any response body.
 
@@ -59,11 +71,149 @@ Cache-Control: no-store
 ```
 
 The console page additionally carries a strict `Content-Security-Policy` that
-permits only inline script/style and same-origin `fetch`/`EventSource`.
+permits only inline script/style, same-origin script (the terminal bundle),
+same-origin `fetch`/`EventSource`, and a same-origin frame (the API tab). The
+one exception to `X-Frame-Options: DENY` is the authenticated `/api-docs` page,
+which sends `SAMEORIGIN` and `frame-ancestors 'self'` so the console's API tab
+can frame it; no other origin can.
 
 ---
 
 ## Routes
+
+### `GET /api/access`
+
+Operator only. Returns `{shares: [...], guests: [...]}`. Each active share has
+`id`, `name`, `role` (`read`, `view`, `write`), `created_at`; **no token**. Guest
+browser-session history has `id`, `share_id`, `name`, `role`, `address`, `browser`,
+`joined_at`, `last_seen`, `revoked`. Times are RFC3339. Addresses are socket peer
+addresses, not trusted forwarding headers; names identify links, not verified
+people. The UI calls a session active when last seen within 15 seconds. History
+is bounded to 256 entries and lasts only for this `serve` run.
+
+Session details also include `page_opens` (console opens/reloads), `requests`
+(authenticated guarded requests, including polls), `denied_requests` (valid
+credentials blocked by role), `actions` (accepted service operations),
+`last_request` (method + route template only), optional `revoked_at`, and
+optional `last_action: {operation,services,outcome,started_at,finished_at?}`.
+Action outcomes are `running`, `completed` or `failed`, taken from the actual
+supervisor result, not HTTP status (a failed start can return HTTP 200).
+Only the latest action is retained, with no request bodies, query strings,
+operation error contents or activity history. Previously accepted actions may
+complete after revocation and their result remains visible.
+
+Sessions are scoped by browser cookie **and share ID**: same-link tabs group
+together, while different links in one browser retain independent counters.
+The public session ID is opaque and does not expose the browser cookie. Bare
+API clients without that browser cookie are not attributed to a browser
+session. Browser/OS names in the UI are parsed from the unverified User-Agent,
+with the original report in expandable connection details. The UI provides
+search, status filters, active-first cards and an observed span that may include
+offline gaps—not a measure of continuous human activity. Existing card nodes,
+expanded details and ordinary button focus survive automatic refreshes.
+
+```sh
+curl -H "X-Mabo-Ctl-Token: $TOKEN" "$BASE/api/access"
+```
+
+### `POST /api/access/token`
+
+Operator only, header required. Body `{token: "new-operator-token"}`; blank
+generates a cryptographically random token. Returns `{token: "..."}` and sets
+the replacement HttpOnly session cookie. The new token must differ, satisfy the
+normal access-key alphabet/minimum (4), and be at most 256 characters. All old
+operator credentials, shares and their open streams are invalidated. Runtime
+only: does not edit YAML or CLI flags; configured credentials apply again on
+restart or subsequent configuration changes. Previously shared tokens cannot
+become operator tokens. Never log this response or commit the key.
+
+```sh
+curl -X POST -H "X-Mabo-Ctl-Token: $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"token":"replacement-operator-token"}' "$BASE/api/access/token"
+```
+
+### `POST /api/access/shares`
+
+Operator only. Body `{name: "Alice", role: "read", token: "optional-custom-token"}`.
+Name: 1–80 characters on one line. Custom tokens: 16–256 characters from
+`A–Z a–z 0–9 . _ ~ -`; blank generates 32 random bytes in hex. **201** returns
+`{share: {id,name,role,created_at}, token: "..."}`; the secret is returned only
+here. Build the URL using the browser's reachable origin plus `/?token=...`.
+Sharing does not expose the loopback listener, add a trusted origin, or create
+a tunnel. Use an existing explicitly trusted HTTPS origin for remote access.
+Maximum 32 active links and 128 creations per run (**429**). Operator and
+previously used share tokens cannot be reused (**409**). Links die with `serve`.
+
+```sh
+curl -X POST -H "X-Mabo-Ctl-Token: $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"name":"Alice","role":"view"}' "$BASE/api/access/shares"
+```
+
+### `POST /api/access/shares/{id}/revoke`
+
+Operator only. Returns `{ok:true}` or **404** for an unknown/revoked share.
+Invalidates the token and its cookies immediately, cancels its SSE streams,
+and marks its guest sessions revoked. Existing pages detect denial on their
+next status/mirror poll and navigate to the unlock screen. Revocation cannot
+undo service actions already accepted or erase information already copied.
+Everyone using the same link loses access; use one link per person to revoke
+independently.
+
+```sh
+curl -X POST -H "X-Mabo-Ctl-Token: $TOKEN" "$BASE/api/access/shares/$ID/revoke"
+```
+
+### `GET /api/mirror`
+
+Operator or `view` only. Returns the current presentation state (below).
+`active` is false if no publishing tab has updated it within five seconds.
+VIEW polls every 100ms, following the selected service, tab, merged mode, text
+and severity filters, pause/follow state, proportional log scroll, separators,
+font size and metadata disclosure. Logs themselves use the ordinary scoped SSE
+streams: this is synchronized presentation, **not screen/video sharing**, and
+buffer history and line wrapping can differ between browsers. Terminal content,
+security forms, credentials and clipboard contents are never mirrored.
+VIEW also shows the operator's cursor and a brief primary-click ripple. These
+are visual overlays (`pointer-events:none`), **never replayed input**. Only the
+latest position and recent click are retained in memory, not a movement/click
+history. Positions are normalized within known console regions; different
+layouts may not align pixel-for-pixel. Tracking excludes security settings,
+terminal contents, the API iframe, and anything outside this console.
+
+```sh
+curl -H "X-Mabo-Ctl-Token: $VIEW_TOKEN" "$BASE/api/mirror"
+```
+
+### `POST /api/mirror`
+
+Operator only. Body and GET response fields:
+`source` (non-secret tab identifier, 1–80 bytes), `active`, `takeover` (POST
+only), `updated_at` (server set), `service`, `tab` (`output`, `config`, `api`),
+`config_section` (`overview` or `services` on reads; private `sharing`/`security`
+publish values are normalized to `overview`, with pointer/click state suppressed
+while that private section is open), `all`, `filter` (max 512 bytes, redacted), `level` (`""`, `error`, `warn`, `info`,
+`debug`), `paused`, `follow`, `scroll` (0–1), `separators`, `font_size` (10–18),
+`details`, optional `pointer: {region,x,y}`, and optional
+`click: {point:{region,x,y},sequence}`. Coordinates are 0–1 relative to a
+known region: `sidebar`, `tabs`, `output`, `cfg-source`, `cfg-ports`, or
+`cfg-services`. Arbitrary selectors and private regions are rejected. Click
+sequence is a positive integer at most 9007199254740991, used only to avoid
+repeating a ripple. Clients publish pointer changes at most 10 times per
+second, idle state every 500ms, and recent clicks for at most 1.2 seconds.
+The server clears pointer/click state for inactive or terminal broadcasts,
+and excludes it from stale broadcasts. Pointer/click payloads contain no element
+text, form values or input events (the existing `filter` field still mirrors
+the log search). The server coerces `terminal` to `output` rather than broadcasting a
+shell. An active publisher owns a five-second lease; another source receives
+**409** unless `takeover:true`. The CONFIG checkbox takes over explicitly.
+Creating a VIEW link enables broadcasting in that operator tab. Closing it or
+disabling broadcast leaves viewers waiting; it does not revoke the link.
+
+```sh
+curl -X POST -H "X-Mabo-Ctl-Token: $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"source":"operator-tab","active":true,"service":"frontend","tab":"output","font_size":12,"follow":true}' \
+  "$BASE/api/mirror"
+```
 
 ### `GET /`
 
@@ -479,7 +629,28 @@ curl -s -X POST \
 
 ### `POST /api/config/reload`
 
-Apply the latest validated `mabo-ctl.yaml` without restarting running services.
+Apply `mabo-ctl.yaml` as it now reads on disk — the edit the console announced
+on `/api/events` with `config change detected; reload configuration?`.
+
+- A **running** service whose command, directory, environment (an `env_file`
+  included), port or `tty` changed is stopped under its old definition and
+  started under its new one. A dependency it needs that is down is started too.
+- A **running** service the file no longer declares is stopped.
+- **Every other service keeps running, untouched.** A colour, probe, `open`,
+  `ready_timeout`, `depends_on`, `autostart` or hook edit restarts nothing; the
+  new value applies from here on. Adding or removing a service does not restart
+  its siblings.
+- A port edited in the file is adopted for that service even though
+  `.mabo-ctl/run.env` pinned the old one; other services keep their pinned port.
+- A service a reload stopped and could not start again is started by the next
+  reload.
+- `console_access_key` replaces the session key at once unless the console was
+  started with `--access-key`; the old key, its cookie and every stream it
+  opened stop working. A `console_addr` edit applies when `serve` restarts.
+
+The reload runs to completion even if the client disconnects: one abandoned half
+way leaves services stopped that nothing starts again. Progress is published on
+`/api/events` as it happens.
 
 **Auth:** Token header required.
 
@@ -491,13 +662,32 @@ curl -s -X POST \
 
 **Request body:** none.
 
-**Response** `200 OK`:
+**Response** `200 OK` — the new configuration is in force:
 
 ```json
-{"ok": true}
+{
+  "ok": false,
+  "error": "services did not start: worker",
+  "stopped": ["legacy"],
+  "restarted": ["backend", "worker"],
+  "events": [
+    {"service": "worker", "phase": "failed", "msg": "failed: process died\n..."}
+  ]
+}
 ```
 
-**Errors:** `422` when the edited configuration cannot be loaded, validated or resolved. The previous configuration remains active.
+`ok` is `true` when every affected service was stopped and started cleanly. When
+it is `false`, `error` names what failed and `events` says why; like a start
+that fails, that is an outcome of the request, not an HTTP error.
+
+**Errors:**
+
+| Status | Body | When |
+|--------|------|------|
+| `409` | `{"error": "…"}` | A start, stop or restart is in progress; the reload was not attempted |
+| `422` | `{"error": "…"}` | Nothing was applied: the file did not load, validate or resolve, a service it needs cannot run, or a removed service survived its stop. The previous configuration remains in force |
+
+Start, stop and restart answer `409` while a reload runs, for the same reason.
 
 ---
 
@@ -549,7 +739,10 @@ limit.
 
 | Status | Body | When |
 |--------|------|------|
+| `409` | `{"error": "configuration reload in progress…"}` | A configuration reload is running; retry when it finishes |
 | `429` | `{"error": "too many operations in flight…"}` | Concurrency limit reached |
+
+Every start, stop and restart route answers `409` while a reload runs.
 
 ---
 
@@ -568,6 +761,36 @@ curl -s -X POST \
 **Request body:** none.
 
 **Response** `200 OK` — same shape as `/api/start-all` with `operation: "stop"`.
+
+---
+
+### `POST /api/restart-all`
+
+Restart every service that is running now (`running`, `ready`, `slow` or
+`degraded`). Stopped, failed and exited services are left alone, and the
+services are named explicitly, so `autostart: false` does not change what is
+restarted.
+
+**Auth:** Token header required.
+
+```bash
+curl -s -X POST \
+  -H 'X-Mabo-Ctl-Token: YOUR_TOKEN' \
+  http://127.0.0.1:7999/api/restart-all | jq
+```
+
+**Request body:** none.
+
+**Response** `200 OK` — same shape as `/api/start-all` with
+`operation: "restart"` and `services` naming the services that were running.
+
+**Errors:**
+
+| Status | Body | When |
+|--------|------|------|
+| `409` | `{"error": "nothing is running, so there is nothing to restart"}` | No service is running |
+| `409` | `{"error": "configuration reload in progress…"}` | A configuration reload is running |
+| `429` | `{"error": "too many operations in flight…"}` | Concurrency limit reached |
 
 ---
 
@@ -593,6 +816,7 @@ and `services: ["{svc}"]`.
 | Status | Body | When |
 |--------|------|------|
 | `404` | `{"error": "unknown service", "valid": [...]}` | `{svc}` not in the declared set |
+| `409` | `{"error": "configuration reload in progress…"}` | A configuration reload is running |
 | `429` | `{"error": "too many operations in flight…"}` | Concurrency limit reached |
 
 ---
@@ -626,6 +850,121 @@ curl -s -X POST \
 ```
 
 **Response** — same shape as `/api/{svc}/start` with `operation: "restart"`.
+
+---
+
+## Terminal routes
+
+The console's Terminal tab runs interactive login shells (`$SHELL -l`, falling
+back to `/bin/sh`) on a pty in the repository root, as the user running
+mabo-ctl, with `TERM=xterm-256color`. A shell can run anything, so these
+routes are held to more than the rest of the API:
+
+- **Opt-in.** They exist only when serve was started with `--terminal` or the
+  config sets `console_terminal: true`. Otherwise every one answers `404`.
+- **Loopback only.** `serve --terminal` refuses a non-loopback bind, and each
+  request must name the loopback address itself in `Host` and, when it sends
+  one, in `Origin`, and must carry none of the headers a relaying proxy adds
+  (`Forwarded`, `X-Forwarded-For`, `X-Forwarded-Host`, `X-Real-Ip`,
+  `Cf-Connecting-Ip`). A browser reaching the console through `--allow-origin`
+  (a tunnel, a LAN name) gets `403` here while every other route works.
+- **Bounded.** At most 16 terminals are open at once; opening another answers
+  `429`.
+- The usual guards still apply first: session for reads, token header for
+  POSTs.
+
+A terminal outlives the browser tab that opened it and keeps the last 1 MiB of
+output as scrollback. It ends when its shell exits — even if a process the
+shell detached into its own session still holds the pty — when it is closed,
+or when serve stops (SIGHUP to its session, then SIGKILL after 2 seconds).
+The page follows OSC 8 hyperlinks in terminal output only for `http`/`https`,
+in a window with no handle back to the console.
+
+### `GET /api/terminals`
+
+The open terminals, oldest first.
+
+**Auth:** Session.
+
+**Response** `200 OK`:
+
+```json
+[{"id": "1", "pid": 48121, "started_at": "2026-10-31T20:14:03Z"}]
+```
+
+### `POST /api/terminals`
+
+Open a new shell.
+
+**Auth:** Token header required.
+
+```bash
+curl -s -X POST -H 'X-Mabo-Ctl-Token: YOUR_TOKEN' \
+  -d '{"cols": 120, "rows": 40}' http://127.0.0.1:7999/api/terminals
+```
+
+**Request body:** `{"cols": N, "rows": N}` — clamped to 2–1000 × 2–500.
+
+**Response** `200 OK` — one terminal, shaped as in the list above; `429` when
+16 are already open.
+
+### `GET /api/terminals/{id}/stream`
+
+SSE: the terminal's scrollback as one frame, then its live output, then an end
+frame when its shell exits. Output is base64 because pty output is bytes, not
+necessarily UTF-8 at a frame boundary.
+
+**Auth:** Session.
+
+```sse
+data: {"data": "bWFib0BkZXYgfiAlIA==", "replay": true}
+
+data: {"data": "bHMK"}
+
+data: {"end": true}
+```
+
+Every connection replays the scrollback, so a client resets its screen on
+open. The scrollback frame is marked `"replay": true`, and a client must not
+send anything its emulator generates while rendering it: the scrollback holds
+queries programs sent earlier (device attributes, colour reports, mode
+requests), and answering them again types the answers into the shell. A client that falls far behind is disconnected without an end frame and
+reconnects.
+
+### `POST /api/terminals/{id}/input`
+
+Type into a terminal.
+
+**Auth:** Token header required.
+
+**Request body:** `{"data": "ls -la\r"}` — up to 1 MiB per request.
+
+**Response** `204 No Content`; `404` for an unknown terminal, `410` when it
+has ended. Accepted input is not written to the audit log; refusals are.
+
+### `POST /api/terminals/{id}/resize`
+
+**Auth:** Token header required.
+
+**Request body:** `{"cols": N, "rows": N}`.
+
+**Response** `204 No Content`.
+
+### `POST /api/terminals/{id}/close`
+
+Hang up a terminal: SIGHUP to its session, then SIGKILL if it is still there
+after 2 seconds.
+
+**Auth:** Token header required.
+
+**Response** `204 No Content`; `404` for an unknown terminal.
+
+### `GET /assets/xterm.js`
+
+The embedded terminal emulator the Terminal tab loads: xterm.js 6.0.0 with its
+fit and web-links addons, vendored verbatim under their MIT licence.
+
+**Auth:** Session.
 
 ---
 
@@ -840,6 +1179,10 @@ All SSE routes share these conventions:
 - **Data is JSON** on a single `data:` line (no raw newlines possible)
 - **Heartbeats** are SSE comments (`: heartbeat`) at a fixed interval
 - **Reconnect** hint: 2 seconds
+- **Write deadline:** one write that cannot complete within 15 seconds ends
+  the stream, so a peer that stops reading cannot pin a handler forever. There
+  is no overall response timeout — a stream may legitimately stay open for
+  hours.
 
 When a stream ends (service stopped, tail returned, server shutting down), the
 handler sends an end event and closes the connection.

@@ -23,10 +23,6 @@
           }
         ],
         "properties": {
-          "name": {
-            "description": "Check name, shown in preflight output.",
-            "type": "string"
-          },
           "command": {
             "description": "Run this argv; exit 0 passes. Exactly one of command/tcp.",
             "items": {
@@ -35,12 +31,16 @@
             "minItems": 1,
             "type": "array"
           },
-          "tcp": {
-            "description": "Dial host:port. Exactly one of command/tcp. What counts as passing is set by expect:.",
-            "type": "string"
-          },
           "expect": {
             "description": "What the tcp: target should look like when the check passes: \"listening\" (default — a connection succeeds) or \"free\" (the connection is refused). Meaningless with command:. When \"free\" fails, preflight names whoever holds the port.",
+            "type": "string"
+          },
+          "name": {
+            "description": "Check name, shown in preflight output.",
+            "type": "string"
+          },
+          "tcp": {
+            "description": "Dial host:port. Exactly one of command/tcp. What counts as passing is set by expect:.",
             "type": "string"
           }
         },
@@ -50,6 +50,18 @@
         "type": "object"
       },
       "type": "array"
+    },
+    "console_access_key": {
+      "description": "Access key for `mabo-ctl serve`; must be at least 4 URL-safe characters. `--access-key` overrides it. Empty or absent means generate a random key for this run.",
+      "type": "string"
+    },
+    "console_addr": {
+      "description": "Address \"host:port\" that `mabo-ctl serve` binds when no --addr is given, e.g. \"127.0.0.1:9000\". Default 127.0.0.1:7999. A non-loopback host still needs --i-know-this-is-dangerous at serve time.",
+      "type": "string"
+    },
+    "console_terminal": {
+      "description": "Enable the web console's Terminal tab: interactive shells in the repository root, running as you. Loopback consoles only. `serve --terminal` enables it for one run. Default false.",
+      "type": "boolean"
     },
     "ready_timeout": {
       "description": "How long a readiness probe polls before a service is slow, then degraded. Default 30s. Accepts \"10s\", \"1m30s\", \"500ms\" or a bare number of seconds.",
@@ -78,12 +90,15 @@
             "description": "Terminal colour for this service's label: a name (green, blue, bright-cyan, …), a 0-255 palette number, or #rrggbb.",
             "type": "string"
           },
-          "tty": {
-            "description": "Run this service on a pty owned by mabo-ctl's terminal broker and enable `mabo-ctl attach <name>`. Default false: the default /dev/null stdin is what keeps consoles safe.",
-            "type": "boolean"
-          },
           "depends_on": {
             "description": "Services that start first. Orders STARTS only — stop never expands dependencies.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "depends_ready_on": {
+            "description": "Subset of depends_on that must reach phase ready before this service starts. Every name must also be in depends_on.",
             "items": {
               "type": "string"
             },
@@ -142,13 +157,48 @@
               }
             ]
           },
+          "hooks": {
+            "additionalProperties": false,
+            "description": "Lifecycle hook argvs. Same dir and resolved env as the service; run directly, no shell.",
+            "properties": {
+              "post_start": {
+                "description": "Argv run once the service is settled. Failing it is recorded, never fatal.",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "post_stop": {
+                "description": "Argv run after the process group is confirmed dead. Never fatal.",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "pre_start": {
+                "description": "Argv run after the start claim, before the service spawns. Failing it fails the start.",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "pre_stop": {
+                "description": "Argv run before any signal. Failing it never blocks the stop.",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "type": "object"
+          },
           "name": {
-            "description": "Required. Must match the pattern: the name composes .mabo-ctl/logs/<name>.log and .mabo-ctl/pids/<name>.pid, so / or .. would write outside .mabo-ctl/.",
+            "description": "Required. Must match the pattern: the name composes .mabo-ctl/logs/\u003cname\u003e.log and .mabo-ctl/pids/\u003cname\u003e.pid, so / or .. would write outside .mabo-ctl/.",
             "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]*$",
             "type": "string"
           },
           "open": {
-            "description": "URL or path `mabo-ctl open` prefers over the derived origin. A path such as /docs joins against http://localhost:<port>; an absolute http(s) URL is opened as-is. Templates allowed.",
+            "description": "URL or path `mabo-ctl open` prefers over the derived origin. A path such as /docs joins against http://localhost:\u003cport\u003e; an absolute http(s) URL is opened as-is. Templates allowed.",
             "type": "string"
           },
           "port": {
@@ -156,6 +206,13 @@
             "maximum": 65535,
             "minimum": 0,
             "type": "integer"
+          },
+          "profiles": {
+            "description": "Profile names this service belongs to. With --profile or MABO_PROFILE active, a service with a non-empty list runs only when a name overlaps; an absent list always runs.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           },
           "ready_timeout": {
             "description": "This service's own readiness window, overriding the global. Leave out to inherit. Accepts \"10s\", \"1m30s\", \"500ms\" or a bare number of seconds.",
@@ -165,8 +222,12 @@
             ]
           },
           "runtime": {
-            "description": "\"\", \"system\", \"conda:<env>\" or \"node:<version>\". Resolves cmd[0] to an absolute interpreter path; never falls back to ambient PATH.",
+            "description": "\"\", \"system\", \"conda:\u003cenv\u003e\" or \"node:\u003cversion\u003e\". Resolves cmd[0] to an absolute interpreter path; never falls back to ambient PATH.",
             "type": "string"
+          },
+          "tty": {
+            "description": "Run this service on a pty owned by mabo-ctl's terminal broker and enable `mabo-ctl attach \u003cname\u003e`. Default false: the default /dev/null stdin is what keeps consoles safe.",
+            "type": "boolean"
           }
         },
         "required": [
@@ -191,7 +252,7 @@
             "type": "array"
           },
           "name": {
-            "description": "Shell name for `mabo-ctl shell <name>`.",
+            "description": "Shell name for `mabo-ctl shell \u003cname\u003e`.",
             "type": "string"
           },
           "service": {

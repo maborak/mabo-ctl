@@ -92,6 +92,6 @@ func AttachTTY(sockPath string, stdin *os.File, stdout io.Writer) error {
 
 	err = <-done
 	_ = conn.Close()
-	<-done // unblock the other pump; its next read/write fails on close
+	<-done //nolint:errcheck // The second pump's close error must not replace the detach result.
 	return err
 }

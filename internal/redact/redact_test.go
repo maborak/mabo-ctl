@@ -115,6 +115,19 @@ func TestIsSecret(t *testing.T) {
 	}
 }
 
+func TestValueWithholdsOnlyWhatIsSecretFlags(t *testing.T) {
+	t.Parallel()
+	if got := Value("API_TOKEN", "abc"); got != Mark {
+		t.Errorf("Value(API_TOKEN) = %q, want %q", got, Mark)
+	}
+	if got := Value("DATABASE_URL", "postgres://app:hunter2@db/app"); got != Mark {
+		t.Errorf("Value(credential URL) = %q, want %q", got, Mark)
+	}
+	if got := Value("LOG_LEVEL", "debug"); got != "debug" {
+		t.Errorf("Value(LOG_LEVEL) = %q, want the value itself", got)
+	}
+}
+
 func TestEnvIsSortedAndComplete(t *testing.T) {
 	t.Parallel()
 	got := Env(map[string]string{"ZED": "1", "ALPHA": "2", "MIDDLE_TOKEN": "3"})

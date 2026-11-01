@@ -6,10 +6,23 @@
 <meta name="referrer" content="no-referrer">
 <meta name="color-scheme" content="light dark">
 <title>mabo-ctl console</title>
-<!-- An empty data: icon. The server serves one page and no /favicon.ico, so
-     without this every load logs a 404 in the browser console — noise that
-     buries the errors a developer opened the console to find. -->
-<link rel="icon" href="data:,">
+<!-- The icon is inline: the server serves no /favicon.ico, and the CSP admits
+     data: images and nothing remote. Three service rows, two ready and one
+     slow — the console's own status list in miniature. -->
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231f5fd0'/%3E%3Ccircle cx='9' cy='9.5' r='2.7' fill='%2358d07c'/%3E%3Crect x='14' y='8' width='11' height='3' rx='1.5' fill='%23fff'/%3E%3Ccircle cx='9' cy='16' r='2.7' fill='%2358d07c'/%3E%3Crect x='14' y='14.5' width='11' height='3' rx='1.5' fill='%23fff'/%3E%3Ccircle cx='9' cy='22.5' r='2.7' fill='%23e5a53a'/%3E%3Crect x='14' y='21' width='8' height='3' rx='1.5' fill='%23fff'/%3E%3C/svg%3E">
+
+<script>
+  // The theme is resolved before first paint, so a dark-mode reader never sees
+  // a light flash. "system" follows prefers-color-scheme; the main script owns
+  // the toggle and keeps following the system while it is chosen.
+  (function () {
+    var pref = "system";
+    try { pref = window.localStorage.getItem("mabo-ctl.theme") || "system"; } catch (e) { /* no storage */ }
+    var dark = pref === "dark" || (pref !== "light" && !!window.matchMedia &&
+      window.matchMedia("(prefers-color-scheme: dark)").matches);
+    document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
+  }());
+</script>
 
 
 <!--
@@ -24,6 +37,7 @@
   over control of the stack.
 -->
 <meta name="mabo-ctl-token" content="{{.Token}}">
+<meta name="mabo-ctl-role" content="{{.Role}}">
 
 <!--
   Everything this page needs is in this file. No CDN, no web font, no remote
@@ -90,73 +104,76 @@
   --c-blue:    #2563c9;  --c-magenta: #a3369c;  --c-cyan:    #0f7c8a;
   --c-gray:    #6b7480;  --c-white:   #4a5560;  --c-black:   #2b333c;
 
-  --fs-xs:   11px;
-  --fs-sm:   12px;
-  --fs-mono: 12.5px;
-  --fs-base: 13.5px;
-  --fs-md:   15px;
-  --fs-lg:   18px;
-  --fs-xl:   21px;
+  --fs-xs:   10.5px;
+  --fs-sm:   11.5px;
+  --fs-mono: 12px;
+  --fs-base: 13px;
+  --fs-md:   14px;
+  --fs-lg:   17px;
+  --fs-xl:   20px;
+
+  --side-w:      380px;
+  --side-rail-w: 52px;
 
   --sp-1: 4px;  --sp-2: 8px;  --sp-3: 12px;
   --sp-4: 16px; --sp-5: 24px; --sp-6: 32px;
 
   --r-sm: 4px; --r-md: 7px; --r-lg: 10px;
 
-  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue",
-          Arial, "Noto Sans", sans-serif;
-  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas,
-          "Liberation Mono", "Courier New", monospace;
+  --font: Monaco, Menlo, Consolas, "Liberation Mono", monospace;
+  --mono: var(--font);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg:            #0b0e12;
-    --surface:       #14181e;
-    --surface-2:     #1a1f27;
-    --surface-3:     #232a34;
-    --log-bg:        #0a0d11;
-    --border:        #262d37;
-    --border-strong: #3a444f;
-    --text:          #e4e9ef;
-    --text-dim:      #9ba5b1;
-    --text-faint:    #6d7683;
-    --accent:        #6ba4ff;
-    --accent-soft:   #16233a;
-    --focus:         #6ba4ff;
-    --sel-bg:        #182338;
-    --sel-edge:      #6ba4ff;
-    --shadow:        0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+/* The theme is chosen by the script in <head>, which resolves "system" against
+   prefers-color-scheme before first paint and keeps following it. */
+:root { color-scheme: light; }
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg:            #0b0e12;
+  --surface:       #14181e;
+  --surface-2:     #1a1f27;
+  --surface-3:     #232a34;
+  --log-bg:        #0a0d11;
+  --border:        #262d37;
+  --border-strong: #3a444f;
+  --text:          #e4e9ef;
+  --text-dim:      #9ba5b1;
+  --text-faint:    #6d7683;
+  --accent:        #6ba4ff;
+  --accent-soft:   #16233a;
+  --focus:         #6ba4ff;
+  --sel-bg:        #182338;
+  --sel-edge:      #6ba4ff;
+  --shadow:        0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
 
-    --ph-ready:       #58d07c;
-    --ph-running:     #6ba4ff;
-    --ph-slow:        #e5a53a;
-    --ph-degraded:    #f0a05a;
-    --ph-stopped:     #8e99a6;
-    --ph-failed:      #f2837a;
-    --ph-exited:      #cf9bea;
-    --ph-unknown:     #8e99a6;
-    --ph-ready-bg:    #0f2a19;
-    --ph-running-bg:  #14233c;
-    --ph-slow-bg:     #2e2109;
-    --ph-degraded-bg: #331d0c;
-    --ph-stopped-bg:  #1e242c;
-    --ph-failed-bg:   #331512;
-    --ph-exited-bg:   #241430;
-    --ph-unknown-bg:  #1e242c;
+  --ph-ready:       #58d07c;
+  --ph-running:     #6ba4ff;
+  --ph-slow:        #e5a53a;
+  --ph-degraded:    #f0a05a;
+  --ph-stopped:     #8e99a6;
+  --ph-failed:      #f2837a;
+  --ph-exited:      #cf9bea;
+  --ph-unknown:     #8e99a6;
+  --ph-ready-bg:    #0f2a19;
+  --ph-running-bg:  #14233c;
+  --ph-slow-bg:     #2e2109;
+  --ph-degraded-bg: #331d0c;
+  --ph-stopped-bg:  #1e242c;
+  --ph-failed-bg:   #331512;
+  --ph-exited-bg:   #241430;
+  --ph-unknown-bg:  #1e242c;
 
-    --warn:          #e5a53a;
-    --warn-bg:       #2a1e08;
-    --warn-border:   #5c4413;
-    --danger:        #f2837a;
-    --danger-bg:     #2d1310;
-    --danger-border: #632923;
-    --ok:            #58d07c;
+  --warn:          #e5a53a;
+  --warn-bg:       #2a1e08;
+  --warn-border:   #5c4413;
+  --danger:        #f2837a;
+  --danger-bg:     #2d1310;
+  --danger-border: #632923;
+  --ok:            #58d07c;
 
-    --c-red:     #f2837a;  --c-green:   #58d07c;  --c-yellow:  #e5a53a;
-    --c-blue:    #6ba4ff;  --c-magenta: #dd8ad6;  --c-cyan:    #4fc7d8;
-    --c-gray:    #8e99a6;  --c-white:   #cbd3dc;  --c-black:   #7d8794;
-  }
+  --c-red:     #f2837a;  --c-green:   #58d07c;  --c-yellow:  #e5a53a;
+  --c-blue:    #6ba4ff;  --c-magenta: #dd8ad6;  --c-cyan:    #4fc7d8;
+  --c-gray:    #8e99a6;  --c-white:   #cbd3dc;  --c-black:   #7d8794;
 }
 
 *, *::before, *::after { box-sizing: border-box; }
@@ -332,8 +349,11 @@ button:active:not(:disabled) { transform: translateY(.5px); }
 button:disabled { opacity: .42; cursor: not-allowed; }
 
 button.primary { color: #fff; background: var(--accent); border-color: transparent; }
-@media (prefers-color-scheme: dark) { button.primary { color: #08111f; } }
-button.primary:hover:not(:disabled) { filter: brightness(1.08); }
+:root[data-theme="dark"] button.primary { color: #08111f; }
+/* Restated on hover: the generic hover rule above repaints the background
+   with a surface colour, which left the label white-on-grey in light mode and
+   dark-on-grey in dark mode. */
+button.primary:hover:not(:disabled) { background: var(--accent); filter: brightness(1.1); }
 
 button.ghost, a.ghost {
   background: transparent; border-color: var(--border); color: var(--text-dim);
@@ -398,23 +418,32 @@ input::placeholder { color: var(--text-faint); }
 .banner-in .why { color: var(--text-dim); }
 .banner[hidden] { display: none; }
 
-.activity-wrap { flex: none; position: relative; }
-.activity-wrap[hidden] { display: none; }
+.activity-wrap {
+  flex: none; border-bottom: 1px solid var(--border);
+  border-left: 2px solid var(--accent);
+  background: color-mix(in srgb, var(--surface-2) 55%, transparent);
+}
+.activity-head {
+  display: flex; align-items: center; gap: var(--sp-2);
+  padding: var(--sp-1) var(--sp-3); color: var(--accent);
+  font-family: var(--mono); font-size: 10px; letter-spacing: .08em;
+}
+.activity-head strong { font-weight: 600; }
+.activity-idle { color: var(--text-dim); letter-spacing: 0; }
 .activity {
-  margin: 0; padding: var(--sp-2) var(--sp-6) var(--sp-2) var(--sp-4);
-  max-height: 92px; overflow: auto;
-  border-bottom: 1px solid var(--border); background: var(--surface);
+  margin: 0; padding: 0 var(--sp-3);
+  max-height: 76px; overflow: auto; overscroll-behavior: contain;
 }
 .activity-clear {
-  position: absolute; top: 4px; right: var(--sp-3); z-index: 1;
+  margin-left: auto;
   padding: 0; width: 20px; height: 20px; line-height: 1;
   font-family: var(--mono); font-size: var(--fs-sm);
 }
 .op-line {
-  font-family: var(--mono); font-size: var(--fs-mono);
+  font-family: var(--mono); font-size: 11px;
   color: var(--text-dim); overflow-wrap: anywhere; padding: 1px 0;
 }
-.op-line .who { color: var(--text); font-weight: 600; }
+.op-line .who { color: var(--accent); font-weight: 400; }
 .op-line.err { color: var(--danger); }
 .op-line.ok  { color: var(--ok); }
 
@@ -426,11 +455,59 @@ main {
   display: flex; flex-direction: column; gap: var(--sp-3);
 }
 
+/* The app: the services sidebar, full height on the left, and one column
+   holding everything else. */
 .split {
   flex: 1 1 auto; min-height: 0;
-  display: grid; gap: var(--sp-3);
+  display: grid;
   grid-template-columns: 1fr;
 }
+.main-col { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.main-col, .sidebar { container-type: inline-size; }
+@container (max-width: 680px) {
+  .topbar .bar { flex-wrap: wrap; }
+  .topbar .where { flex: 1 1 100%; }
+}
+@container (max-width: 330px) {
+  .master .row, .master .row-head { grid-template-columns: 14px minmax(0, 1fr) 36px 34px; }
+  .master .c-pid, .master .c-up { display: none; }
+}
+
+.sidebar {
+  display: flex; flex-direction: column; min-width: 0; min-height: 0; position: relative;
+  background: var(--surface); border-right: 1px solid var(--border);
+  z-index: 21;
+}
+/* Heights match the header's two rows, so the sidebar's rules line up with
+   the header's: brand beside the first bar, Services beside the tabs. */
+.side-brand {
+  flex: none; height: 45px; padding: 0 var(--sp-3);
+  display: flex; align-items: center; gap: var(--sp-2);
+  border-bottom: 1px solid var(--border);
+}
+.mark {
+  flex: none; width: 20px; height: 20px; border-radius: 5px;
+  background: no-repeat center/100% url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231f5fd0'/%3E%3Ccircle cx='9' cy='9.5' r='2.7' fill='%2358d07c'/%3E%3Crect x='14' y='8' width='11' height='3' rx='1.5' fill='%23fff'/%3E%3Ccircle cx='9' cy='16' r='2.7' fill='%2358d07c'/%3E%3Crect x='14' y='14.5' width='11' height='3' rx='1.5' fill='%23fff'/%3E%3Ccircle cx='9' cy='22.5' r='2.7' fill='%23e5a53a'/%3E%3Crect x='14' y='21' width='8' height='3' rx='1.5' fill='%23fff'/%3E%3C/svg%3E");
+}
+.sidebar .master {
+  flex: 1 1 auto; border: 0; border-radius: 0; box-shadow: none; background: transparent;
+}
+.sidebar .master > .panel-head { height: 41px; }
+.topbar .bar:first-child { min-height: 44px; }
+.topbar .tabs-bar { min-height: 41px; }
+/* Both header rows stay one line, so they keep lining up with the sidebar:
+   the paths give way first (they ellipsise, with the full value on hover),
+   and the phase tiles scroll sideways rather than wrapping. */
+@media (min-width: 760px) {
+  .topbar .bar { flex-wrap: nowrap; }
+  .topbar .where { flex: 1 1 0; }
+  .tabs-bar .tiles { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .tabs-bar .tiles::-webkit-scrollbar { display: none; }
+  .tabs-bar .tile { flex: none; }
+}
+/* Right of the sidebar: one tab's view at a time, filling the column. */
+.stage { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.stage > .panel { flex: 1 1 auto; min-height: 0; }
 
 .panel {
   background: var(--surface);
@@ -488,28 +565,32 @@ main {
 
 .svc-list { flex: 1 1 auto; min-height: 0; overflow: auto; scrollbar-gutter: stable; }
 
+/* The name is the column a reader scans, so it takes every pixel the others do
+   not need; the rest are small, fixed and right-aligned. The phase is a glyph in
+   the phase colour, with the word in the tooltip and the aria-label — never the
+   colour alone. The actions float over the right edge on hover and focus. */
 .row, .row-head {
   display: grid;
   grid-template-columns:
-    [phase] 74px [name] minmax(72px, 1fr) [port] 44px
-    [pid] 50px [up] 62px [hl] 52px [act] 82px;
+    [phase] 14px [name] minmax(0, 1fr) [port] 36px [pid] 38px [up] 46px [hl] 34px;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   padding: 0 var(--sp-2) 0 var(--sp-3);
 }
 
 .row-head {
   position: sticky; top: 0; z-index: 2;
-  height: 24px;
+  height: 20px;
   background: var(--surface-2);
   border-bottom: 1px solid var(--border);
-  font-size: 10px; font-weight: 700; letter-spacing: .05em;
+  font-size: 9.5px; font-weight: 700; letter-spacing: .05em;
   text-transform: uppercase; color: var(--text-faint);
 }
-.row-head .cell { overflow: hidden; text-overflow: ellipsis; font-family: var(--font); }
+.row-head .cell { overflow: hidden; text-overflow: ellipsis; font-family: var(--font); font-size: inherit; }
 
 .row {
-  min-height: 32px;
+  position: relative;
+  min-height: 28px;
   border-bottom: 1px solid var(--border);
   border-left: 3px solid transparent;
   padding-left: calc(var(--sp-3) - 3px);
@@ -538,14 +619,16 @@ main {
 .acc-black   { --svc-accent: var(--c-black); }
 
 .cell {
-  min-width: 0; font-family: var(--mono); font-size: var(--fs-mono);
+  min-width: 0; font-family: var(--mono); font-size: var(--fs-xs);
   color: var(--text-dim); font-variant-numeric: tabular-nums;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .c-name {
-  color: var(--svc-accent); font-weight: 650; font-size: var(--fs-base);
-  letter-spacing: -.01em;
+  color: var(--svc-accent); font-weight: 650; font-size: 12.5px;
+  letter-spacing: -.02em;
 }
+.row .ph .w { display: none; }
+.row .ph .g { font-size: 13px; }
 .c-port, .c-pid, .c-up { text-align: right; }
 .cell.dim { color: var(--text-faint); }
 
@@ -566,8 +649,8 @@ main {
 /* Readiness probe result, as a word or a code — never a bare colour. */
 .hl {
   display: inline-block; min-width: 100%; text-align: center;
-  font-size: 10.5px; font-weight: 700; font-family: var(--mono);
-  padding: 1px 0; border-radius: var(--r-sm);
+  font-size: 9.5px; font-weight: 700; font-family: var(--mono);
+  padding: 0; border-radius: var(--r-sm);
   border: 1px solid currentColor;
 }
 .hl-ok   { color: var(--ok);         background: var(--ph-ready-bg); }
@@ -576,13 +659,17 @@ main {
 .hl-none { color: var(--text-faint); background: var(--surface-2); border-style: dashed; }
 
 .c-act {
-  display: flex; gap: 3px; justify-content: flex-end; overflow: visible;
-  opacity: 0; transition: opacity .1s ease;
+  position: absolute; right: var(--sp-1); top: 50%; transform: translateY(-50%);
+  display: flex; gap: 3px; overflow: visible; padding: 2px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--r-md); box-shadow: var(--shadow);
+  opacity: 0; pointer-events: none; transition: opacity .1s ease;
 }
 .row:hover .c-act,
-.row:focus-within .c-act,
-.row[aria-selected="true"] .c-act { opacity: 1; }
-@media (hover: none) { .c-act { opacity: 1; } }
+.row:focus-within .c-act { opacity: 1; pointer-events: auto; }
+/* Without hover the overlay would cover the row for good; the detail pane
+   carries the same buttons. */
+@media (hover: none) { .c-act { display: none; } }
 
 .iconbtn {
   font-family: var(--mono); font-size: 11px; font-weight: 700;
@@ -594,6 +681,192 @@ main {
   padding: var(--sp-5) var(--sp-4); text-align: center;
   color: var(--text-faint); font-size: var(--fs-sm);
 }
+
+/* --- sidebar: collapse to a rail of phase glyphs -------------------------- */
+
+.side-toggle { flex: none; font-family: var(--mono); width: 24px; padding: 2px 0; }
+
+.split.rail .master .panel-head { justify-content: center; padding: var(--sp-2) 0; }
+.split.rail .side-brand { justify-content: center; padding: 0; }
+.split.rail .side-brand h1,
+.split.rail .side-brand .sub { display: none; }
+.split.rail .master .panel-head h2,
+.split.rail .master .filter-wrap,
+.split.rail .master .side-refresh,
+.split.rail .master .row-head,
+.split.rail .master .hints,
+.split.rail .master .list-empty { display: none; }
+.split.rail .svc-list { scrollbar-width: none; }
+.split.rail .svc-list::-webkit-scrollbar { display: none; }
+.split.rail .row {
+  display: flex; justify-content: center;
+  min-height: 34px; padding: 0;
+}
+.split.rail .row .cell:not(.c-phase) { display: none; }
+.split.rail .row .ph .g { font-size: 16px; }
+
+/* One floating card for the whole list, filled from the row under the pointer
+   or the keyboard focus while the list is a rail. */
+.svc-tip {
+  position: fixed; z-index: 60; pointer-events: none;
+  min-width: 170px; max-width: 300px;
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--surface); color: var(--text);
+  border: 1px solid var(--border-strong); border-left: 3px solid var(--svc-accent, var(--c-gray));
+  border-radius: var(--r-md); box-shadow: var(--shadow);
+  font-size: var(--fs-xs);
+}
+.svc-tip .tip-name {
+  font-family: var(--mono); font-weight: 650; font-size: var(--fs-sm);
+  color: var(--svc-accent, var(--text)); overflow-wrap: anywhere;
+}
+.svc-tip .ph { margin: 2px 0 var(--sp-1); }
+.svc-tip dl {
+  display: grid; grid-template-columns: auto 1fr; gap: 1px var(--sp-3); margin: 0;
+}
+.svc-tip dt { color: var(--text-faint); text-transform: uppercase; letter-spacing: .06em; font-size: 9.5px; align-self: center; }
+.svc-tip dd { margin: 0; font-family: var(--mono); color: var(--text-dim); overflow-wrap: anywhere; }
+
+/* --- theme toggle --------------------------------------------------------- */
+
+.theme-toggle { flex: none; }
+.theme-toggle .g { font-family: var(--mono); margin-right: 4px; }
+
+.side-refresh { flex: none; font-family: var(--mono); width: 24px; padding: 2px 0; }
+
+/* --- tabs ----------------------------------------------------------------- */
+
+.tabs-bar { padding-top: 0; padding-bottom: 0; align-items: stretch; }
+.tabs { display: flex; gap: 2px; flex: none; align-self: stretch; }
+.tab {
+  border: 0; border-bottom: 2px solid transparent; border-radius: 0;
+  background: transparent; color: var(--text-dim);
+  padding: var(--sp-2) var(--sp-3); font-size: var(--fs-sm); font-weight: 650;
+  letter-spacing: .04em; text-transform: uppercase;
+}
+.tab:hover:not(:disabled) { background: var(--surface-2); color: var(--text); }
+.tab[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); }
+.tab-badge {
+  display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 999px;
+  font-family: var(--mono); font-size: 10px; font-weight: 700; line-height: 16px;
+  letter-spacing: 0; text-transform: none; vertical-align: 1px;
+  color: var(--accent); background: var(--accent-soft);
+}
+#badge-output { color: var(--warn); background: var(--warn-bg); }
+.tabs-bar .tiles, .tabs-bar .total, .tabs-bar .where { align-self: center; }
+.tabs-bar .tiles { padding: 4px 0; }
+
+.tabview { flex: 1 1 auto; min-height: 0; }
+.api-frame { flex: 1 1 auto; width: 100%; min-height: 70vh; border: 0; background: var(--surface); }
+@media (min-width: 760px) and (min-height: 560px) {
+  .api-frame, .term-body { min-height: 0; }
+}
+
+/* --- terminal ------------------------------------------------------------- */
+
+.term-head { gap: var(--sp-1); flex-wrap: wrap; }
+.term-tabs { display: flex; gap: 3px; flex-wrap: wrap; min-width: 0; }
+.term-tab {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-family: var(--mono); font-size: var(--fs-xs); font-weight: 600;
+  padding: 2px 4px 2px 9px; border-radius: var(--r-md);
+  border: 1px solid var(--border); background: var(--surface-2); color: var(--text-dim);
+}
+.term-tab[aria-selected="true"] { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+.term-tab.dead { text-decoration: line-through; opacity: .7; }
+.term-tab .x {
+  border: 0; background: transparent; padding: 0 4px; font-size: 13px; line-height: 1;
+  color: inherit; opacity: .7;
+}
+.term-tab .x:hover:not(:disabled) { opacity: 1; background: var(--surface-3); }
+.term-body { position: relative; flex: 1 1 auto; min-height: 360px; background: #1e1b4b; }
+/* Inset, never padded: xterm's fit addon sizes the grid from the parent's
+   height without subtracting the parent's padding, so a padded pane got a
+   grid 16px taller than its box and the last row — the prompt — was clipped
+   below the panel where no scroll could reach it. */
+.term-pane { position: absolute; inset: var(--sp-2); }
+.term-pane[hidden] { display: none; }
+.term-empty { margin: auto; padding: var(--sp-6); text-align: center; color: #a5b4fc; font-size: var(--fs-sm); }
+.resize-handle { touch-action: none; outline-offset: -2px; z-index: 30; }
+.resize-handle:hover, .resize-handle:focus-visible { background: var(--accent-soft); }
+.resize-handle:focus-visible { outline: 2px solid var(--focus); }
+.resize-handle::after { content: ""; display: block; background: var(--border-strong); }
+.sidebar-resizer { position: absolute; top: 0; bottom: 0; right: -4px; width: 8px; cursor: col-resize; }
+.sidebar-resizer::after { width: 2px; height: 100%; margin: 0 auto; }
+.split.rail .sidebar-resizer { display: none; }
+.output-resizer { cursor: row-resize; display: grid; place-items: center; }
+.output-resizer::after { height: 2px; width: 48px; }
+body.resizing { user-select: none; }
+body.resizing iframe { pointer-events: none; }
+.terminal-workspace {
+  flex: 1 1 auto; min-width: 0; min-height: 360px; display: grid;
+  grid-template-rows: minmax(160px, 1fr) 8px minmax(180px, var(--terminal-output-height, 220px));
+}
+.terminal-workspace > .tabview, .terminal-workspace .term-body { min-height: 0; }
+.terminal-output { display: flex; min-width: 0; min-height: 0; }
+.terminal-output > .detail { flex: 1 1 auto; }
+.terminal-output .detail-scroll { display: contents; }
+.terminal-output .detail-scroll > .facts, .terminal-output .service-config { display: none; }
+.terminal-output .detail-head { padding: 4px 8px; gap: 5px; flex-wrap: wrap; }
+.terminal-output .detail-head .svc-name { font-size: 12px; }
+.terminal-output .detail-head button, .terminal-output .log-bar button { font-size: 10px; padding: 2px 5px; }
+.terminal-output .log { min-height: 0; }
+.terminal-output .log-bar { padding: 4px 6px; gap: 4px; }
+.terminal-output .log-bar input, .terminal-output .log-bar label { font-size: 10px; }
+.terminal-output .log-bar .log-filter { flex-basis: 110px; width: 110px; }
+.terminal-output .activity { max-height: 42px; }
+.terminal-output .activity-head { padding: 2px 6px; font-size: 9px; }
+.terminal-output .op-line, .terminal-output .detail-line { font-size: 10px; }
+.terminal-output .detail-line { max-height: 3em; }
+.terminal-output .log-foot { font-size: 9px; }
+
+/* xterm.js's own stylesheet (@xterm/xterm 6.0.0, MIT), inlined because the
+   CSP admits no external sheet. */
+.xterm{cursor: text;position: relative;user-select: none;-ms-user-select: none;-webkit-user-select: none;}
+.xterm.focus, .xterm:focus{outline: none;}
+.xterm .xterm-helpers{position: absolute;top: 0;z-index: 5;}
+.xterm .xterm-helper-textarea{padding: 0;border: 0;margin: 0;position: absolute;opacity: 0;left: -9999em;top: 0;width: 0;height: 0;z-index: -5;white-space: nowrap;overflow: hidden;resize: none;}
+.xterm .composition-view{background: #000;color: #FFF;display: none;position: absolute;white-space: nowrap;z-index: 1;}
+.xterm .composition-view.active{display: block;}
+.xterm .xterm-viewport{background-color: #000;overflow-y: scroll;cursor: default;position: absolute;right: 0;left: 0;top: 0;bottom: 0;}
+.xterm .xterm-screen{position: relative;}
+.xterm .xterm-screen canvas{position: absolute;left: 0;top: 0;}
+.xterm-char-measure-element{display: inline-block;visibility: hidden;position: absolute;top: 0;left: -9999em;line-height: normal;}
+.xterm.enable-mouse-events{cursor: default;}
+.xterm.xterm-cursor-pointer, .xterm .xterm-cursor-pointer{cursor: pointer;}
+.xterm.column-select.focus{cursor: crosshair;}
+.xterm .xterm-accessibility:not(.debug), .xterm .xterm-message{position: absolute;left: 0;top: 0;bottom: 0;right: 0;z-index: 10;color: transparent;pointer-events: none;}
+.xterm .xterm-accessibility-tree:not(.debug) *::selection{color: transparent;}
+.xterm .xterm-accessibility-tree{font-family: var(--mono);user-select: text;white-space: pre;}
+.xterm .xterm-accessibility-tree > div{transform-origin: left;width: fit-content;}
+.xterm .live-region{position: absolute;left: -9999px;width: 1px;height: 1px;overflow: hidden;}
+.xterm-dim{opacity: 1 !important;}
+.xterm-underline-1{text-decoration: underline;}
+.xterm-underline-2{text-decoration: double underline;}
+.xterm-underline-3{text-decoration: wavy underline;}
+.xterm-underline-4{text-decoration: dotted underline;}
+.xterm-underline-5{text-decoration: dashed underline;}
+.xterm-overline{text-decoration: overline;}
+.xterm-overline.xterm-underline-1{text-decoration: overline underline;}
+.xterm-overline.xterm-underline-2{text-decoration: overline double underline;}
+.xterm-overline.xterm-underline-3{text-decoration: overline wavy underline;}
+.xterm-overline.xterm-underline-4{text-decoration: overline dotted underline;}
+.xterm-overline.xterm-underline-5{text-decoration: overline dashed underline;}
+.xterm-strikethrough{text-decoration: line-through;}
+.xterm-screen .xterm-decoration-container .xterm-decoration{z-index: 6;position: absolute;}
+.xterm-screen .xterm-decoration-container .xterm-decoration.xterm-decoration-top-layer{z-index: 7;}
+.xterm-decoration-overview-ruler{z-index: 8;position: absolute;top: 0;right: 0;pointer-events: none;}
+.xterm-decoration-top{z-index: 2;position: relative;}
+.xterm .xterm-scrollable-element > .scrollbar{cursor: default;}
+.xterm .xterm-scrollable-element > .scrollbar > .scra{cursor: pointer;font-size: 11px !important;}
+.xterm .xterm-scrollable-element > .visible{opacity: 1;background:rgba(0,0,0,0);transition: opacity 100ms linear;z-index: 11;}
+.xterm .xterm-scrollable-element > .invisible{opacity: 0;pointer-events: none;}
+.xterm .xterm-scrollable-element > .invisible.fade{transition: opacity 800ms linear;}
+.xterm .xterm-scrollable-element > .shadow{position: absolute;display: none;}
+.xterm .xterm-scrollable-element > .shadow.top{display: block;top: 0;left: 3px;height: 3px;width: 100%;box-shadow: var(--vscode-scrollbar-shadow, #000) 0 6px 6px -6px inset;}
+.xterm .xterm-scrollable-element > .shadow.left{display: block;top: 3px;left: 0;height: 100%;width: 3px;box-shadow: var(--vscode-scrollbar-shadow, #000) 6px 0 6px -6px inset;}
+.xterm .xterm-scrollable-element > .shadow.top-left-corner{display: block;top: 0;left: 0;height: 3px;width: 3px;}
+.xterm .xterm-scrollable-element > .shadow.top.left{box-shadow: var(--vscode-scrollbar-shadow, #000) 6px 0 6px -6px inset;}
 
 /* --- detail pane --------------------------------------------------------- */
 
@@ -655,6 +928,15 @@ main {
 .fact dd.dim { color: var(--text-faint); }
 .fact dd a { color: var(--accent); text-decoration: none; }
 .fact dd a:hover { text-decoration: underline; }
+.fact.health dd { display: flex; align-items: baseline; min-width: 0; }
+.fact.health .ell { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fact.health .http-code { flex: none; }
+.service-config > summary {
+  padding: var(--sp-2) var(--sp-3); cursor: pointer;
+  font-size: var(--fs-xs); color: var(--text-dim);
+  border-bottom: 1px solid var(--border);
+}
+.detail-scroll > .detail-line, .detail-scroll > .alert { margin: var(--sp-2) var(--sp-3); }
 
 .http-code {
   display: inline-block; margin-left: 6px; padding: 0 5px;
@@ -718,9 +1000,11 @@ ol.argv-list li code { color: var(--text); }
 }
 .alert b { color: var(--danger); }
 
-/* A detail is one line for most phases and a whole log tail for a service that
-   died, so newlines are preserved and the block is capped and scrolls rather
-   than pushing the log pane off the bottom of the page. */
+/* The detail is the explanation of the service's state, and for a dead service
+   that is only the first line: the log tail in the JSON belongs to the CLI,
+   and the log pane below is the console's one owner of it. Newlines are still
+   preserved in case an error message carries one, and the block is capped and
+   scrolls rather than pushing the log pane off the bottom of the page. */
 .detail-line {
   margin-top: var(--sp-2); padding: var(--sp-2) var(--sp-3);
   border-left: 2px solid var(--border-strong); background: var(--surface-2);
@@ -765,10 +1049,97 @@ ol.argv-list li code { color: var(--text); }
 .log-body {
   margin: 0; padding: var(--sp-2) 0;
   background: var(--log-bg);
-  font-family: var(--mono); font-size: var(--fs-mono); line-height: 1.5;
+  font-family: var(--mono); font-size: var(--log-font-size, 12px); line-height: 1.5;
   height: 300px; overflow: auto; overflow-wrap: anywhere;
 }
 .log-line { padding: 0 var(--sp-3); white-space: pre-wrap; color: var(--text); }
+.log-body.separated .log-line { padding-top: var(--sp-2); padding-bottom: var(--sp-2); }
+.log-body.separated .log-line + .log-line { border-top: 1px dashed var(--border-strong); }
+.log-separators {
+  display: inline-flex; align-items: center; gap: var(--sp-1);
+  font-size: var(--fs-xs); color: var(--text-dim); cursor: pointer;
+}
+.log-separators input { margin: 0; accent-color: var(--accent); }
+.log-font {
+  display: inline-flex; align-items: center; gap: var(--sp-1);
+  font-family: var(--mono); font-size: var(--fs-xs); color: var(--text-dim);
+}
+.log-font input { width: 72px; margin: 0; accent-color: var(--accent); }
+.log-font output { min-width: 4ch; }
+.access-form { display: flex; flex-wrap: wrap; gap: var(--sp-2); margin: var(--sp-2) 0; align-items: center; }
+.access-form input, .access-form select, .share-url {
+  min-width: 0; max-width: 100%; padding: 5px 8px;
+  background: var(--surface-2); color: var(--text); border: 1px solid var(--border);
+  border-radius: var(--r-sm); font: inherit;
+}
+.secret-input { -webkit-text-security: disc; }
+.share-url { width: 100%; font-family: var(--mono); font-size: var(--fs-xs); }
+.access-list { display: grid; gap: var(--sp-2); margin: var(--sp-2) 0; }
+.access-entry { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); overflow-wrap: anywhere; }
+.access-entry .why { flex: 1 1 240px; margin: 0; }
+.guest-tools { display: flex; flex-wrap: wrap; gap: var(--sp-2); align-items: center; margin: var(--sp-3) 0; }
+.guest-tools input { flex: 1 1 220px; min-width: 0; }
+.guest-tools input, .guest-tools select {
+  padding: 6px 8px; border: 1px solid var(--border); border-radius: var(--r-sm);
+  background: var(--surface-2); color: var(--text); font: inherit;
+}
+.guest-summary { color: var(--text-dim); font-size: var(--fs-xs); }
+.guest-card.access-entry { display: block; padding: var(--sp-3); border: 1px solid var(--border); border-radius: var(--r-md); background: var(--surface-2); }
+.guest-card[hidden] { display: none; }
+.guest-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
+.guest-head strong { font-size: var(--fs-sm); }
+.guest-head button { margin-left: auto; }
+.guest-id { font: var(--fs-xs) var(--mono); color: var(--text-faint); }
+.guest-role, .guest-status {
+  padding: 1px 6px; border: 1px solid var(--border-strong); border-radius: var(--r-sm);
+  font-size: 10px; font-weight: 600; text-transform: uppercase;
+}
+.guest-role { color: var(--accent); background: var(--accent-soft); }
+.guest-status.active { color: var(--ok); background: var(--ph-ready-bg); }
+.guest-status.offline { color: var(--text-dim); }
+.guest-status.revoked { color: var(--danger); background: var(--danger-bg); }
+.guest-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: var(--sp-2) var(--sp-3); margin: var(--sp-3) 0; }
+.guest-facts dd { font-size: var(--fs-xs); }
+.guest-action { padding: var(--sp-2); border-left: 2px solid var(--border-strong); background: var(--surface); font-size: var(--fs-xs); }
+.guest-action.running { border-color: var(--accent); }
+.guest-action.failed { border-color: var(--danger); }
+.guest-action.completed { border-color: var(--ok); }
+.guest-technical { margin-top: var(--sp-2); font-size: var(--fs-xs); }
+.guest-technical > summary { cursor: pointer; color: var(--text-dim); }
+.guest-agent { display: block; overflow-wrap: anywhere; white-space: pre-wrap; color: var(--text-dim); margin-top: var(--sp-2); }
+.access-banner {
+  flex: none; padding: var(--sp-2) var(--sp-4);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border-bottom: 1px solid var(--border); color: var(--text);
+  font-size: var(--fs-xs); backdrop-filter: blur(6px);
+}
+.access-banner[hidden] { display: none; }
+.mirror-cursor, .mirror-click {
+  position: fixed; top: 0; left: 0; z-index: 2000; pointer-events: none;
+}
+.mirror-cursor { color: var(--accent); transition: transform .12s linear; }
+.mirror-cursor::before {
+  content: "➤"; display: block; font-size: 24px; line-height: 1;
+  transform: rotate(-135deg); text-shadow: 0 0 2px var(--surface);
+}
+.mirror-cursor span {
+  position: absolute; top: 18px; left: 18px; padding: 2px 5px;
+  background: var(--surface); border: 1px solid var(--accent);
+  border-radius: var(--r-sm); color: var(--text); font-size: 10px;
+}
+.mirror-click {
+  width: 30px; height: 30px; border: 2px solid var(--accent); border-radius: 50%;
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+}
+.mirror-click.pulse { animation: mirror-pulse .65s ease-out forwards; }
+@keyframes mirror-pulse {
+  from { opacity: .95; scale: .5; }
+  to { opacity: 0; scale: 2; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mirror-cursor { transition: none; }
+  .mirror-click.pulse { animation: none; }
+}
 .log-line.meta { color: var(--text-faint); font-style: italic; }
 .log-line.err  { color: var(--danger); }
 /* Severity tints applied by detectLevel(); info keeps the default ink so a
@@ -779,9 +1150,12 @@ ol.argv-list li code { color: var(--text); }
 .log-line.ok        { color: var(--ok); }
 /* The severity chips sit between the text filter and the count. */
 .log-levels { display: inline-flex; gap: 2px; }
+.log-levels button::before { content: "✓ "; visibility: hidden; }
 .log-levels button.toggle[aria-pressed="true"] {
-  background: var(--surface-3); border-color: var(--border-strong); color: var(--text);
+  background: var(--accent); border-color: var(--accent); color: var(--bg);
+  font-weight: 700;
 }
+.log-levels button[aria-pressed="true"]::before { visibility: visible; }
 .log-empty {
   padding: var(--sp-4); color: var(--text-faint); text-align: center;
   font-family: var(--font); font-size: var(--fs-sm); font-style: italic;
@@ -810,34 +1184,31 @@ ol.argv-list li code { color: var(--text); }
 .placeholder h3 { margin: 0 0 var(--sp-2); font-size: var(--fs-md); color: var(--text); }
 .placeholder p { margin: 0; font-size: var(--fs-sm); }
 
-/* --- footer -------------------------------------------------------------- */
-
-footer {
-  flex: none;
-  padding: var(--sp-3) var(--sp-4);
-  color: var(--text-faint); font-size: var(--fs-xs);
-  border-top: 1px solid var(--border);
-  display: flex; gap: var(--sp-4); flex-wrap: wrap;
-}
-footer p { margin: 0; max-width: 62ch; }
-footer code { font-family: var(--mono); color: var(--text-dim); }
-
 /* --- config view ----------------------------------------------------------
    A SEPARATE view, not more rows in the service list. The master/detail layout
    exists so a five-service stack fits on one screen, and "why is backend on
    7999?" is a different question from "is backend up?" — answering both in one
-   list costs the answer to the second one. The Config button swaps the two
-   views; nothing about the default view moves.
+   list costs the answer to the second one. The Config tab swaps it in beside
+   the list; nothing about the list moves.
 
-   .split and .panel both set a display, and an author `display` beats the user
-   agent's [hidden] rule, so hiding either one needs saying explicitly. This is
-   the same reason .banner[hidden] exists above. */
-.split[hidden], .panel[hidden] { display: none; }
+   .panel sets a display, and an author `display` beats the user agent's
+   [hidden] rule, so hiding a tab's panel needs saying explicitly. This is the
+   same reason .banner[hidden] exists above. */
+.panel[hidden] { display: none; }
 
 .config { flex: 1 1 auto; }
 .cfg-body { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .cfg-body:focus { outline: none; }
 .cfg-note { font-family: var(--mono); font-size: var(--fs-xs); color: var(--text-faint); }
+.cfg-nav {
+  position: sticky; top: 0; z-index: 3; display: flex; flex-wrap: wrap; gap: var(--sp-1);
+  padding: var(--sp-2) var(--sp-3); background: var(--surface); border-bottom: 1px solid var(--border);
+}
+.cfg-nav button[aria-selected="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.cfg-intro { margin: 0; padding: var(--sp-3); color: var(--text-dim); font-size: var(--fs-sm); border-bottom: 1px solid var(--border); }
+.access-group { border: 1px solid var(--border); border-radius: var(--r-md); padding: var(--sp-3); margin: var(--sp-3) 0; min-width: 0; }
+.access-group > legend { padding: 0 var(--sp-1); font-size: var(--fs-xs); font-weight: 700; color: var(--text); }
+.access-group > .why { color: var(--text-dim); font-size: var(--fs-sm); }
 
 .cfg-sec { padding: var(--sp-3); border-bottom: 1px solid var(--border); }
 
@@ -942,13 +1313,16 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
 .cfg-card .facts { border-bottom: none; }
 .cfg-card .cmd-wrap { border-bottom: none; padding-top: 0; }
 
-/* --- wide windows: a fixed app shell, so the stack never scrolls away ---- */
+/* --- wide windows: sidebar + detail in a fixed app shell ------------------ */
 
-@media (min-width: 1080px) {
-  .split { grid-template-columns: minmax(0, 520px) minmax(0, 1fr); }
+@media (min-width: 760px) {
+  .split { grid-template-columns: var(--side-w) minmax(0, 1fr); }
+  .split.rail { grid-template-columns: var(--side-rail-w) minmax(0, 1fr); }
+  /* A short window scrolls the page; the sidebar stays in view. */
+  .sidebar { position: sticky; top: 0; height: 100vh; }
 }
 
-@media (min-width: 1080px) and (min-height: 620px) {
+@media (min-width: 760px) and (min-height: 560px) {
   html, body { height: 100%; }
   body { height: 100vh; overflow: hidden; }
   .log-body { position: absolute; inset: 0; height: auto; }
@@ -956,10 +1330,11 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
      most half the pane before it starts scrolling on its own. */
   .log { min-height: 220px; }
   .detail-scroll { max-height: 52%; }
+  .terminal-workspace { min-height: 0; }
 }
 
 @supports (height: 100dvh) {
-  @media (min-width: 1080px) and (min-height: 620px) {
+  @media (min-width: 760px) and (min-height: 560px) {
     body { height: 100dvh; }
   }
 }
@@ -970,7 +1345,6 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
   .bar { padding: var(--sp-2) var(--sp-3); gap: var(--sp-2); }
   main { padding: var(--sp-2); }
   .banner { padding: var(--sp-2) var(--sp-3) 0; }
-  .activity { padding-left: var(--sp-3); padding-right: var(--sp-5); }
   .where { flex-basis: 100%; }
 
   .row-head { display: none; }
@@ -994,46 +1368,116 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
   .facts { grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); }
   .log-bar .log-filter { flex: 1 1 100%; width: auto; }
 }
+
+/* Stacked, the sidebar sits above everything and the rail is a strip of
+   glyphs rather than a column. */
+@media (max-width: 759px) {
+  .sidebar-resizer { display: none; }
+  .sidebar { border-right: 0; border-bottom: 1px solid var(--border); }
+  .sidebar .svc-list { max-height: 40vh; }
+  .split.rail .svc-list { display: flex; flex-wrap: wrap; }
+  .split.rail .row { width: 40px; border-bottom: none; }
+}
 </style>
 </head>
 <body>
 
 <a class="skip" href="#svc-list">Skip to the service list</a>
 
+<!-- The app is two columns for the whole height of the window: the services
+     sidebar, and everything else. Header, banners, the activity strip and the
+     tabs all live in the right-hand column, so nothing pushes the list down. -->
+<div class="split app" id="split">
+<aside class="sidebar" aria-label="services">
+  <div class="brand side-brand">
+    <span class="mark" aria-hidden="true"></span>
+    <h1>mabo-ctl</h1>
+    <span class="sub">console</span>
+  </div>
+  <section class="panel master" aria-labelledby="services-heading">
+    <div class="panel-head">
+      <button type="button" id="btn-sidebar" class="ghost tiny side-toggle"
+              aria-expanded="true" aria-controls="svc-list"
+              title="Collapse the service list to status icons (b)">«</button>
+      <h2 id="services-heading">Services</h2>
+      <div class="filter-wrap">
+        <input type="search" id="filter" placeholder="filter by name  /"
+               aria-label="filter services by name" autocomplete="off" spellcheck="false">
+      </div>
+      <button type="button" id="btn-refresh" class="ghost tiny side-refresh"
+              aria-label="refresh status now"
+              title="Re-read every service's status now. The list already refreshes on its own every 2 seconds (10 in a background tab).">⟳</button>
+    </div>
+
+    <div class="row-head" aria-hidden="true">
+      <span class="cell"></span>
+      <span class="cell">service</span>
+      <span class="cell c-port">port</span>
+      <span class="cell c-pid">pid</span>
+      <span class="cell c-up">uptime</span>
+      <span class="cell">probe</span>
+    </div>
+
+    <div class="svc-list" id="svc-list" role="grid" aria-multiselectable="false"
+         aria-labelledby="services-heading" tabindex="-1"></div>
+
+    <div class="hints">
+      <span><kbd>j</kbd><kbd>k</kbd> select</span>
+      <span><kbd>s</kbd> start</span>
+      <span><kbd>x</kbd> stop</span>
+      <span><kbd>r</kbd> restart</span>
+      <span><kbd>/</kbd> filter</span>
+      <span><kbd>b</kbd> sidebar</span>
+      <span><kbd>c</kbd> config</span>
+      <span id="sort-note">declaration order</span>
+    </div>
+  </section>
+  <div class="resize-handle sidebar-resizer" id="sidebar-resizer" role="separator" tabindex="0"
+       aria-label="Resize services sidebar" aria-orientation="vertical" aria-controls="svc-list"
+       aria-valuemin="240" aria-valuemax="600" aria-valuenow="380"
+       title="Drag to resize sidebar; Left/Right arrows resize, double-click resets"></div>
+</aside>
+
+<div class="main-col">
 <header class="topbar">
   <div class="bar">
-    <div class="brand">
-      <h1>mabo-ctl</h1>
-      <span class="sub">console</span>
-    </div>
     <div class="where">
       <span class="keep" title="the address mabo-ctl serve is bound to"><b>bound</b>{{.Addr}}</span>
       {{with .ConfigPath}}<span title="{{.}}"><b>config</b>{{.}}</span>{{end}}
     </div>
+    <div class="bar-actions">
+      <button type="button" id="btn-start-all" class="primary">Start all</button>
+      <button type="button" id="btn-restart-all">Restart all</button>
+      <button type="button" id="btn-stop-all">Stop all</button>
+    </div>
     <span id="link-state" class="link-state wait" role="status">
       <span class="dot" aria-hidden="true"></span><span id="link-text">connecting</span>
     </span>
+    <button type="button" id="btn-theme" class="ghost tiny theme-toggle"
+            title="Colour theme: follow the system, light or dark"><span class="g" aria-hidden="true">◐</span><span id="theme-word">System</span></button>
     <span class="token" id="token-chip" title="the per-run session token; every start, stop and restart carries it">
       <b>token</b><span class="val" id="token-val">…</span>
       <button type="button" class="ghost tiny" id="btn-copy-token">Copy</button>
     </span>
   </div>
 
-  <div class="bar">
+  <div class="bar tabs-bar">
+    <nav class="tabs" role="tablist" aria-label="console views">
+      <button type="button" role="tab" class="tab" id="tab-output" data-tab="output"
+              aria-selected="true" aria-controls="detail">Output<span class="tab-badge" id="badge-output" hidden></span></button>
+      <button type="button" role="tab" class="tab" id="btn-config" data-tab="config"
+              aria-selected="false" aria-controls="config-view"
+              title="The resolved configuration: which mabo-ctl.yaml was loaded, and where each port came from (c)">Config</button>
+      <button type="button" role="tab" class="tab" id="tab-api" data-tab="api"
+              aria-selected="false" aria-controls="api-view"
+              title="The HTTP API reference, with a try-it playground">API</button>
+      <button type="button" role="tab" class="tab" id="tab-terminal" data-tab="terminal"
+              aria-selected="false" aria-controls="terminal-view"
+              title="Interactive shells in the repository root">Terminal<span class="tab-badge" id="badge-terminal" hidden></span></button>
+    </nav>
     <div class="tiles" id="tiles" role="group" aria-label="services by phase"></div>
     <span class="total" id="total"><b id="total-n">0</b> services</span>
     <div class="spacer"></div>
-    {{with .Root}}<div class="where"><span title="{{.}}"><b>root</b>{{.}}</span></div>{{end}}
-    <div class="bar-actions">
-      <a href="/api-docs?token={{.Token}}" class="ghost"
-         title="Open the API reference (RapiDoc endpoint docs)">API</a>
-      <button type="button" id="btn-config" class="ghost toggle" aria-pressed="false"
-              aria-controls="config-view"
-              title="Show the resolved configuration: which mabo-ctl.yaml was loaded, and where each port came from">Config</button>
-      <button type="button" id="btn-refresh" class="ghost" title="Fetch status now">Refresh</button>
-      <button type="button" id="btn-start-all" class="primary">Start all</button>
-      <button type="button" id="btn-stop-all">Stop all</button>
-    </div>
   </div>
 </header>
 
@@ -1043,14 +1487,27 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     <div>
       <strong id="banner-title">disconnected</strong>
       <span class="why" id="banner-why"></span>
-      <button type="button" class="ghost tiny" id="btn-config-apply" hidden>Reload configuration</button>
     </div>
   </div>
 </div>
 
-<div class="activity-wrap" id="activity-wrap" hidden>
-  <button type="button" class="ghost activity-clear" id="btn-clear-activity"
-          title="Dismiss these lines" aria-label="dismiss the operation log">&#215;</button>
+<div class="banner" id="config-banner" hidden>
+  <div class="banner-in" role="status">
+    <div>
+      <strong id="config-banner-title">mabo-ctl.yaml changed</strong>
+      <span class="why" id="config-banner-why"></span>
+      <button type="button" class="ghost tiny" id="btn-config-apply" hidden>Reload &amp; restart</button>
+    </div>
+  </div>
+</div>
+
+<div class="activity-wrap" id="activity-wrap" role="region" aria-label="system commands">
+  <div class="activity-head">
+    <strong>SYSTEM COMMANDS</strong>
+    <span class="activity-idle" id="activity-idle">No commands yet</span>
+    <button type="button" class="ghost activity-clear" id="btn-clear-activity"
+            title="Clear command history" aria-label="clear the system command history">&#215;</button>
+  </div>
   <div class="activity" id="activity" aria-live="polite" aria-label="recent operations"></div>
 </div>
 
@@ -1069,73 +1526,62 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     </div>
   </noscript>
 
-  <div class="split" id="split">
-    <section class="panel master" aria-labelledby="services-heading">
+  <!-- The stage is everything right of the sidebar. The tabs swap what it
+       shows; the service list stays put, so a terminal and the stack it is
+       driving are on screen together. -->
+  <div class="stage">
+    <section class="panel detail" id="detail" aria-live="off" aria-label="selected service"></section>
+
+    <section class="panel config" id="config-view" aria-labelledby="config-heading" hidden>
       <div class="panel-head">
-        <h2 id="services-heading">Services</h2>
-        <div class="filter-wrap">
-          <input type="search" id="filter" placeholder="filter by name  /"
-                 aria-label="filter services by name" autocomplete="off" spellcheck="false">
-        </div>
+        <h2 id="config-heading">Configuration</h2>
+        <span class="cfg-note" id="cfg-note"></span>
+        <div class="spacer"></div>
+        <button type="button" class="ghost tiny" id="btn-config-reload"
+                title="Re-read /api/config">Reload</button>
       </div>
-
-      <div class="row-head" aria-hidden="true">
-        <span class="cell">phase</span>
-        <span class="cell">service</span>
-        <span class="cell c-port">port</span>
-        <span class="cell c-pid">pid</span>
-        <span class="cell c-up">uptime</span>
-        <span class="cell">probe</span>
-        <span class="cell"></span>
-      </div>
-
-      <div class="svc-list" id="svc-list" role="grid" aria-multiselectable="false"
-           aria-labelledby="services-heading" tabindex="-1"></div>
-
-      <div class="hints">
-        <span><kbd>j</kbd><kbd>k</kbd> select</span>
-        <span><kbd>s</kbd> start</span>
-        <span><kbd>x</kbd> stop</span>
-        <span><kbd>r</kbd> restart</span>
-        <span><kbd>/</kbd> filter</span>
-        <span><kbd>c</kbd> config</span>
-        <span id="sort-note">declaration order</span>
-      </div>
+      <div class="cfg-body" id="cfg-body" tabindex="-1"></div>
     </section>
 
-    <section class="panel detail" id="detail" aria-live="off" aria-label="selected service"></section>
-  </div>
+    <!-- The API reference is its own page; the tab frames it, same-origin only,
+         and loads it the first time the tab is opened. -->
+    <section class="panel tabview" id="api-view" aria-label="API reference" hidden>
+      <iframe id="api-frame" class="api-frame" title="mabo-ctl HTTP API reference"></iframe>
+    </section>
 
-  <!-- The config view REPLACES the split rather than joining it. Keeping both
-       on screen would push the service list off it, and the whole point of the
-       master/detail layout is that every service fits on one screen. -->
-  <section class="panel config" id="config-view" aria-labelledby="config-heading" hidden>
-    <div class="panel-head">
-      <h2 id="config-heading">Configuration</h2>
-      <span class="cfg-note" id="cfg-note"></span>
-      <div class="spacer"></div>
-      <button type="button" class="ghost tiny" id="btn-config-reload"
-              title="Re-read /api/config">Reload</button>
-      <button type="button" class="ghost tiny" id="btn-config-close"
-              title="Back to the service list (Escape)">Close</button>
+    <div class="terminal-workspace" id="terminal-workspace" hidden>
+    <section class="panel tabview" id="terminal-view" aria-label="terminals">
+      {{if .Terminal}}
+      <div class="panel-head term-head">
+        <div class="term-tabs" id="term-tabs" role="tablist" aria-label="terminal sessions"></div>
+        <button type="button" class="ghost tiny" id="btn-term-new"
+                title="Open a new shell in the repository root">+ New</button>
+        <div class="spacer"></div>
+        <span class="cfg-note" id="term-note"></span>
+      </div>
+      <div class="term-body" id="term-body"></div>
+      {{else}}
+      <div class="placeholder">
+        <h3>Terminal is off</h3>
+        <p>The terminal runs a real shell with your permissions, so it is opt-in.
+          Restart the console with <code>mabo-ctl serve --terminal</code>, or set
+          <code>console_terminal: true</code> in <code>mabo-ctl.yaml</code>.
+          It is only available on a loopback console.</p>
+      </div>
+      {{end}}
+    </section>
+    <div class="resize-handle output-resizer" id="output-resizer" role="separator" tabindex="0"
+         aria-label="Resize terminal and service output" aria-orientation="horizontal"
+         aria-controls="terminal-view terminal-output" aria-valuemin="180" aria-valuemax="600" aria-valuenow="220"
+         title="Drag to resize terminal/output split; Up/Down arrows resize, double-click resets"></div>
+    <div class="terminal-output" id="terminal-output" aria-label="compact service console"></div>
     </div>
-    <div class="cfg-body" id="cfg-body" tabindex="-1"></div>
-  </section>
+  </div>
 </main>
+</div>
+</div>
 
-<footer>
-  <p>
-    This console can start and stop the commands declared in your
-    <code>mabo-ctl.yaml</code>. It is bound to a loopback address and every
-    mutation carries a per-session token that only this page has been shown.
-    Treat the URL mabo-ctl printed as a credential.
-  </p>
-  <p>
-    Environment values are redacted server-side by key and by shape; only the
-    variables declared in <code>mabo-ctl.yaml</code> are listed here, never the
-    environment mabo-ctl inherited.
-  </p>
-</footer>
+<div class="svc-tip" id="svc-tip" role="tooltip" hidden></div>
 
 <script>
 (function () {
@@ -1180,6 +1626,26 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
   }
 
   var TOKEN = readToken();
+  var roleMeta = document.querySelector('meta[name="mabo-ctl-role"]');
+  var ROLE = roleMeta ? roleMeta.content : "read";
+  var IS_OWNER = ROLE === "owner";
+  var CAN_WRITE = IS_OWNER || ROLE === "write";
+  var mirrorApplying = false;
+  var accessEnded = false;
+
+  function credentialURL(path) {
+    return path + (path.indexOf("?") < 0 ? "?" : "&") + "token=" + encodeURIComponent(TOKEN);
+  }
+
+  function endGuestAccess() {
+    if (accessEnded) { return; }
+    accessEnded = true;
+    pane.stop();
+    closeEvents();
+    // A full navigation discards already-rendered logs and all reconnect timers.
+    // The explicit revoked credential cannot fall back to a different cookie.
+    window.location.replace("/?token=" + encodeURIComponent(TOKEN));
+  }
 
   // The printed URL carries the token, which then sits in the address bar,
   // in screenshots and in browser history. It is already held in memory and
@@ -1201,6 +1667,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
   var FOLLOW_SLACK_PX  = 28;
   var RECONNECT_MIN    = 2000;
   var RECONNECT_MAX    = 30000;
+  var TAIL_GRACE_MS    = 1500;   // a reopened log stream's tail replay lands within this
   var MAX_ACTIVITY     = 14;
 
   var ACCENTS = {
@@ -1247,6 +1714,18 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     if (typeof p === "string" && owns.call(PHASES, p)) { return PHASES[p]; }
     if (!p) { return UNKNOWN; }
     return { glyph: "?", word: String(p), cls: "p-unknown" };
+  }
+
+  // A dead service's detail is "exit explanation\n<log tail>", because the CLI
+  // renders that tail under the row. The console already binds the log pane
+  // below to the selected service, so here the pane owns the tail and the
+  // detail keeps only the explanation. Every other phase's detail is one line
+  // and is passed through untouched.
+  function visibleDetail(st) {
+    if (!st || !st.detail) { return ""; }
+    if (st.phase !== "exited" && st.phase !== "failed") { return st.detail; }
+    var nl = st.detail.indexOf("\n");
+    return nl < 0 ? st.detail : st.detail.slice(0, nl);
   }
 
   /* =======================================================================
@@ -1323,10 +1802,10 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
      answers, and it cannot read the token because it cannot read this page.
      ======================================================================= */
 
-  function request(method, path, timeoutMs, body) {
-    var ctl = new AbortController();
+  function request(method, path, timeoutMs, body, ctl) {
+    ctl = ctl || new AbortController();
     var timer = setTimeout(function () { ctl.abort(); }, timeoutMs);
-    var headers = { "Accept": "application/json" };
+    var headers = { "Accept": "application/json", "X-Mabo-Ctl-Token": TOKEN };
     if (method === "POST") {
       if (!TOKEN) {
         clearTimeout(timer);
@@ -1348,18 +1827,31 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
       init.body = JSON.stringify(body);
     }
     return fetch(path, init).then(function (res) {
-      clearTimeout(timer);
+      // The timeout stays armed through the body. Clearing it as soon as the
+      // headers arrive leaves res.text() unbounded, and a response whose
+      // headers landed just before the laptop slept would hang this promise
+      // forever.
       return res.text().then(function (body) {
-        if (!res.ok) { throw new Error(explainHTTP(res.status, body)); }
+        if (!res.ok) {
+          if (!IS_OWNER && (res.status === 401 || res.status === 403) &&
+              (path === "/api/status" || path === "/api/services" || path === "/api/mirror")) { endGuestAccess(); }
+          var failure = new Error(explainHTTP(res.status, body));
+          failure.status = res.status;
+          throw failure;
+        }
+        if (res.status === 204) { return null; }
         try { return JSON.parse(body); }
         catch (e) { throw new Error("malformed response from " + path); }
       });
+    }).then(function (value) {
+      clearTimeout(timer);
+      return value;
     }, function (err) {
       clearTimeout(timer);
-      if (err && err.name === "AbortError") {
+      if (ctl.signal.aborted) {
         throw new Error("request to " + path + " timed out");
       }
-      throw new Error(err && err.message ? err.message : "network error");
+      throw err && err.message ? err : new Error("network error");
     });
   }
 
@@ -1518,6 +2010,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     this.levelFilter = "";    // "" = All; otherwise one of detectLevel's buckets
     this.chipButtons = null;  // level -> button, built below
     this.es = null;
+    this.openedAt = 0;
     this.retryAt = RECONNECT_MIN;
     this.retryTimer = 0;
     this.wanted = false;      // a live stream is wanted for the current name
@@ -1607,9 +2100,8 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
 
     // Severity chips. Pressed means "only this bucket", All is the reset — the
     // same one-toggle-per-state grammar as Stream/Pause/Follow, so nothing new
-    // is taught. They deliberately do NOT reuse the accent-blue pressed style:
-    // blue already means "transport active" on this bar, and a blue chip would
-    // read as a second stream control rather than a filter.
+    // is taught. The selected filter has a solid accent and checkmark, not the
+    // subtle surface tint that was indistinguishable from unselected chips.
     this.levelChips = el("span", "log-levels");
     this.levelChips.setAttribute("role", "group");
     this.levelChips.setAttribute("aria-label", "filter log lines by level");
@@ -1630,10 +2122,52 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     }
     bar.appendChild(this.levelChips);
 
+    var separators = el("label", "log-separators");
+    this.separatorBox = document.createElement("input");
+    this.separatorBox.type = "checkbox";
+    this.separatorBox.addEventListener("change", function () {
+      self.body.classList.toggle("separated", self.separatorBox.checked);
+      if (self.follow) { self.scrollToEnd(); }
+    });
+    separators.appendChild(this.separatorBox);
+    separators.appendChild(txt("Separators"));
+    separators.title = "Add spacing and dashed borders between log entries, not wrapped text rows";
+    bar.appendChild(separators);
+
+    var fontControl = el("label", "log-font");
+    fontControl.appendChild(txt("A−"));
+    var fontSize = document.createElement("input");
+    fontSize.type = "range";
+    fontSize.min = "10";
+    fontSize.max = "18";
+    fontSize.step = "1";
+    fontSize.value = "12";
+    fontSize.setAttribute("aria-label", "Log font size");
+    fontSize.setAttribute("aria-valuetext", "12 pixels");
+    var fontValue = el("output", null, "12px");
+    this.fontBox = fontSize; this.fontValue = fontValue;
+    this.outputFontSize = 12; this.dockFontSize = 10; this.compact = false;
+    fontValue.setAttribute("aria-live", "off");
+    fontSize.addEventListener("input", function () {
+      if (self.compact) { self.dockFontSize = Number(fontSize.value); }
+      else { self.outputFontSize = Number(fontSize.value); }
+      root.style.setProperty("--log-font-size", fontSize.value + "px");
+      fontSize.setAttribute("aria-valuetext", fontSize.value + " pixels");
+      fontValue.textContent = fontSize.value + "px";
+      if (self.follow) { self.scrollToEnd(); }
+    });
+    fontControl.appendChild(fontSize);
+    fontControl.appendChild(txt("A+"));
+    fontControl.appendChild(fontValue);
+    bar.appendChild(fontControl);
+
     this.count = el("span", "log-count", "0 lines");
     bar.appendChild(this.count);
 
     root.appendChild(bar);
+    // Pinned outside the scrolling/filterable service output. One global
+    // command history survives service switches and reports bulk actions too.
+    root.appendChild(activityWrap);
 
     this.body = el("div", "log-body");
     this.body.setAttribute("role", "log");
@@ -1695,9 +2229,19 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     this.root = root;
   }
 
-  // bind points the one pane at a different service. Closing the old transport
-  // FIRST is the whole point of this method. It also leaves merged mode: the
-  // sentinel name "all" is only ever set by bindAll.
+  // The dock has its own smaller default, without discarding the normal
+  // Output tab's chosen font size when the same pane moves between layouts.
+  LogPane.prototype.setCompact = function (on) {
+    this.compact = on;
+    var size = on ? this.dockFontSize : this.outputFontSize;
+    this.fontBox.value = String(size);
+    this.fontBox.setAttribute("aria-valuetext", size + " pixels");
+    this.fontValue.textContent = size + "px";
+    this.root.style.setProperty("--log-font-size", size + "px");
+  };
+
+  // bind points the one pane at a different service, closes the old transport
+  // first, and leaves merged mode. Only bindAll sets the sentinel name "all".
   LogPane.prototype.bind = function (name) {
     this.stop();
     this.name = name;
@@ -1914,15 +2458,17 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     var want = this.name;
     var url = "/api/stream/" + encodeURIComponent(want) + "?tail=" + TAIL_ON_OPEN;
     var es;
-    try { es = new EventSource(url); }
+    try { es = new EventSource(credentialURL(url)); }
     catch (e) {
       this.setState("down", "cannot open a stream in this browser");
       return;
     }
     this.es = es;
+    this.openedAt = Date.now();
 
     es.onopen = function () {
       self.retryAt = RECONNECT_MIN;
+      self.liveSince = Date.now();
       self.setState("live", "");
     };
 
@@ -1950,6 +2496,9 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
         self.retryAt = RECONNECT_MIN;
         if (self.state !== "live") { self.setState("live", ""); }
         self.push(d.line, "", d.service || "");
+        // Every (re)open begins by replaying the tail, which is not news; only
+        // lines after that burst count toward the Output tab's unseen badge.
+        if (Date.now() - self.liveSince > TAIL_GRACE_MS) { noteUnseenOutput(); }
       }
     };
 
@@ -1989,6 +2538,18 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
       this.es.close();
       this.es = null;
     }
+    this.openedAt = 0;
+  };
+
+  // recover reopens a transport that is closed, or that has been stuck
+  // CONNECTING since before a sleep. An OPEN stream is left alone: reopening
+  // it would replay the tail and duplicate lines.
+  LogPane.prototype.recover = function () {
+    if (!this.wanted || !this.name) { return; }
+    if (!this.es || this.es.readyState === 2 ||
+        (this.es.readyState === 0 && Date.now() - this.openedAt > RECONNECT_MAX)) {
+      this.open();
+    }
   };
 
   LogPane.prototype.close = function (note) {
@@ -1998,6 +2559,12 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     this.setState("off", note || "");
   };
 
+  // Keep references before LogPane moves this subtree off-document. The pane
+  // is mounted only after the asynchronous services request has completed.
+  var activityWrap = document.getElementById("activity-wrap");
+  var activityEl = document.getElementById("activity");
+  var activityIdle = document.getElementById("activity-idle");
+  var btnClearActivity = document.getElementById("btn-clear-activity");
   var pane = new LogPane();
 
   /* =======================================================================
@@ -2062,11 +2629,16 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
       select(svc.name, true);
     });
     root.addEventListener("keydown", function (ev) {
+      if (ev.target && ev.target.closest && ev.target.closest("button")) { return; }
       if (ev.key === "Enter" || ev.key === " " || ev.key === "Spacebar") {
         ev.preventDefault();
         select(svc.name, true);
       }
     });
+    root.addEventListener("mouseenter", function () { showTip(self); });
+    root.addEventListener("mouseleave", hideTip);
+    root.addEventListener("focus", function () { showTip(self); });
+    root.addEventListener("blur", hideTip);
 
     this.root = root;
     this.paintButtons();
@@ -2098,6 +2670,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
   // no explanation reads as a broken console; the phase is right there, so say
   // it.
   function setAction(btn, disabled, verb, name, why) {
+    if (!CAN_WRITE && verb !== "open") { disabled = true; why = "this link has " + ROLE + " access"; }
     btn.disabled = disabled;
     btn.title = disabled ? (why || verb + " " + name) : verb + " " + name;
   }
@@ -2148,6 +2721,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     this.phaseGlyph.textContent = ph.glyph;
     this.phaseWord.textContent = ph.word;
     this.phaseCell.setAttribute("aria-label", "phase " + ph.word);
+    this.phaseCell.title = ph.word;
 
     setText(this.portCell, st.port ? String(st.port) : "–", !st.port);
     setText(this.pidCell, st.pid ? String(st.pid) : "–", !st.pid);
@@ -2158,6 +2732,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     this.hlCell.title = hl.why;
 
     this.paintUptime();
+    if (tipRow === this) { paintTip(); }
     // The buttons key off the phase, so they are repainted where the phase
     // changes. Without this they kept whatever they were built with and told
     // the user a service was "unknown" in the same row that showed it stopped.
@@ -2305,10 +2880,18 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
       this.portEl    = fact(dl, "port", txt(svc.port ? String(svc.port) : "–"), !svc.port);
       this.uptimeEl  = fact(dl, "uptime", txt("–"), true);
       this.readyEl   = fact(dl, "ready in", txt("–"), true);
+      this.healthEl  = fact(dl, "health", txt("–"), true);
+      this.healthEl.parentNode.classList.add("health");
       this.runtimeEl = fact(dl, "runtime", txt(svc.runtime || "system"), !svc.runtime);
-      this.healthEl  = fact(dl, "health", txt("–"), true, true);
-      this.logPathEl = fact(dl, "log file", txt("–"), true, true);
       body.appendChild(dl);
+
+      var serviceConfig = el("details", "service-config");
+      serviceConfig.open = false;
+      serviceConfig.appendChild(el("summary", null, "Log file, command & arguments"));
+      var paths = el("dl", "facts");
+      this.logPathEl = fact(paths, "log file", txt("–"), true, true);
+      serviceConfig.appendChild(paths);
+      body.appendChild(serviceConfig);
 
       var cw = el("div", "cmd-wrap");
       var ch = el("div", "cmd-head");
@@ -2342,7 +2925,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
         var bad = el("div", "alert");
         bad.appendChild(el("b", null, "not startable: "));
         bad.appendChild(txt(svc.cmd_error));
-        cw.appendChild(bad);
+        body.appendChild(bad);
       }
 
       var chips = el("div", "chips");
@@ -2373,9 +2956,9 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
 
       this.detailLine = el("div", "detail-line");
       this.detailLine.hidden = true;
-      cw.appendChild(this.detailLine);
+      body.appendChild(this.detailLine);
 
-      body.appendChild(cw);
+      serviceConfig.appendChild(cw);
       detailEl.appendChild(body);
       this.scroll = body;
 
@@ -2421,15 +3004,20 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
       this.logPathEl.classList.toggle("dim", !st.log_path);
       this.logPathEl.appendChild(ellipsised(st.log_path || "–"));
 
-      if (st.detail) {
+      var detail = visibleDetail(st);
+      if (detail) {
         this.detailLine.hidden = false;
-        this.detailLine.textContent = st.detail;
+        this.detailLine.textContent = detail;
       } else {
         this.detailLine.hidden = true;
         this.detailLine.textContent = "";
       }
 
       this.paintUptime();
+      // The buttons key off the phase, exactly as the row's do; without this
+      // the header kept the phase it was mounted with and offered Start on a
+      // running service while greying out Stop.
+      this.paintButtons();
     },
 
     // Uptime comes from the spawn time mabo-ctl wrote into the pid record, so it
@@ -2509,11 +3097,18 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
      ======================================================================= */
 
   function select(name, focusRow) {
+    if (ROLE === "view" && !mirrorApplying && booted) { return; }
     if (!owns.call(rows, name)) { return; }
     // A deliberate pick (click, j/k) settles the selection for good.
-    if (focusRow) { autoSelect = false; }
+    if (focusRow) {
+      autoSelect = false;
+      if (currentTab !== "terminal") { showTab("output"); }
+    }
     if (selected === name) {
-      if (focusRow) { rows[name].root.focus(); }
+      if (focusRow) {
+        rows[name].root.focus();
+        if (pane.all) { pane.bind(name); }
+      }
       return;
     }
 
@@ -2633,6 +3228,143 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
   });
 
   /* =======================================================================
+     Sidebar rail and its hover card
+     ---------------------------------------------------------------------
+     Collapsed, the service list is a column of phase glyphs. Everything the
+     full row says moves into one floating card, shown for the row under the
+     pointer or holding keyboard focus. The choice persists per origin.
+     ======================================================================= */
+
+  var SIDEBAR_KEY = "mabo-ctl.sidebar";
+  var splitEl    = document.getElementById("split");
+  var btnSidebar = document.getElementById("btn-sidebar");
+  var tipEl      = document.getElementById("svc-tip");
+  var railOn     = false;
+  var tipRow     = null;
+
+  function setRail(on, persist) {
+    railOn = on;
+    splitEl.classList.toggle("rail", on);
+    btnSidebar.textContent = on ? "»" : "«";
+    btnSidebar.setAttribute("aria-expanded", on ? "false" : "true");
+    btnSidebar.title = on ? "Expand the service list (b)" : "Collapse the service list to status icons (b)";
+    if (!on) { hideTip(); }
+    if (persist) {
+      try { window.localStorage.setItem(SIDEBAR_KEY, on ? "rail" : "full"); }
+      catch (e) { /* no storage: the choice lasts for this page only */ }
+    }
+  }
+
+  btnSidebar.addEventListener("click", function () { setRail(!railOn, true); });
+  document.getElementById("svc-list").addEventListener("scroll", hideTip, { passive: true });
+  window.addEventListener("resize", hideTip);
+
+  (function () {
+    var saved = null;
+    try { saved = window.localStorage.getItem(SIDEBAR_KEY); } catch (e) { /* no storage */ }
+    setRail(saved === "rail", false);
+  }());
+
+  function showTip(row) {
+    if (!railOn) { return; }
+    tipRow = row;
+    paintTip();
+  }
+
+  function hideTip() {
+    tipRow = null;
+    tipEl.hidden = true;
+  }
+
+  function paintTip() {
+    var row = tipRow;
+    if (!row || !railOn || !row.root.isConnected || row.root.hidden) { hideTip(); return; }
+    var name = row.svc.name;
+    var st = owns.call(statusOf, name) ? statusOf[name] : null;
+    var ph = phaseLabel(row.phase);
+
+    clear(tipEl);
+    tipEl.style.setProperty("--svc-accent",
+      window.getComputedStyle(row.root).getPropertyValue("--svc-accent"));
+    tipEl.appendChild(el("div", "tip-name", name));
+    var phEl = el("div", "ph " + ph.cls);
+    var g = el("span", "g", ph.glyph);
+    g.setAttribute("aria-hidden", "true");
+    phEl.appendChild(g);
+    phEl.appendChild(el("span", "w", ph.word));
+    tipEl.appendChild(phEl);
+
+    var dl = el("dl");
+    var add = function (k, v) { dl.appendChild(el("dt", null, k)); dl.appendChild(el("dd", null, v)); };
+    var port = (st && st.port) || row.svc.port;
+    add("port", port ? String(port) : "–");
+    add("pid", st && st.pid ? String(st.pid) : "–");
+    add("uptime", row.upCell.textContent || "–");
+    add("probe", probeLabel(st).text);
+    tipEl.appendChild(dl);
+
+    tipEl.hidden = false;
+    var r = row.root.getBoundingClientRect();
+    var w = tipEl.offsetWidth, h = tipEl.offsetHeight;
+    var vw = window.innerWidth, vh = window.innerHeight;
+    var left = r.right + 8, top = r.top + r.height / 2 - h / 2;
+    // Stacked on a narrow window the rail is a strip, so the card drops below.
+    if (left + w > vw - 8) {
+      left = Math.max(8, Math.min(r.left, vw - w - 8));
+      top = r.bottom + 6;
+    }
+    top = Math.max(8, Math.min(top, vh - h - 8));
+    tipEl.style.left = left + "px";
+    tipEl.style.top = top + "px";
+  }
+
+  /* =======================================================================
+     Colour theme: system, light or dark
+     ---------------------------------------------------------------------
+     The script in <head> applied the saved choice before first paint; this
+     owns the toggle and keeps "system" following the OS while it is chosen.
+     ======================================================================= */
+
+  var THEME_KEY   = "mabo-ctl.theme";
+  var THEMES      = ["system", "light", "dark"];
+  var THEME_GLYPH = { system: "◐", light: "☀", dark: "☾" };
+  var btnTheme    = document.getElementById("btn-theme");
+  var themeWord   = document.getElementById("theme-word");
+  var darkQuery   = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
+  var themePref   = "system";
+
+  function applyTheme() {
+    var dark = themePref === "dark" || (themePref === "system" && !!darkQuery && darkQuery.matches);
+    document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
+    btnTheme.firstChild.textContent = THEME_GLYPH[themePref];
+    themeWord.textContent = themePref.charAt(0).toUpperCase() + themePref.slice(1);
+    btnTheme.title = "Colour theme: " + themePref + (themePref === "system"
+      ? " (currently " + (dark ? "dark" : "light") + ")" : "") + ". Click to change.";
+    // A loaded API reference is reloaded in the new theme.
+    if (apiFrame && apiFrame.getAttribute("src")) { apiFrame.setAttribute("src", apiSrc()); }
+  }
+
+  (function () {
+    var saved = null;
+    try { saved = window.localStorage.getItem(THEME_KEY); } catch (e) { /* no storage */ }
+    if (THEMES.indexOf(saved) >= 0) { themePref = saved; }
+    applyTheme();
+  }());
+
+  btnTheme.addEventListener("click", function () {
+    themePref = THEMES[(THEMES.indexOf(themePref) + 1) % THEMES.length];
+    try { window.localStorage.setItem(THEME_KEY, themePref); }
+    catch (e) { /* no storage: the choice lasts for this page only */ }
+    applyTheme();
+  });
+
+  if (darkQuery) {
+    var onSystemTheme = function () { if (themePref === "system") { applyTheme(); } };
+    if (darkQuery.addEventListener) { darkQuery.addEventListener("change", onSystemTheme); }
+    else if (darkQuery.addListener) { darkQuery.addListener(onSystemTheme); }
+  }
+
+  /* =======================================================================
      Summary tiles
      ======================================================================= */
 
@@ -2730,31 +3462,86 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
   /* =======================================================================
      Operations
      ---------------------------------------------------------------------
-     Every result lands in one activity strip rather than in a per-service box,
+      Every result lands in one pinned system section rather than in a per-service box,
      so an operation started from a row the user then navigated away from is
      still reported somewhere they are looking.
      ======================================================================= */
 
-  var activityEl   = document.getElementById("activity");
-  var activityWrap = document.getElementById("activity-wrap");
-  var configChangeBanner = document.getElementById("banner");
-  var configChangeTitle = document.getElementById("banner-title");
-  var configChangeWhy = document.getElementById("banner-why");
+  var configChangeBanner = document.getElementById("config-banner");
+  var configChangeTitle = document.getElementById("config-banner-title");
+  var configChangeWhy = document.getElementById("config-banner-why");
   var btnConfigApply = document.getElementById("btn-config-apply");
 
+  // The config watcher's two announcements on /api/events. They mirror
+  // configChangedMsg and configCurrentMsg in internal/web/reload.go, and the
+  // banner is keyed on them, so the two must change together.
+  var CONFIG_CHANGED = "config change detected; reload configuration?";
+  var CONFIG_CURRENT = "configuration file matches the running configuration again";
+
+  // A reload ends in a page reload, which would wipe the activity strip that
+  // says what the reload did. The lines are carried across it in
+  // sessionStorage; without storage the reloaded page simply starts quiet.
+  var RELOAD_NOTE = "mabo-ctl.reload-note";
+
   function showConfigChange() {
-    configChangeTitle.textContent = "configuration change detected";
-    configChangeWhy.textContent = "reload the validated YAML snapshot? running services will not be restarted";
-    btnConfigApply.hidden = false;
+    configChangeTitle.textContent = "mabo-ctl.yaml changed";
+    configChangeWhy.textContent = "Reloading applies it: running services whose command, directory, " +
+      "environment, port or tty changed restart, removed ones stop, and everything else keeps running.";
+    btnConfigApply.hidden = !IS_OWNER;
     configChangeBanner.hidden = false;
   }
 
+  function hideConfigChange() {
+    configChangeBanner.hidden = true;
+  }
+
+  function linesFromReload(res) {
+    var did = [];
+    if (res.restarted && res.restarted.length) { did.push("restarted " + res.restarted.join(", ")); }
+    if (res.stopped && res.stopped.length) { did.push("stopped " + res.stopped.join(", ")); }
+    var out = linesFromMutation({ operation: "configuration reload", ok: res.ok,
+      error: res.error, events: res.events, services: [] });
+    out[0].text += ": " + (did.length ? did.join("; ") : "no running service needed a restart");
+    return out;
+  }
+
+  function stashActivity(lines) {
+    try { window.sessionStorage.setItem(RELOAD_NOTE, JSON.stringify(lines.slice(0, MAX_ACTIVITY))); }
+    catch (e) { /* no storage: the reloaded page starts quiet */ }
+  }
+
+  function replayStashedActivity() {
+    var raw = null;
+    try {
+      raw = window.sessionStorage.getItem(RELOAD_NOTE);
+      window.sessionStorage.removeItem(RELOAD_NOTE);
+    } catch (e) { return; }
+    if (!raw) { return; }
+    var lines;
+    try { lines = JSON.parse(raw); } catch (e) { return; }
+    if (Object.prototype.toString.call(lines) !== "[object Array]") { return; }
+    var safe = [];
+    for (var i = 0; i < lines.length; i++) {
+      if (lines[i] && typeof lines[i].text === "string") {
+        safe.push({ kind: lines[i].kind === "err" ? "err" : (lines[i].kind === "ok" ? "ok" : ""), text: lines[i].text });
+      }
+    }
+    if (safe.length) { activity(safe); }
+  }
+
   btnConfigApply.addEventListener("click", function () {
+    if (!window.confirm("Reload mabo-ctl.yaml now? Running services whose command, directory, environment, " +
+        "port or tty changed will restart, running services it no longer declares will stop, and a " +
+        "dependency they need may start.")) { return; }
     btnConfigApply.disabled = true;
-    request("POST", "/api/config/reload", MUTATE_TIMEOUT).then(function () {
+    activity([{ text: "configuration reload requested…" }]);
+    request("POST", "/api/config/reload", MUTATE_TIMEOUT).then(function (res) {
+      // The new configuration is in force whether or not every service came
+      // back, so the page is rebuilt from it either way.
+      stashActivity(linesFromReload(res));
       window.location.reload();
     }).catch(function (err) {
-      activity([{ kind: "err", text: "configuration reload failed: " + err.message }]);
+      activity([{ kind: "err", text: "configuration not reloaded: " + err.message }]);
       btnConfigApply.disabled = false;
     });
   });
@@ -2765,13 +3552,13 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     }
     var kept = activityEl.getElementsByClassName("op-line");
     while (kept.length > MAX_ACTIVITY) { activityEl.removeChild(kept[0]); }
-    activityWrap.hidden = false;
+    activityIdle.hidden = true;
     activityEl.scrollTop = activityEl.scrollHeight;
   }
 
-  document.getElementById("btn-clear-activity").addEventListener("click", function () {
+  btnClearActivity.addEventListener("click", function () {
     clear(activityEl);
-    activityWrap.hidden = true;
+    activityIdle.hidden = false;
   });
 
   function opRow(line) {
@@ -2781,27 +3568,20 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     return row;
   }
 
-  // A start that failed is not an HTTP failure: the request worked and the
-  // service refused. Both outcomes are rendered from the same event list the
-  // supervisor produced, so the console says what the terminal would.
+  // SSE owns live lifecycle progress; HTTP owns the final request outcome.
+  // Replaying res.events here duplicated the same progress after completion.
+  // The summary/error still reports the outcome if the event stream is down.
   function linesFromMutation(res) {
-    var out = [], evs = res.events || [];
+    var out = [];
     var head = res.operation + (res.ok ? " finished" : " reported a problem");
     if (res.services && res.services.length) { head += ": " + res.services.join(", "); }
     out.push({ kind: res.ok ? "ok" : "err", text: head });
-    for (var i = Math.max(0, evs.length - 8); i < evs.length; i++) {
-      var e = evs[i];
-      var t = (e.service ? e.service + " " : "") +
-              (e.phase ? "[" + e.phase + "] " : "") + (e.msg || "");
-      if (e.error) { t += (t ? " — " : "") + e.error; }
-      if (!t) { continue; }
-      out.push({ kind: e.error ? "err" : "", text: t });
-    }
     if (res.error) { out.push({ kind: "err", text: res.error }); }
     return out;
   }
 
   function mutate(name, op) {
+    if (!CAN_WRITE || accessEnded) { return; }
     if (busyGlobal || !owns.call(rows, name)) { return; }
     var row = rows[name];
     if (row.busy) { return; }
@@ -2842,13 +3622,15 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     window.open("http://localhost:" + port + "/", "_blank", "noopener,noreferrer");
   }
 
-  var btnStartAll = document.getElementById("btn-start-all");
-  var btnStopAll  = document.getElementById("btn-stop-all");
-  var btnRefresh  = document.getElementById("btn-refresh");
+  var btnStartAll   = document.getElementById("btn-start-all");
+  var btnRestartAll = document.getElementById("btn-restart-all");
+  var btnStopAll    = document.getElementById("btn-stop-all");
+  var btnRefresh    = document.getElementById("btn-refresh");
 
   function setGlobalBusy(on) {
     busyGlobal = on;
     btnStartAll.classList.toggle("busy", on && btnStartAll.dataset.active === "1");
+    btnRestartAll.classList.toggle("busy", on && btnRestartAll.dataset.active === "1");
     btnStopAll.classList.toggle("busy", on && btnStopAll.dataset.active === "1");
     paintGlobalButtons();
     for (var k in rows) {
@@ -2869,19 +3651,23 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     var allUp = total > 0 && live === total;
     var noneUp = live === 0;
 
-    btnStartAll.disabled = busyGlobal || total === 0 || allUp;
-    btnStopAll.disabled = busyGlobal || total === 0 || noneUp;
+    btnStartAll.disabled = !CAN_WRITE || busyGlobal || total === 0 || allUp;
+    btnRestartAll.disabled = !CAN_WRITE || busyGlobal || noneUp;
+    btnStopAll.disabled = !CAN_WRITE || busyGlobal || total === 0 || noneUp;
     btnStartAll.title = total === 0 ? "no services are declared"
       : (allUp ? "every service is already running" : "start every declared service");
+    btnRestartAll.title = noneUp ? "nothing is running"
+      : "restart the " + live + " running service" + (live === 1 ? "" : "s") + "; stopped ones stay stopped";
     btnStopAll.title = total === 0 ? "no services are declared"
       : (noneUp ? "nothing is running" : "stop every declared service");
   }
 
   function bulk(path, verb, btn) {
+    if (!CAN_WRITE || accessEnded) { return; }
     if (busyGlobal) { return; }
     btn.dataset.active = "1";
     setGlobalBusy(true);
-    activity([{ text: verb + " requested for every service…" }]);
+    activity([{ text: verb + " requested…" }]);
     request("POST", path, MUTATE_TIMEOUT)
       .then(function (res) { activity(linesFromMutation(res)); })
       .catch(function (err) { activity([{ kind: "err", text: verb + " failed: " + err.message }]); })
@@ -2893,6 +3679,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
   }
 
   btnStartAll.addEventListener("click", function () { bulk("/api/start-all", "start-all", btnStartAll); });
+  btnRestartAll.addEventListener("click", function () { bulk("/api/restart-all", "restart-all", btnRestartAll); });
   btnStopAll.addEventListener("click", function () { bulk("/api/stop-all", "stop-all", btnStopAll); });
   btnRefresh.addEventListener("click", function () { pollNow(); });
 
@@ -2916,10 +3703,11 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
   var configBody = document.getElementById("cfg-body");
   var configNote = document.getElementById("cfg-note");
   var btnConfig  = document.getElementById("btn-config");
-  var splitEl    = document.getElementById("split");
 
   var configLoaded = false;
   var configBusy   = false;
+  var configSection = "overview";
+  try { configSection = localStorage.getItem("mabo-ctl.config-section") || "overview"; } catch (e) {}
 
   var SOURCES = {
     "flag":    { cls: "src-flag",    hint: "--ports on the command line, which outranks everything else" },
@@ -2956,20 +3744,9 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     return declared ? "overrides " + declared : "overrides the declared default";
   }
 
-  function configOpen() { return !configView.hidden; }
+  function configOpen() { return currentTab === "config"; }
 
-  function showConfig(on) {
-    if (on === configOpen()) { return; }
-    configView.hidden = !on;
-    splitEl.hidden = !!on;
-    btnConfig.setAttribute("aria-pressed", on ? "true" : "false");
-    if (on) {
-      loadConfig(false);
-      configBody.focus();
-    } else {
-      btnConfig.focus();
-    }
-  }
+  function showConfig(on) { showTab(on ? "config" : "output"); }
 
   function loadConfig(force) {
     if (configBusy) { return; }
@@ -2997,12 +3774,480 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
   function renderConfig(cfg) {
     clear(configBody);
     var list = cfg.services || [];
-    configBody.appendChild(configSource(cfg.source || {}));
-    configBody.appendChild(originsSection());
-    configBody.appendChild(configPorts(list));
-    configBody.appendChild(configServices(list));
-    loadOrigins();
+    var nav = el("nav", "cfg-nav"); nav.setAttribute("role", "tablist"); nav.setAttribute("aria-label", "Configuration sections");
+    configBody.appendChild(nav);
+    var sections = [
+      {key: "overview", label: "Overview", description: "Read-only repository settings and resolved ports. Paths identify this stack; they are not access settings.", nodes: [configSource(cfg.source || {}), configPorts(list)]},
+      {key: "services", label: "Services", description: "Read-only resolved commands, directories, environments and dependencies for each service.", nodes: [configServices(list)]}
+    ];
+    if (IS_OWNER) {
+      sections.push({key: "sharing", label: "Sharing & guests", description: "Create scoped guest links, broadcast your view, and inspect or revoke guest sessions.", nodes: [accessSection()]});
+      sections.push({key: "security", label: "Security", description: "Operator-only credentials and trusted browser origins. These controls change who can access this console.", nodes: [operatorTokenSection(), originsSection()]});
+    }
+    sections.forEach(function (section) {
+      var button = el("button", "ghost tiny", section.label); button.type = "button"; button.dataset.configSection = section.key;
+      button.id = "cfg-tab-" + section.key; button.setAttribute("role", "tab"); button.setAttribute("aria-controls", "cfg-panel-" + section.key);
+      button.disabled = ROLE === "view";
+      button.onclick = function () { setConfigSection(section.key, true); }; nav.appendChild(button);
+      var panel = el("div", "cfg-subpanel"); panel.id = "cfg-panel-" + section.key; panel.setAttribute("role", "tabpanel"); panel.setAttribute("aria-labelledby", button.id);
+      panel.appendChild(el("p", "cfg-intro", section.description));
+      section.nodes.forEach(function (node) { panel.appendChild(node); }); configBody.appendChild(panel);
+    });
+    nav.addEventListener("keydown", function (ev) {
+      if (ROLE === "view") { return; }
+      var buttons = Array.prototype.slice.call(nav.querySelectorAll("button")), at = buttons.indexOf(document.activeElement), next;
+      if (ev.key === "ArrowRight") { next = (at + 1) % buttons.length; }
+      else if (ev.key === "ArrowLeft") { next = (at + buttons.length - 1) % buttons.length; }
+      else if (ev.key === "Home") { next = 0; }
+      else if (ev.key === "End") { next = buttons.length - 1; }
+      else { return; }
+      ev.preventDefault(); ev.stopPropagation(); buttons[next].click(); buttons[next].focus();
+    });
+    setConfigSection(configSection, false);
   }
+
+  function setConfigSection(key, persist) {
+    var previous = configSection;
+    var allowed = key === "overview" || key === "services" || (IS_OWNER && (key === "sharing" || key === "security"));
+    configSection = allowed ? key : "overview";
+    configBody.querySelectorAll(".cfg-nav button").forEach(function (button) {
+      var active = button.dataset.configSection === configSection;
+      button.setAttribute("aria-selected", active ? "true" : "false"); button.tabIndex = active ? 0 : -1;
+    });
+    configBody.querySelectorAll(".cfg-subpanel").forEach(function (panel) { panel.hidden = panel.id !== "cfg-panel-" + configSection; });
+    if (previous !== configSection) { configBody.scrollTop = 0; }
+    if (persist) { try { localStorage.setItem("mabo-ctl.config-section", configSection); } catch (e) {} }
+    if (IS_OWNER && configSection === "sharing") { refreshAccess(); }
+    if (IS_OWNER && configSection === "security") { loadOrigins(); }
+  }
+
+  /* Shared links are capabilities, not accounts. Only the owner sees this
+     editor; the server independently enforces the same permission boundary. */
+  var broadcasting = false;
+  var mirrorSource = String(Date.now()) + "-" + Math.random().toString(36).slice(2);
+  try {
+    mirrorSource = sessionStorage.getItem("mabo-ctl.presenter") || mirrorSource;
+    sessionStorage.setItem("mabo-ctl.presenter", mirrorSource);
+    broadcasting = IS_OWNER && sessionStorage.getItem("mabo-ctl.broadcast") === "1";
+  } catch (e) { /* presentation still works without persistence */ }
+  var accessBusy = false;
+  var guestQuery = "", guestStatusFilter = "all", guestSnapshot = [];
+  var guestContainer = null, guestCards = Object.create(null), guestEmpty = null;
+  var mirrorBusy = false;
+  var mirrorNote = el("div", "access-banner mirror-note");
+  mirrorNote.setAttribute("role", "status");
+  var mainColumn = document.querySelector(".main-col");
+  mainColumn.insertBefore(mirrorNote, mainColumn.firstChild);
+
+  function setMirrorStatus(status) {
+    mirrorNote.hidden = IS_OWNER && !broadcasting;
+    var text = "";
+    if (IS_OWNER) { text = "BROADCASTING · VIEW guests can see your console cursor and clicks. " + (status || ""); }
+    else if (ROLE === "view") { text = "VIEW · " + (status || "waiting for operator") + " · Cursor and clicks are visual only; you cannot control services."; }
+    else if (ROLE === "write") { text = "WRITE ACCESS · You can start, stop and restart services. Configuration, terminals and access management are operator-only."; }
+    else { text = "READ ONLY · You can browse status, configuration and logs; you cannot change services."; }
+    if (mirrorNote.textContent !== text) { mirrorNote.textContent = text; }
+  }
+  setMirrorStatus("");
+
+  // Cursor sharing is ephemeral presentation, not input recording/replay.
+  // Resolve only these known regions and never send element text or values.
+  var pointerRegions = {
+    sidebar: ".sidebar", tabs: ".tabs", output: "#detail",
+    "cfg-source": "#cfg-source", "cfg-ports": "#cfg-ports", "cfg-services": "#cfg-services"
+  };
+  var lastPointer = null, lastClick = null, clickSequence = Date.now();
+  var pointerDirty = false, lastMirrorPublish = 0;
+  var remoteClickKey = "", clickTimer = 0;
+  var cursor = el("div", "mirror-cursor"), clickRipple = el("div", "mirror-click");
+  cursor.appendChild(el("span", null, "Operator"));
+  cursor.setAttribute("aria-hidden", "true"); clickRipple.setAttribute("aria-hidden", "true");
+  cursor.hidden = true; clickRipple.hidden = true;
+  document.body.appendChild(cursor); document.body.appendChild(clickRipple);
+
+  function pointAt(x, y) {
+    var target = document.elementFromPoint(x, y);
+    if (!target || target.closest("#cfg-access, #cfg-token, #cfg-origins, #terminal-view, .secret-input, [type=password]")) { return null; }
+    for (var region in pointerRegions) {
+      if (!owns.call(pointerRegions, region)) { continue; }
+      var node = target.closest(pointerRegions[region]);
+      if (!node) { continue; }
+      var rect = node.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) { return null; }
+      return {region: region, x: Math.max(0, Math.min(1, (x - rect.left) / rect.width)),
+        y: Math.max(0, Math.min(1, (y - rect.top) / rect.height))};
+    }
+    return null;
+  }
+
+  document.addEventListener("pointermove", function (ev) {
+    if (!IS_OWNER || !broadcasting) { return; }
+    lastPointer = {x: ev.clientX, y: ev.clientY}; pointerDirty = true;
+  }, {passive: true});
+  document.addEventListener("pointerdown", function (ev) {
+    if (!IS_OWNER || !broadcasting || ev.button !== 0) { return; }
+    var point = pointAt(ev.clientX, ev.clientY);
+    lastPointer = {x: ev.clientX, y: ev.clientY};
+    lastClick = point ? {point: point, sequence: clickSequence = Math.max(Date.now(), clickSequence + 1), at: Date.now()} : null;
+    pointerDirty = true;
+  }, {passive: true});
+  function forgetPointer() { lastPointer = null; lastClick = null; pointerDirty = true; }
+  document.documentElement.addEventListener("pointerleave", forgetPointer);
+  window.addEventListener("blur", forgetPointer);
+  document.addEventListener("visibilitychange", function () { if (document.hidden) { forgetPointer(); } });
+
+  function projectedPoint(point) {
+    if (!point || !owns.call(pointerRegions, point.region)) { return null; }
+    var node = document.querySelector(pointerRegions[point.region]);
+    if (!node) { return null; }
+    var rect = node.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) { return null; }
+    var x = rect.left + point.x * rect.width, y = rect.top + point.y * rect.height;
+    if (x < 0 || y < 0 || x > window.innerWidth || y > window.innerHeight) { return null; }
+    return {x: x, y: y};
+  }
+
+  function hideRemotePointer() {
+    cursor.hidden = true; clickRipple.hidden = true; clearTimeout(clickTimer);
+  }
+
+  function paintRemotePointer(m) {
+    var point = projectedPoint(m.pointer);
+    cursor.hidden = !point;
+    if (point) { cursor.style.transform = "translate(" + point.x + "px," + point.y + "px)"; }
+    if (!m.click) { return; }
+    var key = m.source + "/" + m.click.sequence;
+    if (key === remoteClickKey) { return; }
+    remoteClickKey = key;
+    var click = projectedPoint(m.click.point);
+    if (!click) { return; }
+    clickRipple.style.left = (click.x - 15) + "px"; clickRipple.style.top = (click.y - 15) + "px";
+    clickRipple.hidden = false;
+    clickRipple.classList.remove("pulse");
+    void clickRipple.offsetWidth; // restart the one bounded ripple for this new click
+    clickRipple.classList.add("pulse");
+    clearTimeout(clickTimer); clickTimer = setTimeout(function () { clickRipple.hidden = true; }, 700);
+  }
+
+  function accessField(form, label, placeholder, secret) {
+    var input = el("input", secret ? "secret-input" : null);
+    input.type = "text";
+    input.placeholder = placeholder;
+    input.setAttribute("aria-label", label);
+    input.autocomplete = "off";
+    input.spellcheck = false;
+    input.maxLength = secret ? 256 : 80;
+    form.appendChild(input);
+    return input;
+  }
+
+  function accessMessage(text, error) {
+    var node = document.querySelector("#cfg-access .access-message");
+    if (node) { node.textContent = text; node.className = "access-message why" + (error ? " err" : ""); }
+  }
+
+  function operatorTokenSection() {
+    var sec = el("section", "cfg-sec");
+    sec.id = "cfg-token";
+    sec.appendChild(el("h3", null, "Operator token"));
+    sec.appendChild(el("p", "why", "This is your full-control credential, not a guest link. Changing it revokes old operator sessions and every shared link. Runtime-only: YAML and CLI settings are not edited."));
+    var message = el("p", "why"); message.setAttribute("role", "status");
+    var rotate = el("form", "access-form");
+    var nextToken = accessField(rotate, "New operator token", "New operator token (blank = generate)", true);
+    var rotateButton = el("button", "ghost", "Change operator token");
+    rotate.appendChild(rotateButton);
+    rotate.onsubmit = function (ev) {
+      ev.preventDefault();
+      if (!window.confirm("Change the operator token? All old operator sessions and shared links will be revoked. This is runtime-only; it does not edit mabo-ctl.yaml.")) { return; }
+      rotateButton.disabled = true;
+      request("POST", "/api/access/token", STATUS_TIMEOUT, {token: nextToken.value}).then(function () {
+        nextToken.value = "";
+        window.location.reload(); // the response sets the replacement HttpOnly cookie
+      }).catch(function (err) { rotateButton.disabled = false; message.textContent = err.message; });
+    };
+    sec.appendChild(rotate);
+    sec.appendChild(message);
+    return sec;
+  }
+
+  function accessSection() {
+    var sec = el("section", "cfg-sec"); sec.id = "cfg-access";
+    sec.appendChild(el("h3", null, "Sharing & guests"));
+    sec.appendChild(el("p", "why", "Links expire when serve stops. READ ONLY explores independently; VIEW follows your broadcast; WRITE can start, stop and restart services. No guest can edit configuration, manage access or use terminals. Logs may contain application secrets. Share only with people you trust."));
+    sec.appendChild(el("p", "why", "Use this browser's reachable origin. Loopback URLs work only on this machine; remote access still needs an existing trusted HTTPS tunnel or an explicitly enabled LAN listener."));
+    sec.appendChild(el("p", "access-message why"));
+    var shareGroup = el("fieldset", "access-group"); shareGroup.appendChild(el("legend", null, "Guest links")); sec.appendChild(shareGroup);
+    var form = el("form", "access-form");
+    var name = accessField(form, "Share name", "Person or share name", false);
+    name.required = true;
+    var role = el("select");
+    role.setAttribute("aria-label", "Share access");
+    [["read", "READ ONLY"], ["view", "VIEW (mirror)"], ["write", "WRITE (service controls)"]].forEach(function (item) {
+      var opt = el("option", null, item[1]); opt.value = item[0]; role.appendChild(opt);
+    });
+    form.appendChild(role);
+    var secret = accessField(form, "Custom share token", "Custom token (blank = generate)", true);
+    secret.minLength = 16;
+    var create = el("button", "primary", "Create share link");
+    form.appendChild(create);
+    var link = el("input", "share-url");
+    link.readOnly = true;
+    link.hidden = true;
+    link.setAttribute("aria-label", "New share URL — copy and send this link");
+    var copy = el("button", "ghost tiny", "Copy link");
+    copy.type = "button"; copy.hidden = true;
+    copy.onclick = function () { copyText(link.value, copy, "Copy link"); };
+    form.onsubmit = function (ev) {
+      ev.preventDefault(); create.disabled = true;
+      var chosenRole = role.value;
+      request("POST", "/api/access/shares", STATUS_TIMEOUT, {name: name.value, role: chosenRole, token: secret.value}).then(function (res) {
+        secret.value = "";
+        link.value = window.location.origin + "/?token=" + encodeURIComponent(res.token);
+        link.hidden = false; copy.hidden = false;
+        accessMessage("Copy this link now. Its token is shown only at creation.", false);
+        if (chosenRole === "view") { setBroadcast(true, true); }
+        refreshAccess();
+      }).catch(function (err) { accessMessage(err.message, true); }).then(function () { create.disabled = false; });
+    };
+    shareGroup.appendChild(form); shareGroup.appendChild(link); shareGroup.appendChild(copy);
+    var shares = el("div", "access-list"); shares.id = "access-shares"; shareGroup.appendChild(shares);
+    var broadcastGroup = el("fieldset", "access-group"); broadcastGroup.appendChild(el("legend", null, "Live VIEW broadcast")); sec.appendChild(broadcastGroup);
+    var broadcast = el("label", "access-form");
+    var check = el("input"); check.type = "checkbox"; check.id = "broadcast-tab"; check.checked = broadcasting;
+    check.onchange = function () { setBroadcast(check.checked, check.checked); };
+    broadcast.appendChild(check); broadcast.appendChild(txt("Broadcast this tab to VIEW links (takes over other operator tabs)"));
+    broadcastGroup.appendChild(broadcast);
+    var guestGroup = el("fieldset", "access-group"); guestGroup.appendChild(el("legend", null, "Guest sessions")); sec.appendChild(guestGroup);
+    guestGroup.appendChild(el("p", "why", "Browser sessions, not verified people; tabs using the same link and browser cookie are grouped. Browser/OS are self-reported; the peer address may be a proxy. Active means an authenticated request within 15 seconds, not human activity. Terminate revokes the whole link for everyone using it."));
+    var summary = el("div", "guest-summary"); summary.id = "guest-summary"; summary.setAttribute("role", "status"); guestGroup.appendChild(summary);
+    var tools = el("div", "guest-tools");
+    var search = el("input"); search.type = "search"; search.placeholder = "Search name, role, address, browser, action or session…";
+    search.setAttribute("aria-label", "Search guest sessions"); search.value = guestQuery;
+    search.addEventListener("input", function () { guestQuery = search.value; renderGuestSessions(guestSnapshot); }); tools.appendChild(search);
+    var statusFilter = el("select"); statusFilter.setAttribute("aria-label", "Filter guest session status");
+    [["all", "All sessions"], ["active", "Active"], ["offline", "Offline"], ["revoked", "Revoked"]].forEach(function (item) {
+      var option = el("option", null, item[1]); option.value = item[0]; statusFilter.appendChild(option);
+    });
+    statusFilter.value = guestStatusFilter;
+    statusFilter.addEventListener("change", function () { guestStatusFilter = statusFilter.value; renderGuestSessions(guestSnapshot); }); tools.appendChild(statusFilter); guestGroup.appendChild(tools);
+    var guests = el("div", "access-list"); guests.id = "access-guests"; guestGroup.appendChild(guests);
+    return sec;
+  }
+
+  function revokeAccess(id) {
+    if (!window.confirm("Revoke this shared link and disconnect everyone using it?")) { return; }
+    request("POST", "/api/access/shares/" + encodeURIComponent(id) + "/revoke", STATUS_TIMEOUT, {}).then(function () {
+      accessMessage("Share revoked; its sessions and streams have been disconnected.", false); refreshAccess();
+    }).catch(function (err) { accessMessage(err.message, true); });
+  }
+
+  function refreshAccess() {
+    if (!IS_OWNER || accessBusy || !document.getElementById("access-shares")) { return; }
+    accessBusy = true;
+    request("GET", "/api/access", STATUS_TIMEOUT).then(function (data) {
+      var shares = document.getElementById("access-shares"), guests = document.getElementById("access-guests");
+      if (!shares || !guests) { return; }
+      clear(shares);
+      if (!data.shares.length) { shares.appendChild(el("p", "why", "No shared links.")); }
+      data.shares.forEach(function (s) {
+        var row = el("div", "access-entry");
+        row.appendChild(el("span", "why", s.name + " · " + s.role.toUpperCase() + " · created " + new Date(s.created_at).toLocaleString()));
+        var revoke = el("button", "ghost tiny", "Revoke link");
+        revoke.onclick = function () { revokeAccess(s.id); }; row.appendChild(revoke); shares.appendChild(row);
+      });
+      renderGuestSessions(data.guests || []);
+    }).catch(function (err) { accessMessage(err.message, true); }).then(function () { accessBusy = false; });
+  }
+
+  function guestState(g, now) {
+    return g.revoked ? "revoked" : (now - Date.parse(g.last_seen) < 15000 ? "active" : "offline");
+  }
+
+  function guestClient(agent) {
+    var browser = "Unknown browser", os = "Unknown OS", match;
+    var browsers = [[/Edg(?:e|A|iOS)?\/([\d.]+)/, "Edge"], [/OPR\/([\d.]+)/, "Opera"],
+      [/(?:Firefox|FxiOS)\/([\d.]+)/, "Firefox"], [/(?:Chrome|CriOS)\/([\d.]+)/, "Chrome"], [/Version\/([\d.]+).*Safari\//, "Safari"]];
+    for (var i = 0; i < browsers.length; i++) {
+      match = browsers[i][0].exec(agent || "");
+      if (match) { browser = browsers[i][1] + " " + match[1].split(".")[0]; break; }
+    }
+    if (/iPhone|iPad|iPod/.test(agent)) { os = "iOS / iPadOS"; }
+    else if (/Android/.test(agent)) { os = "Android"; }
+    else if (/Windows NT/.test(agent)) { os = "Windows"; }
+    else if (/CrOS/.test(agent)) { os = "ChromeOS"; }
+    else if (/Macintosh|Mac OS X/.test(agent)) { os = "macOS"; }
+    else if (/Linux/.test(agent)) { os = "Linux"; }
+    return browser + " · " + os;
+  }
+
+  function guestAgo(value, now) {
+    var at = Date.parse(value);
+    if (!isFinite(at)) { return "–"; }
+    var elapsed = Math.max(0, now - at);
+    return elapsed < 2000 ? "just now" : fmtDuration(elapsed) + " ago";
+  }
+
+  function guestCard(g) {
+    var card = {root: el("article", "access-entry guest-card")};
+    var head = el("header", "guest-head");
+    card.name = el("strong"); head.appendChild(card.name);
+    card.id = el("code", "guest-id"); head.appendChild(card.id);
+    card.role = el("span", "guest-role"); head.appendChild(card.role);
+    card.status = el("span", "guest-status"); head.appendChild(card.status);
+    card.terminate = el("button", "ghost tiny", "Terminate / revoke link"); card.terminate.type = "button";
+    card.terminate.onclick = function () { revokeAccess(g.share_id); }; head.appendChild(card.terminate); card.root.appendChild(head);
+    var facts = el("dl", "guest-facts");
+    card.client = fact(facts, "Browser / OS (reported)", txt(""));
+    card.address = fact(facts, "Peer address", txt("")); card.address.title = "Socket peer; may be a proxy. Forwarded addresses and geolocation are not inferred.";
+    card.joined = fact(facts, "First opened", txt(""));
+    card.seen = fact(facts, "Last seen", txt(""));
+    card.span = fact(facts, "Observed span", txt("")); card.span.title = "First open to now, last seen or revocation; may include offline gaps, not continuous human activity.";
+    card.opens = fact(facts, "Page opens", txt(""));
+    card.opens.title = "Console page opens/reloads for this link and browser; same-link tabs are grouped.";
+    card.requests = fact(facts, "API requests", txt("")); card.requests.title = "Authenticated requests, including automatic polling; not mouse or click counts.";
+    card.actions = fact(facts, "Service actions", txt(""));
+    card.root.appendChild(facts);
+    card.action = el("div", "guest-action"); card.root.appendChild(card.action);
+    card.technical = el("details", "guest-technical"); card.technical.appendChild(el("summary", null, "Connection details"));
+    var technical = el("dl", "guest-facts");
+    card.session = fact(technical, "Session ID", txt(g.id));
+    card.share = fact(technical, "Share ID", txt(g.share_id));
+    card.route = fact(technical, "Last API route", txt(""));
+    card.denied = fact(technical, "Blocked by role", txt(""));
+    card.denied.title = "Authenticated role denials, not invalid-token or Host/Origin refusals.";
+    card.revoked = fact(technical, "Revoked at", txt(""));
+    card.technical.appendChild(technical);
+    card.agent = el("code", "guest-agent"); card.technical.appendChild(card.agent);
+    card.root.appendChild(card.technical);
+    return card;
+  }
+
+  function renderGuestSessions(list) {
+    guestSnapshot = list;
+    var container = document.getElementById("access-guests");
+    if (!container) { return; }
+    if (container !== guestContainer) {
+      guestContainer = container; guestCards = Object.create(null);
+      guestEmpty = el("p", "why"); container.appendChild(guestEmpty);
+    }
+    var now = Date.now(), counts = {active: 0, offline: 0, revoked: 0}, rank = {active: 0, offline: 1, revoked: 2};
+    var ordered = list.slice().sort(function (a, b) {
+      return rank[guestState(a, now)] - rank[guestState(b, now)] || Date.parse(b.joined_at) - Date.parse(a.joined_at) || a.id.localeCompare(b.id);
+    });
+    var keep = Object.create(null), cursor = container.firstElementChild, shown = 0;
+    ordered.forEach(function (g) {
+      keep[g.id] = true;
+      var state = guestState(g, now), client = guestClient(g.browser), action = g.last_action;
+      counts[state]++;
+      var search = [g.name, g.role, state, g.address, g.browser, client, g.id, g.share_id,
+        action ? action.operation + " " + action.services.join(" ") + " " + action.outcome : ""].join(" ").toLowerCase();
+      var visible = (guestStatusFilter === "all" || guestStatusFilter === state) && search.indexOf(guestQuery.trim().toLowerCase()) >= 0;
+      var card = guestCards[g.id] || (guestCards[g.id] = guestCard(g));
+      card.root.hidden = !visible; if (visible) { shown++; }
+      card.name.textContent = g.name;
+      card.id.textContent = "#" + g.id.slice(0, 8); card.id.title = g.id;
+      card.role.textContent = g.role === "read" ? "read only" : g.role;
+      card.status.className = "guest-status " + state; card.status.textContent = state;
+      card.terminate.hidden = !!g.revoked;
+      card.client.textContent = client; card.client.title = "Self-reported browser information, not verified device identity.";
+      card.address.textContent = g.address || "Unknown";
+      card.joined.textContent = new Date(g.joined_at).toLocaleString();
+      card.seen.textContent = guestAgo(g.last_seen, now); card.seen.title = new Date(g.last_seen).toLocaleString();
+      var end = g.revoked_at ? Date.parse(g.revoked_at) : (state === "active" ? now : Date.parse(g.last_seen));
+      card.span.textContent = fmtDuration(Math.max(0, end - Date.parse(g.joined_at)));
+      card.opens.textContent = String(g.page_opens || 1);
+      card.requests.textContent = String(g.requests || 0); card.actions.textContent = String(g.actions || 0);
+      card.route.textContent = g.last_request || "No API requests yet"; card.denied.textContent = String(g.denied_requests || 0);
+      card.revoked.textContent = g.revoked_at ? new Date(g.revoked_at).toLocaleString() : "Not revoked";
+      card.agent.textContent = g.browser || "Browser report not supplied";
+      card.action.className = "guest-action" + (action ? " " + action.outcome : "");
+      card.action.textContent = action ? "Last action: " + action.operation + " " + (action.services.length ? action.services.join(", ") : "all services") + " · " + action.outcome + " · " + guestAgo(action.finished_at || action.started_at, now) : "No service actions performed";
+      card.action.title = action ? "Started " + new Date(action.started_at).toLocaleString() + (action.finished_at ? "; finished " + new Date(action.finished_at).toLocaleString() : "") : "Only accepted start/stop/restart operations are counted; no input or activity history is recorded.";
+      if (card.root !== cursor) { container.insertBefore(card.root, cursor); }
+      cursor = card.root.nextElementSibling;
+    });
+    Object.keys(guestCards).forEach(function (id) { if (!keep[id]) { guestCards[id].root.remove(); delete guestCards[id]; } });
+    guestEmpty.hidden = shown > 0;
+    guestEmpty.textContent = list.length ? "No sessions match these filters." : "No guests have joined yet. Create a link above and open it in another browser.";
+    var summary = document.getElementById("guest-summary");
+    var text = counts.active + " active · " + counts.offline + " offline · " + counts.revoked + " revoked · showing " + shown + " of " + list.length + " browser sessions";
+    if (summary && summary.textContent !== text) { summary.textContent = text; }
+  }
+
+  function setBroadcast(on, takeover) {
+    broadcasting = on;
+    if (!on) { forgetPointer(); }
+    setMirrorStatus("");
+    try { sessionStorage.setItem("mabo-ctl.broadcast", on ? "1" : "0"); } catch (e) {}
+    var check = document.getElementById("broadcast-tab"); if (check) { check.checked = on; }
+    if (mirrorBusy) { setTimeout(function () { publishMirror(takeover); }, 500); }
+    else { publishMirror(takeover); }
+  }
+
+  function publishMirror(takeover) {
+    if (!IS_OWNER || !booted || mirrorBusy) { return; }
+    mirrorBusy = true;
+    pointerDirty = false; lastMirrorPublish = Date.now();
+    var metadata = detailEl.querySelector(".service-config");
+    var font = pane.root.querySelector(".log-font input");
+    var safePointer = broadcasting && currentTab !== "terminal" && lastPointer ? pointAt(lastPointer.x, lastPointer.y) : null;
+    var safeClick = broadcasting && currentTab !== "terminal" && lastClick && Date.now() - lastClick.at < 1200
+      ? {point: lastClick.point, sequence: lastClick.sequence} : null;
+    request("POST", "/api/mirror", STATUS_TIMEOUT, {
+      source: mirrorSource, active: broadcasting, takeover: !!takeover, service: selected || "",
+      tab: currentTab || "output", config_section: configSection, all: pane.all, filter: pane.filter.slice(0, 512), level: pane.levelFilter,
+      paused: pane.paused, follow: pane.follow,
+      scroll: Math.max(0, Math.min(1, pane.body.scrollTop / Math.max(1, pane.body.scrollHeight - pane.body.clientHeight))),
+      separators: pane.separatorBox.checked, font_size: Number(font.value), details: !!(metadata && metadata.open),
+      pointer: safePointer, click: safeClick
+    }).then(function () { setMirrorStatus(broadcasting ? "Following this tab." : ""); }).catch(function (err) {
+      if (err.status === 400 || err.status === 403 || err.status === 409) {
+        broadcasting = false;
+        try { sessionStorage.setItem("mabo-ctl.broadcast", "0"); } catch (e) {}
+        var check = document.getElementById("broadcast-tab"); if (check) { check.checked = false; }
+        forgetPointer(); setMirrorStatus("Broadcast stopped");
+      } else {
+        // Sleep/wake and temporary network loss must not disable sharing.
+        // The normal heartbeat retries once this request's deadline expires.
+        setMirrorStatus("Broadcast reconnecting…");
+      }
+      accessMessage(err.message, true);
+    }).then(function () { mirrorBusy = false; });
+  }
+
+  function receiveMirror() {
+    if (ROLE !== "view" || !booted || mirrorBusy || accessEnded) { return; }
+    mirrorBusy = true;
+    request("GET", "/api/mirror", STATUS_TIMEOUT).then(function (m) {
+      setMirrorStatus(m.active ? "following operator" : "waiting for operator broadcast");
+      if (!m.active) { hideRemotePointer(); return; }
+      mirrorApplying = true;
+      try {
+        if (m.service && owns.call(rows, m.service)) { select(m.service, false); }
+        if (m.all !== pane.all) { if (m.all) { pane.bindAll(); } else { pane.bind(selected); } }
+        if (pane.filter !== m.filter || pane.levelFilter !== m.level) {
+          pane.filter = m.filter; pane.filterBox.value = m.filter; pane.setLevelFilter(m.level);
+        }
+        if (pane.paused !== m.paused) { pane.togglePause(); }
+        pane.setFollow(m.follow);
+        pane.separatorBox.checked = m.separators;
+        pane.body.classList.toggle("separated", m.separators);
+        var font = pane.root.querySelector(".log-font input"); font.value = String(m.font_size);
+        font.dispatchEvent(new Event("input"));
+        var metadata = detailEl.querySelector(".service-config"); if (metadata) { metadata.open = m.details; }
+        if (m.follow) { pane.scrollToEnd(); } else { pane.body.scrollTop = m.scroll * Math.max(0, pane.body.scrollHeight - pane.body.clientHeight); }
+        showTab(m.tab);
+        setConfigSection(m.config_section || "overview", false);
+        paintRemotePointer(m);
+      } finally { mirrorApplying = false; }
+    }).catch(function (err) { hideRemotePointer(); setMirrorStatus(err.message); }).then(function () { mirrorBusy = false; });
+  }
+
+  setInterval(function () {
+    if (IS_OWNER && broadcasting && (pointerDirty || Date.now() - lastMirrorPublish >= 500)) { publishMirror(false); }
+    if (ROLE === "view") { receiveMirror(); }
+  }, 100);
+  setInterval(function () { if (IS_OWNER && configOpen() && configSection === "sharing") { refreshAccess(); } }, 3000);
 
   /* =======================================================================
      Trusted origins
@@ -3146,6 +4391,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
   // directory is where the persisted ports that outrank it live.
   function configSource(src) {
     var sec = el("section", "cfg-sec");
+    sec.id = "cfg-source";
     sec.appendChild(el("h3", null, "source"));
     sec.appendChild(el("p", "why",
       "mabo-ctl finds its configuration by walking UP the directory tree, so the " +
@@ -3187,6 +4433,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
 
   function configPorts(list) {
     var sec = el("section", "cfg-sec");
+    sec.id = "cfg-ports";
     sec.appendChild(el("h3", null, "ports — resolved, and why"));
     sec.appendChild(el("p", "why",
       "Precedence, highest first: --ports on the command line, then a " +
@@ -3248,6 +4495,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
 
   function configServices(list) {
     var sec = el("section", "cfg-sec");
+    sec.id = "cfg-services";
     sec.appendChild(el("h3", null, "services — resolved"));
     sec.appendChild(el("p", "why",
       // NOT the literal port template: this page is executed as a Go
@@ -3335,11 +4583,523 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     return card;
   }
 
-  btnConfig.addEventListener("click", function () { showConfig(!configOpen()); });
   document.getElementById("btn-config-reload")
     .addEventListener("click", function () { loadConfig(true); });
-  document.getElementById("btn-config-close")
-    .addEventListener("click", function () { showConfig(false); });
+
+  /* =======================================================================
+     Tabs: Output, Config, API, Terminal
+     ---------------------------------------------------------------------
+     Each tab REPLACES the view right of the sidebar. The service list itself
+     stays on screen in every tab, and so do its shortcuts.
+     ======================================================================= */
+
+  var currentTab = "output";
+  var TAB_VIEWS = {
+    output:   document.getElementById("detail"),
+    config:   configView,
+    api:      document.getElementById("api-view"),
+    terminal: document.getElementById("terminal-workspace")
+  };
+  var tabButtons = document.querySelectorAll(".tabs .tab");
+  var apiFrame = document.getElementById("api-frame");
+
+  var TAB_KEY = "mabo-ctl.tab";
+  var terminalOutput = document.getElementById("terminal-output");
+  var stage = document.querySelector(".stage");
+
+  function placeServiceOutput(docked) {
+    if (docked) {
+      terminalOutput.appendChild(detailEl);
+      detailEl.hidden = false;
+    } else if (detailEl.parentElement !== stage) {
+      stage.insertBefore(detailEl, configView);
+    }
+    pane.setCompact(docked);
+  }
+
+  // No token in the frame's URL: this page already holds the session cookie,
+  // and a credential in a URL is one more place for it to be copied from.
+  function apiSrc() {
+    return "/api-docs?theme=" + (document.documentElement.getAttribute("data-theme") || "light");
+  }
+
+  function showTab(name) {
+    if (ROLE === "view" && !mirrorApplying && booted) { return; }
+    if (!IS_OWNER && name === "terminal") { name = "output"; }
+    if (!owns.call(TAB_VIEWS, name) || name === currentTab) { return; }
+    currentTab = name;
+    try { window.localStorage.setItem(TAB_KEY, name); } catch (e) { /* no storage */ }
+    for (var k in TAB_VIEWS) {
+      if (owns.call(TAB_VIEWS, k)) { TAB_VIEWS[k].hidden = k !== name; }
+    }
+    placeServiceOutput(name === "terminal");
+    for (var i = 0; i < tabButtons.length; i++) {
+      var b = tabButtons[i];
+      b.setAttribute("aria-selected", b.dataset.tab === name ? "true" : "false");
+    }
+    hideTip();
+    if (name === "output" || name === "terminal") { unseenOutput = 0; paintTabBadges(); }
+    if (name === "config") {
+      loadConfig(false);
+      configBody.focus();
+    } else if (name === "api" && !apiFrame.getAttribute("src")) {
+      apiFrame.setAttribute("src", apiSrc());
+    } else if (name === "terminal") {
+      applyOutputHeight(outputHeight, false);
+      terminals.show();
+    }
+  }
+
+  /* One pointer/keyboard splitter implementation for the two actual panes.
+     It changes layout only; no keys or mouse events are sent to a terminal. */
+  var sidebarWidth = 380, outputHeight = 220;
+  var sidebarResize = document.getElementById("sidebar-resizer");
+  var outputResize = document.getElementById("output-resizer");
+  function savedSize(key, fallback) {
+    try { var value = Number(localStorage.getItem(key)); return isFinite(value) && value > 0 ? value : fallback; }
+    catch (e) { return fallback; }
+  }
+  function sidebarBounds() { return [240, Math.max(240, Math.min(600, window.innerWidth - 480))]; }
+  function outputBounds() {
+    var height = TAB_VIEWS.terminal.clientHeight || Math.max(360, window.innerHeight - 180);
+    return [180, Math.max(180, height - 160 - 8)];
+  }
+  function sizeAria(handle, value, bounds) {
+    handle.setAttribute("aria-valuemin", String(bounds[0]));
+    handle.setAttribute("aria-valuemax", String(Math.round(bounds[1])));
+    handle.setAttribute("aria-valuenow", String(Math.round(value)));
+    handle.setAttribute("aria-valuetext", Math.round(value) + " pixels");
+  }
+  function applySidebarWidth(value, persist) {
+    var bounds = window.innerWidth >= 760 ? sidebarBounds() : [240, 600];
+    sidebarWidth = Math.max(bounds[0], Math.min(bounds[1], value));
+    document.documentElement.style.setProperty("--side-w", sidebarWidth + "px");
+    sizeAria(sidebarResize, sidebarWidth, bounds);
+    if (persist) { try { localStorage.setItem("mabo-ctl.sidebar-width", String(sidebarWidth)); } catch (e) {} }
+  }
+  function applyOutputHeight(value, persist) {
+    var bounds = outputBounds();
+    outputHeight = Math.max(bounds[0], Math.min(bounds[1], value));
+    TAB_VIEWS.terminal.style.setProperty("--terminal-output-height", outputHeight + "px");
+    sizeAria(outputResize, outputHeight, bounds);
+    if (persist) { try { localStorage.setItem("mabo-ctl.terminal-output-height", String(outputHeight)); } catch (e) {} }
+  }
+  function installSplitter(handle, vertical, getValue, apply, bounds, reset) {
+    var drag = null;
+    handle.addEventListener("pointerdown", function (ev) {
+      if (ev.button !== 0) { return; }
+      ev.preventDefault();
+      handle.focus({preventScroll: true});
+      drag = {pointer: ev.pointerId, at: vertical ? ev.clientY : ev.clientX, value: getValue()};
+      handle.setPointerCapture(ev.pointerId); document.body.classList.add("resizing");
+    });
+    handle.addEventListener("pointermove", function (ev) {
+      if (!drag || ev.pointerId !== drag.pointer) { return; }
+      var delta = (vertical ? ev.clientY : ev.clientX) - drag.at;
+      apply(drag.value + (vertical ? -delta : delta), false);
+    });
+    function stop(ev) {
+      if (!drag || ev.pointerId !== drag.pointer) { return; }
+      var pointer = drag.pointer; drag = null; document.body.classList.remove("resizing");
+      if (handle.hasPointerCapture(pointer)) { handle.releasePointerCapture(pointer); }
+      if (ev.type === "pointerup") { apply(getValue(), true); }
+    }
+    handle.addEventListener("pointerup", stop); handle.addEventListener("pointercancel", stop); handle.addEventListener("lostpointercapture", stop);
+    handle.addEventListener("dblclick", function () { apply(reset, true); });
+    handle.addEventListener("keydown", function (ev) {
+      var step = ev.shiftKey ? 48 : 16, value = getValue(), range = bounds();
+      if (ev.key === (vertical ? "ArrowUp" : "ArrowRight")) { value += step; }
+      else if (ev.key === (vertical ? "ArrowDown" : "ArrowLeft")) { value -= step; }
+      else if (ev.key === "Home") { value = range[0]; }
+      else if (ev.key === "End") { value = range[1]; }
+      else { return; }
+      ev.preventDefault(); ev.stopPropagation(); apply(value, true);
+    });
+  }
+  applySidebarWidth(savedSize("mabo-ctl.sidebar-width", 380), false);
+  applyOutputHeight(savedSize("mabo-ctl.terminal-output-height", 220), false);
+  installSplitter(sidebarResize, false, function () { return sidebarWidth; }, applySidebarWidth, sidebarBounds, 380);
+  installSplitter(outputResize, true, function () { return outputHeight; }, applyOutputHeight, outputBounds, 220);
+  window.addEventListener("resize", function () { applySidebarWidth(sidebarWidth, false); applyOutputHeight(outputHeight, false); });
+
+  /* Tab badges: Terminal (n) is how many shells are open; Output (+n) is how
+     many log lines arrived while another tab was showing. */
+  var unseenOutput = 0;
+  var terminalCount = 0;
+  var badgeOutput = document.getElementById("badge-output");
+  var badgeTerminal = document.getElementById("badge-terminal");
+
+  function noteUnseenOutput() {
+    if (currentTab === "output" || currentTab === "terminal") { return; }
+    unseenOutput++;
+    paintTabBadges();
+  }
+
+  function setTerminalCount(n) {
+    terminalCount = n;
+    paintTabBadges();
+  }
+
+  function paintTabBadges() {
+    badgeOutput.hidden = unseenOutput === 0;
+    badgeOutput.textContent = unseenOutput > 999 ? "+999" : "+" + unseenOutput;
+    badgeOutput.title = unseenOutput + " new log line" + (unseenOutput === 1 ? "" : "s") + " since you left this tab";
+    badgeTerminal.hidden = terminalCount === 0;
+    badgeTerminal.textContent = String(terminalCount);
+    badgeTerminal.title = terminalCount + " shell" + (terminalCount === 1 ? "" : "s") + " open";
+  }
+
+  for (var ti = 0; ti < tabButtons.length; ti++) {
+    tabButtons[ti].addEventListener("click", function (ev) {
+      showTab(ev.currentTarget.dataset.tab);
+    });
+  }
+
+  /* =======================================================================
+     Terminal tab
+     ---------------------------------------------------------------------
+     Each terminal is a login shell the server keeps on a pty. It outlives
+     this page: a reload reattaches and replays the scrollback, so a long job
+     (or an agent) keeps running while the tab is closed. Output arrives over
+     SSE as base64 and is fed to xterm.js as bytes; keystrokes go out as POSTs
+     through a per-terminal queue that keeps them in order.
+     ======================================================================= */
+
+  // The terminal is always indigo, whatever the page theme. Programs that pick
+  // exact colours (Claude Code, prompt themes) assume a dark background, so a
+  // terminal that turned light with the page would make them unreadable.
+  var TERM_THEME = {
+    background: "#1e1b4b", foreground: "#e0e7ff", cursor: "#a5b4fc", cursorAccent: "#1e1b4b",
+    selectionBackground: "#4338ca",
+    black: "#312e81", red: "#f87171", green: "#4ade80", yellow: "#facc15",
+    blue: "#818cf8", magenta: "#e879f9", cyan: "#22d3ee", white: "#c7d2fe",
+    brightBlack: "#7c7fbf", brightRed: "#fca5a5", brightGreen: "#86efac", brightYellow: "#fde047",
+    brightBlue: "#a5b4fc", brightMagenta: "#f0abfc", brightCyan: "#67e8f9", brightWhite: "#eef2ff"
+  };
+  // The server caps one input body at 1 MiB. JSON escaping can sextuple a
+  // control character, so a chunk stays well under that even in the worst case.
+  var TERM_INPUT_CHUNK = 128 * 1024;
+
+  var terminals = {
+    body: document.getElementById("term-body"),
+    tabsEl: document.getElementById("term-tabs"),
+    note: document.getElementById("term-note"),
+    sessions: Object.create(null),
+    order: [],
+    active: "",
+    libState: "",      // "", "loading", "ready", "failed"
+    libWaiters: [],
+    synced: false,
+    syncing: false,
+    opening: 0,
+
+    enabled: function () { return !!this.body; },
+
+    show: function () {
+      if (!this.enabled()) { return; }
+      var self = this;
+      this.loadLib(function () {
+        if (!self.synced) { self.sync(true); } else { self.sync(false); self.fitActive(); self.focusActive(); }
+      });
+    },
+
+    loadLib: function (cb) {
+      if (this.libState === "ready") { cb(); return; }
+      if (this.libState === "failed") { return; }
+      this.libWaiters.push(cb);
+      if (this.libState === "loading") { return; }
+      this.libState = "loading";
+      this.note.textContent = "loading the terminal…";
+      var self = this;
+      var s = document.createElement("script");
+      s.src = "/assets/xterm.js";
+      s.onload = function () {
+        self.libState = "ready";
+        self.note.textContent = "";
+        var w = self.libWaiters; self.libWaiters = [];
+        for (var i = 0; i < w.length; i++) { w[i](); }
+      };
+      s.onerror = function () {
+        self.libState = "failed";
+        self.note.textContent = "could not load the terminal emulator from this console";
+      };
+      document.head.appendChild(s);
+    },
+
+    // sync attaches every terminal the server has that this page does not, and
+    // on the first visit opens one so the tab is never an empty box.
+    sync: function (first) {
+      if (this.syncing) { return; }
+      this.syncing = true;
+      var self = this;
+      request("GET", "/api/terminals", STATUS_TIMEOUT).then(function (list) {
+        self.synced = true;
+        list = list || [];
+        for (var i = 0; i < list.length; i++) {
+          if (!owns.call(self.sessions, list[i].id)) { self.attach(list[i]); }
+        }
+        setTerminalCount(self.openCount());
+        if (first && !self.order.length && !self.opening) { self.open(); return; }
+        if (!self.active && self.order.length) { self.activate(self.order[self.order.length - 1]); }
+        self.paintEmpty();
+      }).catch(function (err) {
+        self.note.textContent = err.message;
+      }).then(function () { self.syncing = false; });
+    },
+
+    openCount: function () {
+      var n = 0;
+      for (var k in this.sessions) {
+        if (owns.call(this.sessions, k) && !this.sessions[k].dead) { n++; }
+      }
+      return n;
+    },
+
+    // refreshCount keeps the tab badge true while the tab is not open: before
+    // the first visit it only counts the server's shells; after it, it also
+    // attaches any another window opened.
+    refreshCount: function () {
+      if (!this.enabled()) { return; }
+      if (this.synced) { this.sync(false); return; }
+      request("GET", "/api/terminals", STATUS_TIMEOUT).then(function (list) {
+        setTerminalCount((list || []).length);
+      }).catch(function () { /* the badge keeps its last value */ });
+    },
+
+    open: function () {
+      var self = this;
+      this.opening++;
+      var size = this.estimateSize();
+      this.note.textContent = "starting a shell…";
+      request("POST", "/api/terminals", STATUS_TIMEOUT, size).then(function (info) {
+        self.note.textContent = "";
+        self.attach(info);
+        self.activate(info.id);
+      }).catch(function (err) {
+        self.note.textContent = "could not start a shell: " + err.message;
+      }).then(function () { self.opening--; });
+    },
+
+    // estimateSize guesses the grid the pane will hold, so the shell starts at
+    // roughly the right size; the fit after attach makes it exact.
+    estimateSize: function () {
+      var r = this.body.getBoundingClientRect();
+      return { cols: Math.max(20, Math.floor((r.width - 16) / 7.2)), rows: Math.max(5, Math.floor((r.height - 16) / 15.5)) };
+    },
+
+    attach: function (info) {
+      if (owns.call(this.sessions, info.id)) { return; }
+      var self = this, id = info.id;
+      var pane = el("div", "term-pane");
+      pane.hidden = true;
+      this.body.appendChild(pane);
+
+      var tab = el("span", "term-tab");
+      tab.setAttribute("role", "tab");
+      tab.setAttribute("aria-selected", "false");
+      tab.title = "shell " + id + " · pid " + info.pid;
+      var label = el("button", "x-label", "shell " + id);
+      label.type = "button";
+      label.style.cssText = "border:0;background:transparent;padding:0;color:inherit;font:inherit";
+      label.addEventListener("click", function () { self.activate(id); });
+      var x = el("button", "x", "×");
+      x.type = "button";
+      x.title = "Close shell " + id + " (its processes get SIGHUP)";
+      x.setAttribute("aria-label", "close shell " + id);
+      x.addEventListener("click", function () { self.close(id); });
+      tab.appendChild(label);
+      tab.appendChild(x);
+      this.tabsEl.appendChild(tab);
+
+      var term = new window.Terminal({
+        cursorBlink: true,
+        fontFamily: getComputedStyle(document.documentElement).getPropertyValue("--mono"),
+        fontSize: 12,
+        scrollback: 10000,
+        macOptionIsMeta: true,
+        theme: TERM_THEME,
+        // OSC 8 hyperlinks come from whatever the shell prints — a catted file
+        // included. xterm's default handler would follow any scheme, and a
+        // javascript: link opened from this page runs as this page, token and
+        // all. Only http(s) is followed, in a window with no handle back here.
+        linkHandler: {
+          activate: function (ev, uri) {
+            if (/^https?:\/\//i.test(uri)) { window.open(uri, "_blank", "noopener,noreferrer"); }
+          }
+        }
+      });
+      var fit = new window.FitAddon.FitAddon();
+      term.loadAddon(fit);
+      term.loadAddon(new window.WebLinksAddon.WebLinksAddon(function (ev, uri) {
+        window.open(uri, "_blank", "noopener,noreferrer");
+      }));
+      term.open(pane);
+
+      var s = { id: id, pane: pane, tab: tab, term: term, fit: fit, es: null,
+                queue: "", sending: false, dead: false, replaying: 0, resizeTimer: 0 };
+      this.sessions[id] = s;
+      this.order.push(id);
+
+      term.onData(function (d) { if (!s.replaying) { self.send(s, d); } });
+      term.onResize(function (sz) {
+        clearTimeout(s.resizeTimer);
+        s.resizeTimer = setTimeout(function () {
+          if (s.dead) { return; }
+          request("POST", "/api/terminals/" + encodeURIComponent(id) + "/resize", STATUS_TIMEOUT,
+            { cols: sz.cols, rows: sz.rows }).catch(function () { /* the stream reports an end */ });
+        }, 80);
+      });
+      this.stream(s);
+      this.paintEmpty();
+      setTerminalCount(this.openCount());
+    },
+
+    // stream opens the output. Every (re)connect replays the scrollback, so the
+    // screen is reset first; the server ends with {end:true} when the shell exits.
+    stream: function (s) {
+      var self = this;
+      var es = new EventSource(credentialURL("/api/terminals/" + encodeURIComponent(s.id) + "/stream"));
+      s.es = es;
+      es.onopen = function () { if (!s.dead) { s.term.reset(); } };
+      es.onmessage = function (ev) {
+        // A frame queued before the tab was closed must not be written to a
+        // terminal that has already been disposed.
+        if (s.dead) { return; }
+        var msg;
+        try { msg = JSON.parse(ev.data); } catch (e) { return; }
+        if (msg.data && msg.replay) {
+          // The scrollback carries old terminal queries; xterm would answer
+          // them again and the answers would land at the shell prompt as
+          // typed garbage. Nothing generated while a replay is parsed is
+          // sent; counting rather than a flag covers a reconnect arriving
+          // before the previous replay finished.
+          s.replaying++;
+          s.term.write(b64bytes(msg.data), function () { s.replaying--; });
+        } else if (msg.data) {
+          s.term.write(b64bytes(msg.data));
+        }
+        if (msg.end) { self.ended(s); }
+      };
+      es.onerror = function () {
+        // A closed EventSource (404: the shell is gone) does not retry; one
+        // that is merely reconnecting does, and replays on its next open.
+        if (es.readyState === 2) { self.ended(s); }
+      };
+    },
+
+    ended: function (s) {
+      if (s.dead) { return; }
+      s.dead = true;
+      if (s.es) { s.es.close(); s.es = null; }
+      s.tab.classList.add("dead");
+      setTerminalCount(this.openCount());
+      s.term.write("\r\n\x1b[2m[shell " + s.id + " exited — close the tab to dismiss it]\x1b[0m\r\n");
+    },
+
+    send: function (s, data) {
+      if (s.dead) { return; }
+      s.queue += data;
+      if (!s.sending) { this.flush(s); }
+    },
+
+    flush: function (s) {
+      var self = this;
+      if (!s.queue || s.dead) { s.sending = false; return; }
+      s.sending = true;
+      var chunk = s.queue.slice(0, TERM_INPUT_CHUNK);
+      s.queue = s.queue.slice(chunk.length);
+      request("POST", "/api/terminals/" + encodeURIComponent(s.id) + "/input", STATUS_TIMEOUT, { data: chunk })
+        .catch(function (err) { self.note.textContent = "input not delivered: " + err.message; })
+        .then(function () { self.flush(s); });
+    },
+
+    activate: function (id) {
+      if (!owns.call(this.sessions, id)) { return; }
+      this.active = id;
+      for (var k in this.sessions) {
+        if (!owns.call(this.sessions, k)) { continue; }
+        var s = this.sessions[k];
+        s.pane.hidden = k !== id;
+        s.tab.setAttribute("aria-selected", k === id ? "true" : "false");
+      }
+      this.fitActive();
+      this.focusActive();
+    },
+
+    close: function (id) {
+      var s = this.sessions[id];
+      if (!s) { return; }
+      if (!s.dead && !window.confirm("Close shell " + id + "? Everything running in it gets SIGHUP.")) { return; }
+      var self = this;
+      var finish = function () {
+        if (s.es) { s.es.close(); }
+        s.term.dispose();
+        s.pane.parentNode.removeChild(s.pane);
+        s.tab.parentNode.removeChild(s.tab);
+        delete self.sessions[id];
+        self.order.splice(self.order.indexOf(id), 1);
+        if (self.active === id) {
+          self.active = "";
+          if (self.order.length) { self.activate(self.order[self.order.length - 1]); }
+        }
+        self.paintEmpty();
+        setTerminalCount(self.openCount());
+      };
+      if (s.dead) { finish(); return; }
+      s.dead = true;
+      request("POST", "/api/terminals/" + encodeURIComponent(id) + "/close", MUTATE_TIMEOUT)
+        .catch(function () { /* already gone */ })
+        .then(finish);
+    },
+
+    fitActive: function () {
+      var s = this.active && this.sessions[this.active];
+      if (!s || s.pane.hidden || currentTab !== "terminal") { return; }
+      try { s.fit.fit(); } catch (e) { /* not laid out yet */ }
+    },
+
+    focusActive: function () {
+      var s = this.active && this.sessions[this.active];
+      if (s && currentTab === "terminal") { s.term.focus(); }
+    },
+
+    paintEmpty: function () {
+      var empty = this.body.querySelector(".term-empty");
+      if (this.order.length) {
+        if (empty) { empty.parentNode.removeChild(empty); }
+        return;
+      }
+      if (!empty) {
+        this.body.appendChild(el("div", "term-empty",
+          "No shell is open. + New starts one in the repository root."));
+      }
+    }
+  };
+
+  function b64bytes(s) {
+    var bin = atob(s), out = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) { out[i] = bin.charCodeAt(i); }
+    return out;
+  }
+
+  if (terminals.enabled()) {
+    document.getElementById("btn-term-new").addEventListener("click", function () {
+      terminals.loadLib(function () { terminals.open(); });
+    });
+    window.addEventListener("resize", function () { terminals.fitActive(); });
+    if (window.ResizeObserver) {
+      new ResizeObserver(function () { terminals.fitActive(); }).observe(terminals.body);
+    }
+    terminals.refreshCount();
+  }
+
+  // The open tab survives a reload — the one moment a terminal user most needs
+  // to land back where they were.
+  (function () {
+    var saved = null;
+    try { saved = window.localStorage.getItem(TAB_KEY); } catch (e) { /* no storage */ }
+    if (saved && saved !== "output") { showTab(saved); }
+  }());
 
   /* =======================================================================
      Keyboard
@@ -3364,18 +5124,20 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
 
     if (ev.key === "/" && !typing && !ev.metaKey && !ev.ctrlKey && !ev.altKey) {
       ev.preventDefault();
-      // The filter belongs to the service list, so asking for it asks for the
-      // list back: focusing an input inside a hidden view does nothing.
-      showConfig(false);
+      // The filter lives in the full sidebar; focusing it inside the rail
+      // would do nothing.
+      if (railOn) { setRail(false, false); }
       filterEl.focus();
       filterEl.select();
       return;
     }
     if (typing || ev.metaKey || ev.ctrlKey || ev.altKey) { return; }
+    // Every key inside a terminal belongs to the shell.
+    if (t && t.closest && t.closest("#terminal-view")) { return; }
 
-    if (ev.key === "Escape" && configOpen()) {
+    if (ev.key === "Escape" && currentTab !== "output") {
       ev.preventDefault();
-      showConfig(false);
+      showTab("output");
       return;
     }
     if (ev.key === "c") {
@@ -3383,10 +5145,11 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
       showConfig(!configOpen());
       return;
     }
-    // Every remaining shortcut acts on the service list, which the config view
-    // has replaced. Moving or starting something the reader cannot see is worse
-    // than doing nothing.
-    if (configOpen()) { return; }
+    if (ev.key === "b") {
+      ev.preventDefault();
+      setRail(!railOn, true);
+      return;
+    }
 
     // Arrow keys inside the detail pane belong to whatever is scrolling there.
     var inDetail = t && t.closest && t.closest("#detail");
@@ -3418,7 +5181,9 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
      ======================================================================= */
 
   var pollTimer = 0;
-  var polling = false;
+  var pollWatchdog = 0;
+  var pollCtl = null;
+  var pollSeq = 0;
 
   function pollInterval() {
     return document.visibilityState === "hidden" ? POLL_HIDDEN_MS : POLL_VISIBLE_MS;
@@ -3431,20 +5196,36 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
 
   function pollNow() {
     clearTimeout(pollTimer);
-    if (polling) { return; }   // never let slow health probes stack up
-    polling = true;
-    request("GET", "/api/status", STATUS_TIMEOUT)
+    clearTimeout(pollWatchdog);
+    // A poll still in flight is not necessarily slow: after a sleep/wake or a
+    // frozen tab a fetch can hang without ever settling. Abandon it and start
+    // over, or a single stuck promise would latch the page forever.
+    if (pollCtl) { pollCtl.abort(); }
+    var seq = ++pollSeq;
+    var ctl = new AbortController();
+    pollCtl = ctl;
+    // The abort above is the normal way the old fetch settles. This is the
+    // backstop for a browser whose network stack never rejects it.
+    pollWatchdog = setTimeout(function () {
+      if (seq === pollSeq) { pollNow(); }
+    }, STATUS_TIMEOUT + 4000);
+
+    request("GET", "/api/status", STATUS_TIMEOUT, null, ctl)
       .then(function (list) {
+        if (seq !== pollSeq) { return; }   // a newer poll owns the page
         health.poll = "ok";
         health.pollWhy = "";
         applyStatuses(list || []);
       })
       .catch(function (err) {
+        if (seq !== pollSeq) { return; }
         health.poll = "down";
         health.pollWhy = err.message;
       })
       .then(function () {
-        polling = false;
+        if (seq !== pollSeq) { return; }
+        clearTimeout(pollWatchdog);
+        pollCtl = null;
         paintHealth();
         schedulePoll();
       });
@@ -3502,8 +5283,27 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
   }
 
   document.addEventListener("visibilitychange", function () {
-    if (document.visibilityState === "visible") { pollNow(); }
-    else { schedulePoll(); }
+    if (document.visibilityState === "visible") {
+      pollNow();
+      recoverStreams();
+    } else {
+      schedulePoll();
+    }
+  });
+
+  // A tab restored from the back/forward cache, and a machine that just came
+  // back online, both need the same thing: stop trusting connections that were
+  // opened before the interruption.
+  window.addEventListener("pageshow", function (ev) {
+    if (ev.persisted) {
+      pollNow();
+      recoverStreams();
+    }
+  });
+
+  window.addEventListener("online", function () {
+    pollNow();
+    recoverStreams();
   });
 
   // Uptime is derived from a timestamp, so it must tick between polls or it
@@ -3513,6 +5313,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
       if (owns.call(rows, k)) { rows[k].paintUptime(); }
     }
     detail.paintUptime();
+    if (tipRow) { paintTip(); }
   }, 1000);
 
   /* =======================================================================
@@ -3520,6 +5321,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
      ======================================================================= */
 
   var eventsES = null, eventsRetryAt = RECONNECT_MIN, eventsTimer = 0;
+  var eventsOpenedAt = 0;
 
   function openEvents() {
     closeEvents();
@@ -3527,14 +5329,16 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     paintHealth();
 
     var es;
-    try { es = new EventSource("/api/events"); }
+    try { es = new EventSource(credentialURL("/api/events")); }
     catch (e) {
+      eventsOpenedAt = 0;
       health.events = "down";
       health.eventsWhy = "this browser cannot open an event stream";
       paintHealth();
       return;
     }
     eventsES = es;
+    eventsOpenedAt = Date.now();
 
     es.onopen = function () {
       eventsRetryAt = RECONNECT_MIN;
@@ -3549,9 +5353,14 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
       health.events = "live";
       paintHealth();
 
-      if (e.msg === "config change detected; reload configuration?") {
+      if (e.msg === CONFIG_CHANGED) {
         showConfigChange();
-        activity([{ text: "configuration changed; reload is waiting for confirmation" }]);
+        activity([{ text: "mabo-ctl.yaml changed; the reload is waiting for you to confirm it" }]);
+        return;
+      }
+      if (e.msg === CONFIG_CURRENT) {
+        hideConfigChange();
+        activity([{ text: "mabo-ctl.yaml matches the configuration in force again" }]);
         return;
       }
 
@@ -3573,9 +5382,6 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
       var text = (e.phase ? "[" + e.phase + "] " : "") + (e.msg || "");
       if (e.error) { text += (text ? " — " : "") + e.error; }
       if (!text) { return; }
-      if (e.service && e.service === selected) {
-        pane.push("— " + text, e.error ? "err" : "meta");
-      }
       activity([{ kind: e.error ? "err" : "", text: (e.service ? e.service + " " : "") + text }]);
       pollSoon();
     };
@@ -3607,7 +5413,29 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
       eventsES.close();
       eventsES = null;
     }
+    eventsOpenedAt = 0;
   }
+
+  // recoverStreams reopens a transport that is closed, or that has been stuck
+  // CONNECTING since before a sleep. An OPEN stream is left alone: reopening it
+  // would replay the tail and duplicate lines. EventSource reconnects after a
+  // clean drop, but a tab restored from sleep can sit in CONNECTING forever.
+  function recoverStreams() {
+    // Until the first service list arrives there is no pane or event stream to
+    // recover; loadServices owns its own retry and will open both on success.
+    if (!booted) { return; }
+    terminals.refreshCount();
+    if (eventsES === null || eventsES.readyState === 2 ||
+        (eventsES.readyState === 0 && Date.now() - eventsOpenedAt > RECONNECT_MAX)) {
+      openEvents();
+    }
+    pane.recover();
+  }
+
+  // A tab that was visible before the lid closed is still visible after it, so
+  // neither visibilitychange nor online may fire on wake. This timer is the
+  // backstop that reopens a stream stuck in CONNECTING across a sleep.
+  setInterval(recoverStreams, RECONNECT_MAX);
 
   var soonTimer = 0;
   function pollSoon() {
@@ -3638,7 +5466,8 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     }
     // A prefix, never the whole credential: a screenshot of this page must not
     // hand over control of the stack.
-    tokenVal.textContent = TOKEN.slice(0, 8) + "…";
+    tokenVal.textContent = IS_OWNER ? TOKEN.slice(0, 8) + "…" : ROLE.toUpperCase();
+    btnCopyToken.hidden = !IS_OWNER;
     btnCopyToken.addEventListener("click", function () {
       copyText(TOKEN, btnCopyToken, "Copy");
     });
@@ -3652,19 +5481,16 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     detailEl.appendChild(box);
   }
 
-  function boot() {
-    paintToken();
-    buildTiles();
-    paintTiles();
+  var booted = false;
+  var bootTimer = 0;
+  var bootRetryAt = 1000;
 
-    if (!TOKEN) {
-      activity([{
-        kind: "err",
-        text: "No session token found in this page, so start, stop and restart " +
-              "would be refused. Reopen the URL mabo-ctl printed."
-      }]);
-    }
-
+  // loadServices is the page's first request. A tab the browser reloaded while
+  // the machine was still waking can run it against a network stack that has
+  // not come back yet; retrying is what makes that recover on its own instead
+  // of leaving a dead "Cannot reach mabo-ctl" page until a manual reload.
+  function loadServices() {
+    clearTimeout(bootTimer);
     request("GET", "/api/services", STATUS_TIMEOUT).then(function (list) {
       services = list || [];
       clear(listEl);
@@ -3692,6 +5518,15 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
       var first = visibleNames();
       select(first.length ? first[0] : services[0].name, false);
 
+      booted = true;
+      if (!IS_OWNER) {
+        var terminalTab = document.querySelector('[data-tab="terminal"]');
+        if (terminalTab) { terminalTab.hidden = true; }
+      }
+      if (ROLE === "view") {
+        document.querySelectorAll(".tabs button, .log-bar button, .log-bar input").forEach(function (b) { b.disabled = true; });
+        receiveMirror();
+      }
       openEvents();
       pollNow();
     }).catch(function (err) {
@@ -3699,7 +5534,26 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
       health.pollWhy = err.message;
       paintHealth();
       fatal("Cannot reach mabo-ctl", err.message);
+      bootTimer = setTimeout(loadServices, bootRetryAt);
+      bootRetryAt = Math.min(bootRetryAt * 2, RECONNECT_MAX);
     });
+  }
+
+  function boot() {
+    paintToken();
+    buildTiles();
+    paintTiles();
+    replayStashedActivity();
+
+    if (!TOKEN) {
+      activity([{
+        kind: "err",
+        text: "No session token found in this page, so start, stop and restart " +
+              "would be refused. Reopen the URL mabo-ctl printed."
+      }]);
+    }
+
+    loadServices();
   }
 
   boot();

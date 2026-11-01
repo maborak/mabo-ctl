@@ -124,6 +124,7 @@ console_addr: "127.0.0.1:9000"   # optional: address `mabo-ctl serve` binds when
                       # no --addr is given (default 127.0.0.1:7999)
 # console_access_key: "..."      # optional; --access-key overrides it; absent
                                  # means a random key is generated per run
+# console_terminal: true         # optional; enables the console's Terminal tab
 
 services:
   - name: website
@@ -268,7 +269,7 @@ Leave the key out to inherit the global.
 | `mabo-ctl shell <name>` | Run a declared `shells:` entry, or open `$SHELL` in a service's environment. |
 | `mabo-ctl attach <svc>` | Connect your terminal to a service declared `tty: true`, through the broker beside it. Ctrl-Q detaches; one session at a time, and detaching never stops the service. |
 | `mabo-ctl open` | Hand each running service's URL — its `open:` target when declared, else the derived origin — to `open` (macOS) or `xdg-open` (Linux). |
-| `mabo-ctl serve [--addr] [--access-key] [--open] [--notify] [--i-know-this-is-dangerous]` | Serve the web console on `127.0.0.1:7999` — or the `console_addr` in `mabo-ctl.yaml` — until interrupted; if that port is already taken by another server, it falls back to a kernel-chosen free port and prints the real address. `--access-key` overrides `console_access_key`; absent keys are generated randomly. `--notify` announces dying services on the desktop. It can start and stop services — see [Web console](#web-console). |
+| `mabo-ctl serve [--addr] [--access-key] [--open] [--notify] [--terminal] [--i-know-this-is-dangerous]` | Serve the web console on `127.0.0.1:7999` — or the `console_addr` in `mabo-ctl.yaml` — until interrupted; if that port is already taken by another server, it falls back to a kernel-chosen free port and prints the real address. `--access-key` overrides `console_access_key`; absent keys are generated randomly. `--notify` announces dying services on the desktop. `--terminal` enables the Terminal tab. It can start and stop services — see [Web console](#web-console). |
 | `mabo-ctl init` | Scaffold a fully commented-out `mabo-ctl.yaml` from what the repo looks like (`package.json` + `.nvmrc`, `manage.py`, `pyproject.toml`, `Cargo.toml`). Refuses to overwrite; adds `.mabo-ctl/` to `.gitignore`; runs nothing it finds. |
 | `mabo-ctl --version` | The full build report: commit, dirty flag, when it was linked, toolchain, platform and dependencies. Paste it whole into bug reports — [SECURITY.md](SECURITY.md) asks for exactly this output. |
 | `mabo-ctl completion <bash\|zsh\|fish\|powershell>` | Print a completion script. |
@@ -535,10 +536,20 @@ opens the same console with the stack already coming up in it.
 ↑/↓ or j/k  select      s  start     x  stop      r  restart
 a  start all            S  stop all  l or tab  focus the log pane
 /  filter logs          g/G  top/bottom          ?  help      q  quit
+L  reload mabo-ctl.yaml (asks first)
 ```
 
 Quitting does **not** stop the supervised services. They were spawned with
 `setsid` and mabo-ctl is not their parent.
+
+When `mabo-ctl.yaml` — or an `env_file` it names — no longer matches the
+configuration in force, the title bar says `YAML changed · L reloads`. `L` asks
+before it does anything, then restarts each running service whose command,
+directory, environment, port or `tty` changed, stops each running service the
+file no longer declares, and leaves everything else running; a colour, probe or
+hook edit restarts nothing. `mabo-ctl serve` offers the same reload from the
+browser. Quitting while a reload runs waits for it to finish; quit again to
+leave at once.
 
 ## The prompt
 
@@ -592,6 +603,108 @@ place. The log pane's **All** toggle streams every service into the same pane,
 each line labelled with its service — and the text filter and level chips then
 search across all of them at once, which is the web form of `mabo-ctl logs all`.
 
+The page has four tabs. **Output** is the service list and the log pane; the
+list is a sidebar that `b` (or its `«` button) collapses to a rail of phase
+icons, each with a hover card carrying the port, pid, uptime and probe.
+Click a service (or select it with Enter/Space) to open Output for that service,
+even when it was already selected or the log pane was showing all services.
+In **Terminal**, the same action keeps the shell visible and selects that
+service in the compact Output pane underneath instead.
+**Config** is the resolved configuration, **API** the interactive API
+reference, and **Terminal** a set of real shells (below). **Restart all**
+restarts only the services that are running — stopped ones stay stopped. The
+theme follows the system or is pinned to light or dark; the theme, the sidebar
+and the open tab are remembered by the browser. The tabs carry badges:
+**Terminal 2** is how many shells are open, and **Output +22** is how many log
+lines arrived while Output was hidden (Config/API). It clears when normal or
+docked Output becomes visible.
+The web console, terminal, API reference and unlock page use **Monaco**, with
+monospace fallbacks. Repository paths are under CONFIG → Overview.
+
+Drag the sidebar's right edge to resize it. In Terminal, drag the horizontal
+divider to resize the terminal/Output split. Both handles support arrow keys
+(Shift for larger steps), Home/End and double-click to reset; sizes are remembered
+by the browser. The terminal's Output pane has smaller controls and 10px log text
+by default, with its own font-size setting independent of normal Output's 12px
+default. Both layouts use the same log pane and stream. Resizing refits the
+terminal grid without restarting the shell.
+
+Output keeps a compact **SYSTEM COMMANDS** section pinned above service logs.
+It shows requested actions, live lifecycle progress and final results in smaller,
+accent-colored text. Log scrolling, filters and Pause do not hide command
+progress; clearing the command history leaves the section visible.
+Severity filters show the selected level with a solid accent and checkmark.
+Enable **Separators** for extra spacing and dashed borders between log entries;
+wrapped text stays within its entry.
+The adjacent **A− / A+** slider adjusts log text from 10–18px (12px by default).
+Health sits beside Ready in; log file, command and arguments live in an
+expandable section that starts closed. System Commands uses a translucent
+background without fading its text.
+
+**CONFIG** has separate sections: **Overview** (repository settings and port
+resolution), **Services** (resolved per-service declarations), **Sharing & guests**
+(guest links, live VIEW broadcasting and session monitoring), and **Security**
+(operator token and trusted origins). The last two are operator-only. Switching
+sections preserves form values and expanded guest details; the chosen section
+is remembered. VIEW follows only Overview/Services and sees Overview when the
+operator opens a private section. No security settings are mirrored.
+
+**CONFIG → Sharing & guests** creates named sharing links with a generated or
+custom token (custom: at least 16 characters). Change the operator token under
+**CONFIG → Security**, not in the guest-link form:
+
+| Link | Access |
+|------|--------|
+| **READ ONLY** | Inspect configuration/status/logs and navigate independently |
+| **VIEW** | Read-only, following the operator's broadcast tab, selected service and log controls |
+| **WRITE** | Read plus start/stop/restart services, including bulk controls |
+
+Guests cannot edit configuration, trusted origins or tokens, manage shares, or
+use terminals. Creating a VIEW link enables **Broadcast this tab**; keep that
+operator tab open. Another operator tab can explicitly take over. This mirrors
+navigation and log presentation, not screen pixels; log history and wrapping
+may differ. Terminal contents, security forms and credentials are never mirrored.
+VIEW shows the operator's cursor and a short click ripple, without executing
+those clicks in the viewer's browser. Only the latest position/recent click is
+shared. Pointer tracking captures no movement history, element text or form
+values; the existing log search still mirrors normally. Tracking is
+limited to the service sidebar, tabs, output and non-security CONFIG sections;
+API iframe and terminal contents are excluded. A translucent top banner shows
+each guest's READ ONLY/VIEW/WRITE access; the broadcasting operator sees a
+reminder that their console cursor and clicks are visible to VIEW guests.
+
+The guest dashboard supports search and status filters. Session cards show
+role/status, reported browser/OS, peer address, first/last seen, observed span,
+page opens, request/role-denial counts, and the latest service action's outcome.
+**Connection details** contains session/link IDs, the last API route, raw browser
+report and revocation time. Refreshes preserve expanded cards and button focus.
+
+Browser reports are unverified; polling is not human activity, and observed spans
+can include offline gaps. Same-link tabs in one browser are grouped; different
+links have separate records. No location or activity history is collected.
+**Terminate / revoke link** disconnects everyone using that link and blocks
+rejoining. Use one link per person for independent revocation. This cannot erase
+copied data or undo accepted service actions. Logs may contain application
+secrets; share only with trusted people. Remote sharing requires an existing
+trusted HTTPS tunnel or an explicitly enabled LAN listener. Creating a link
+does not change the listener or its Host/Origin checks.
+
+Shares and guest history last only for the current `serve` run. Changing the
+operator token revokes all existing shares and sessions, while keeping the
+changing browser logged in with a replacement cookie. Token changes in CONFIG
+are runtime-only: they do not edit YAML/CLI settings, which apply again when
+`serve` restarts or configuration changes. Generated share tokens are shown
+only once; copy the new URL when it is created.
+
+**Terminal** is opt-in: use `mabo-ctl serve --terminal` or set
+`console_terminal: true`. Each session runs a login shell (`$SHELL -l`) in the
+repository root. The xterm.js emulator supports interactive programs such as
+Claude Code, OpenCode, vim and htop. Shells keep running when
+the tab is closed or reloaded — the page reattaches and replays the scrollback —
+and are hung up when `serve` stops. A shell runs as you, so the terminal is
+refused on a non-loopback console and to a browser arriving through
+`--allow-origin`; see [SECURITY.md](SECURITY.md).
+
 ```sh
 $ mabo-ctl serve
 mabo-ctl console listening on 127.0.0.1:7999
@@ -615,12 +728,12 @@ running, exactly like quitting the TUI — a console held open at the prompt is
 stopped by `unserve` or by leaving the prompt instead, because there Ctrl-C
 belongs to the line you are typing.
 
-**Config** — the button in the top bar, or `c` — swaps the service list for the
-resolved configuration: which `mabo-ctl.yaml` was loaded, the repo root, the state
+**Config** — the button in the top bar, or `c` — leaves the sidebar visible and
+opens its sectioned workspace. **Overview** shows which `mabo-ctl.yaml` was loaded, the repo root, the state
 directory, the effective `stop_grace` and `ready_timeout`, and a table of every
 service's resolved port **with the precedence level that produced it** —
 `flag`, `env`, `run.env` or `default` — flagging a persisted port that is
-outranking a declared default you have since changed. Below it, per service: the
+outranking a declared default you have since changed. **Services** shows, per service: the
 absolute `cmd[0]` the declared runtime chose, the working directory, the
 expanded health URL, the declared environment and `depends_on`. It is a separate
 view rather than extra rows, so the service list still fits your whole stack on

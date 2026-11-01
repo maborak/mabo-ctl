@@ -92,7 +92,15 @@ func (m Model) titleView() string {
 		}
 	}
 	right := fmt.Sprintf("%d/%d up", ready, len(m.statuses))
+	// An edited mabo-ctl.yaml is announced here rather than on the notice
+	// line: it stays true until the operator acts, and on the notice line it
+	// either hid every operation's progress or was hidden by it.
+	if m.configChanged && m.reload == nil {
+		right = "YAML changed · L reloads · " + right
+	}
 
+	// The root gives way first: the right-hand side is the part that changes.
+	left = truncate(left, max(1, m.width-utf8.RuneCountInString(right)-1))
 	gap := m.width - utf8.RuneCountInString(left) - utf8.RuneCountInString(right)
 	text := left + strings.Repeat(" ", max(gap, 1)) + right
 	return titleStyle.Render(truncate(text, m.width))
@@ -301,12 +309,21 @@ func (m Model) logView() []string {
 	return out[:h]
 }
 
-// noticeView is the single line above the key hints: the newest supervisor
-// event, or the newest error, which outranks it. An error is never dropped
-// silently — that is the failure mode this whole tool exists to stop.
+// noticeView is the single line above the key hints: the reload question
+// while it is open, else the newest error — an operation's, then a reload's —
+// else the newest supervisor event. An error is never dropped silently — that
+// is the failure mode this whole tool exists to stop.
 func (m Model) noticeView() string {
-	if m.err != nil {
-		text := errRenderer.Error(m.err)
+	if m.confirmReload {
+		return errorStyle.Render(truncate(
+			"Reload mabo-ctl.yaml? y reloads, any other key cancels · changed running services restart, removed ones stop",
+			m.width))
+	}
+	for _, err := range []error{m.err, m.reloadErr} {
+		if err == nil {
+			continue
+		}
+		text := errRenderer.Error(err)
 		if i := strings.IndexByte(text, '\n'); i >= 0 {
 			text = text[:i] + " …"
 		}
@@ -348,12 +365,13 @@ var helpLines = []struct{ key, what string }{
 	{"r", "restart the selected service"},
 	{"a", "start every service"},
 	{"S", "stop every service"},
+	{"L", "reload mabo-ctl.yaml after asking: restarts the services an edit changes, stops removed ones"},
 	{"l, tab", "focus the log pane; tab or esc returns to the list"},
 	{"/", "filter log lines (enter applies, esc cancels, empty clears)"},
 	{"g, G", "jump to the top or the bottom of the log; G resumes following"},
 	{"pgup/pgdn", "page the log pane"},
 	{"?", "toggle this help"},
-	{"q, ctrl-c", "quit the console"},
+	{"q, ctrl-c", "quit the console (during a reload: once it finishes; press again to quit now)"},
 }
 
 // helpNote is printed under the key table, and is the reason the overlay

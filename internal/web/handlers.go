@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/maborak/mabo-ctl/internal/redact"
@@ -53,27 +52,29 @@ var rapidocJS string
 var openapiSpec string
 
 // contentSecurityPolicy is served with the page. It permits the inline style
-// and script the single-file page is made of, and same-origin fetch and
-// EventSource, and nothing else at all: no remote script, no remote style, no
-// remote font, no image beyond a data: URI, no framing, no form submission.
-// It is the mechanical enforcement of "the page makes no external requests".
+// and script the single-file page is made of, the same-origin terminal bundle
+// (/assets/xterm.js), same-origin fetch and EventSource, and the same-origin
+// API reference in the API tab's frame — and nothing else at all: no remote
+// script, no remote style, no remote font, no image beyond a data: URI, no
+// framing BY anyone, no form submission. It is the mechanical enforcement of
+// "the page makes no external requests".
 const contentSecurityPolicy = "default-src 'none'; " +
-	"script-src 'unsafe-inline'; " +
+	"script-src 'unsafe-inline' 'self'; " +
 	"style-src 'unsafe-inline'; " +
 	"img-src 'self' data:; " +
 	"connect-src 'self'; " +
 	"font-src 'self' data:; " +
+	"frame-src 'self'; " +
 	"base-uri 'none'; " +
 	"form-action 'none'; " +
 	"frame-ancestors 'none'"
 
-// docsCSP is served with the AUTHENTICATED /api-docs page, and differs from
-// [contentSecurityPolicy] in exactly one way: script-src gains 'self'. The
-// docs page loads the RapiDoc bundle from the same origin
-// (/api-docs/rapidoc.js) rather than executing the console's inline-only
-// script, and 'self' admits exactly that file. Everything else stays as
-// locked-down as the console: no remote script, style, font or image, no
-// framing, same-origin connect only.
+// docsCSP is served with the AUTHENTICATED /api-docs page. Its script-src
+// 'self' admits the RapiDoc bundle (/api-docs/rapidoc.js), and it differs from
+// [contentSecurityPolicy] in its frame-ancestors: 'self', because the
+// console's API tab frames this page. Only a page of this same origin may do
+// that — which is to say only the console — so a foreign page still cannot
+// frame it. Everything else stays as locked-down as the console.
 const docsCSP = "default-src 'none'; " +
 	"script-src 'unsafe-inline' 'self'; " +
 	"style-src 'unsafe-inline'; " +
@@ -82,7 +83,7 @@ const docsCSP = "default-src 'none'; " +
 	"font-src 'self' data:; " +
 	"base-uri 'none'; " +
 	"form-action 'none'; " +
-	"frame-ancestors 'none'"
+	"frame-ancestors 'self'"
 
 // unlockCSP is served with the unlock page, and differs from
 // [contentSecurityPolicy] in exactly two ways, both forced by what that page is.
@@ -211,7 +212,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 // fetches the spec itself from /api/openapi.yaml (both same-origin requests,
 // authenticated by the session cookie or the api-key header).
 func (s *Server) handleDocs(w http.ResponseWriter, r *http.Request) {
-	ok, fromQuery := s.session(r)
+	a, fromQuery, ok := s.requestAccess(r)
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 
@@ -222,12 +223,15 @@ func (s *Server) handleDocs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Security-Policy", docsCSP)
+	// guard sets DENY on every response; this page alone may be framed, and
+	// only by the console it belongs to.
+	w.Header().Set("X-Frame-Options", "SAMEORIGIN")
 	if fromQuery {
-		s.setSessionCookie(w)
+		s.setCredentialCookie(w, a.Credential)
 	}
 	// The markers appear in the <rapi-doc> attributes (and once in a comment),
 	// so every occurrence must be replaced.
-	page := strings.ReplaceAll(apiDocsHTML, "__RAPIDOC_TOKEN__", s.token)
+	page := strings.ReplaceAll(apiDocsHTML, "__RAPIDOC_TOKEN__", a.Credential)
 	page = strings.ReplaceAll(page, "__RAPIDOC_SERVER__", "http://"+s.Addr())
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(page))
@@ -277,7 +281,7 @@ func (s *Server) handleOpenAPI(w http.ResponseWriter, r *http.Request) {
 // response still contains no token, which is the property that matters and the
 // one the regression test pins.
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
-	ok, fromQuery := s.session(r)
+	a, fromQuery, ok := s.requestAccess(r)
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 
@@ -291,10 +295,14 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Security-Policy", contentSecurityPolicy)
 	if fromQuery {
-		s.setSessionCookie(w)
+		s.setCredentialCookie(w, a.Credential)
+	}
+	if err := s.joinGuest(w, r, a); err != nil {
+		http.Error(w, "could not establish guest access", http.StatusForbidden)
+		return
 	}
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(s.renderPage())
+	_, _ = w.Write(s.renderPageFor(a))
 }
 
 // unlockHTML is the page an unauthenticated browser gets: a box for the session
@@ -320,12 +328,12 @@ const unlockHTML = `<!doctype html>
   * { box-sizing: border-box; }
   body { margin:0; min-height:100vh; display:grid; place-items:center;
          background:var(--bg); color:var(--fg); padding:24px;
-         font:14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+          font:13px/1.5 Monaco, Menlo, Consolas, monospace; }
   .card { width:100%; max-width:30rem; background:var(--card); border:1px solid var(--line);
           border-radius:8px; padding:24px; }
   h1 { margin:0 0 4px; font-size:16px; }
   p { margin:0 0 16px; color:var(--dim); }
-  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size:12px; }
+   code { font-family: Monaco, Menlo, Consolas, monospace; font-size:12px; }
   form { display:flex; gap:8px; }
   /* Masked with CSS rather than type="password".
      A password input invites the browser's password manager to offer to SAVE
@@ -336,7 +344,7 @@ const unlockHTML = `<!doctype html>
      same shoulder-surfing protection with none of that. */
   input { flex:1 1 auto; min-width:0; padding:8px 10px; border:1px solid var(--line);
           border-radius:6px; background:var(--bg); color:var(--fg);
-          font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size:12px;
+           font-family: Monaco, Menlo, Consolas, monospace; font-size:12px;
           -webkit-text-security: disc; text-security: disc; }
   button { padding:8px 14px; border:1px solid var(--accent); border-radius:6px;
            background:var(--accent); color:#fff; font-weight:600; cursor:pointer; }
@@ -371,11 +379,19 @@ const unlockHTML = `<!doctype html>
 // buttons all 403 because the two halves disagreed about how the token arrives
 // is a failure worth twenty lines of belt and braces.
 func (s *Server) renderPage() []byte {
+	a, _ := s.credentialAccess(s.sessionToken())
+	return s.renderPageFor(a)
+}
+
+func (s *Server) renderPageFor(a accessGrant) []byte {
+	token := a.Credential
 	data := map[string]any{
-		"Token":    s.token,
+		"Token":    token,
+		"Role":     a.Role,
 		"Addr":     s.Addr(),
-		"URL":      s.URL(),
+		"URL":      "/?token=" + token,
 		"Services": func() []string { names, _ := s.serviceNames(); return names }(),
+		"Terminal": s.terminals != nil && a.Role == "owner",
 	}
 	if cfg := s.controller().Config(); cfg != nil {
 		data["Root"] = cfg.Root
@@ -389,10 +405,10 @@ func (s *Server) renderPage() []byte {
 			out = buf.Bytes()
 		}
 	}
-	if bytes.Contains(out, []byte(s.token)) {
+	if bytes.Contains(out, []byte(token)) {
 		return out
 	}
-	return injectToken(out, s.token)
+	return injectToken(out, token)
 }
 
 // injectToken puts the token into a page that did not ask for it, immediately
@@ -452,14 +468,6 @@ func (s *Server) handleServices(w http.ResponseWriter, _ *http.Request) {
 		out = append(out, info)
 	}
 	writeJSON(w, http.StatusOK, out)
-}
-
-func (s *Server) handleReloadConfig(w http.ResponseWriter, r *http.Request) {
-	if err := s.ReloadConfig(r.Context()); err != nil {
-		writeJSON(w, http.StatusUnprocessableEntity, errorResponse{Error: err.Error()})
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 // handleStatus emits exactly what `mabo-ctl status --json` emits.
@@ -564,6 +572,30 @@ func (s *Server) handleStopAll(w http.ResponseWriter, r *http.Request) {
 	s.mutate(w, r, opStop, nil)
 }
 
+// handleRestartAll restarts every service that is running now.
+//
+// It names the live services rather than passing nil. A nil restart is a stop
+// of everything followed by a start of the autostart selection, so a running
+// `autostart: false` service would be stopped and never come back, and a
+// service the operator deliberately left stopped would be started.
+func (s *Server) handleRestartAll(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	sts := s.controller().Status(ctx)
+	cancel()
+
+	var names []string
+	for _, st := range sts {
+		if st.Phase.Alive() {
+			names = append(names, st.Name)
+		}
+	}
+	if len(names) == 0 {
+		writeJSON(w, http.StatusConflict, errorResponse{Error: "nothing is running, so there is nothing to restart"})
+		return
+	}
+	s.mutate(w, r, opRestart, names)
+}
+
 // opKind names one supervisor operation.
 type opKind string
 
@@ -597,6 +629,11 @@ func (s *Server) mutateOne(w http.ResponseWriter, r *http.Request, kind opKind) 
 // each holding real processes — reachable by anyone holding the token, which
 // after a start is anyone with the page open.
 func (s *Server) mutate(w http.ResponseWriter, r *http.Request, kind opKind, names []string) {
+	if !s.lifecycleMu.TryRLock() {
+		writeJSON(w, http.StatusConflict, errorResponse{Error: "configuration reload in progress; retry when it finishes"})
+		return
+	}
+	defer s.lifecycleMu.RUnlock()
 	select {
 	case s.inflight <- struct{}{}:
 		defer func() { <-s.inflight }()
@@ -610,25 +647,9 @@ func (s *Server) mutate(w http.ResponseWriter, r *http.Request, kind opKind, nam
 
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), s.opTimeout())
 	defer cancel()
+	finishGuestAction := s.beginGuestAction(r, string(kind), names)
 
-	ev := make(chan supervisor.Event, streamBuffer)
-	var (
-		mu        sync.Mutex
-		collected []eventJSON
-	)
-	drained := make(chan struct{})
-	go func() {
-		defer close(drained)
-		for e := range ev {
-			s.events.publish(e)
-			mu.Lock()
-			if len(collected) < maxCollectedEvents {
-				collected = append(collected, toEventJSON(e))
-			}
-			mu.Unlock()
-		}
-	}()
-
+	ev, finish := s.collectEvents()
 	var err error
 	switch kind {
 	case opStart:
@@ -640,8 +661,8 @@ func (s *Server) mutate(w http.ResponseWriter, r *http.Request, kind opKind, nam
 	default:
 		err = fmt.Errorf("web: unknown operation %q", kind)
 	}
-	close(ev)
-	<-drained
+	collected := finish()
+	finishGuestAction(err == nil)
 
 	// A final event so a console that is only watching the stream sees the
 	// outcome, not just the transitions leading up to it.
@@ -659,9 +680,6 @@ func (s *Server) mutate(w http.ResponseWriter, r *http.Request, kind opKind, nam
 	}
 	if resp.Services == nil {
 		resp.Services = []string{}
-	}
-	if resp.Events == nil {
-		resp.Events = []eventJSON{}
 	}
 	if err != nil {
 		resp.Error = err.Error()

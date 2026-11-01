@@ -209,6 +209,13 @@ type Options struct {
 	// that no longer agrees with it is stale, not stable. Resolve still writes
 	// nothing; the caller refreshes the file with [Persist].
 	IgnoreRunEnv bool
+	// IgnoreRunEnvFor is IgnoreRunEnv for the named services only. A
+	// configuration reload sets it to the services whose declared port the
+	// operator just edited: applying the edit IS the instruction to adopt it,
+	// so for those services alone the persisted port must not outrank it. Every
+	// other service keeps its persisted port, which an unrelated edit must not
+	// move.
+	IgnoreRunEnvFor []string
 }
 
 // Resolve applies the precedence chain, expands templates, and validates the

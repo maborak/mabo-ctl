@@ -399,7 +399,7 @@ func TestConsolePageKeepsTheMasterDetailLayout(t *testing.T) {
 
 	// Hiding a flex or grid container needs saying: an author display beats the
 	// user agent's [hidden] rule, so without these the two views would overlap.
-	for _, rule := range []string{".split[hidden]", ".panel[hidden]"} {
+	for _, rule := range []string{".panel[hidden]"} {
 		if !strings.Contains(consoleHTML, rule) {
 			t.Errorf("console.html has no %s rule, so toggling the view would not hide anything", rule)
 		}

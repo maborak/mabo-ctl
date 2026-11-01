@@ -24,8 +24,8 @@
 // cancels the previous tail, drains its channel so the producer cannot block
 // on a send nobody will receive, and only then starts the next one. A console
 // left open for an afternoon must hold exactly one tail, not one per keypress.
-// [Model.Shutdown] does the same for the last one, and Run defers it so a
-// panic unwinding through the event loop still releases it.
+// [Model.Shutdown] does the same for the last one, and [RunWith] defers it so
+// a panic unwinding through the event loop still releases it.
 //
 // # Quitting is not stopping
 //
@@ -47,6 +47,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/maborak/mabo-ctl/internal/config"
 	"github.com/maborak/mabo-ctl/internal/service"
 	"github.com/maborak/mabo-ctl/internal/supervisor"
 )
@@ -77,12 +78,29 @@ type Controller interface {
 }
 
 // describer is implemented by a controller that can describe the services it
-// supervises. *supervisor.Supervisor does, which is how the plain [Run] picks
-// up the colours declared in mabo-ctl.yaml without the caller passing them. It
-// is an optional interface: a controller that does not implement it simply
-// gets the fallback palette.
+// supervises. *supervisor.Supervisor does, which is how the console picks up
+// the colours declared in mabo-ctl.yaml without the caller passing them. It is
+// an optional interface: a controller that does not implement it simply gets
+// the fallback palette.
 type describer interface {
 	Instances() []service.Instance
+}
+
+// configured is implemented by a controller that knows the configuration it
+// was built from. *supervisor.Supervisor does, and it is what the console
+// compares mabo-ctl.yaml against to offer a reload: the configuration in
+// force, not whatever was read last, so reverting an edit withdraws the offer.
+type configured interface {
+	Config() *config.Config
+}
+
+// configOf returns the configuration ctrl was built from, or nil when it
+// cannot say.
+func configOf(ctrl Controller) *config.Config {
+	if c, ok := ctrl.(configured); ok {
+		return c.Config()
+	}
+	return nil
 }
 
 // serviceColors reads the declared colour of every service ctrl supervises,
@@ -104,6 +122,15 @@ func serviceColors(ctrl Controller) map[string]string {
 // zero value is usable: the console then derives the root from a status log
 // path and gives every service a stable colour derived from its name.
 type Options struct {
+	// Reload applies mabo-ctl.yaml as it now reads on disk, restarting the
+	// running services whose process it changes and reporting progress on
+	// ev. A nil *Reloaded means nothing was applied and the configuration in
+	// force is unchanged; a non-nil one must be adopted even when the error is
+	// not nil, which then names the services that could not be stopped or
+	// started. Nil Reload means the console neither watches the file nor
+	// offers a reload.
+	Reload func(ctx context.Context, ev chan<- supervisor.Event) (*Reloaded, error)
+
 	// Root is the absolute directory holding mabo-ctl.yaml, shown in the title
 	// bar so a console started in the wrong repo is obvious at a glance. When
 	// empty it is derived from the first status's log path.
@@ -115,33 +142,31 @@ type Options struct {
 	Colors map[string]string
 }
 
+// Reloaded is what [Options.Reload] hands back when it applied a configuration.
+type Reloaded struct {
+	// Controller supervises the new configuration; the console adopts it.
+	Controller Controller
+	// Stopped names the running services the new configuration removed.
+	Stopped []string
+	// Restarted names the services started under their new definition.
+	Restarted []string
+}
+
 // ErrNoSupervisor reports that the console was asked to run without anything
 // to supervise. It is returned rather than panicking because a nil supervisor
 // is a programming error in the caller, not a reason to lose the terminal.
 var ErrNoSupervisor = errors.New("console: no supervisor")
 
-// Run starts the full-screen console on the current terminal and blocks until
-// the user quits. It returns nil on a normal quit.
+// RunWith starts the full-screen console on the current terminal and blocks
+// until the user quits. It returns nil on a normal quit.
 //
-// Run takes over the terminal (alternate screen, raw mode) and restores it
+// It takes over the terminal (alternate screen, raw mode) and restores it
 // before returning, including when the event loop panics: bubbletea's own
-// panic handler restores the terminal, and Run additionally kills the program
-// and shuts the model down from a defer, so no tail goroutine outlives the
-// call.
+// panic handler restores the terminal, and RunWith additionally kills the
+// program and shuts the model down from a defer, so no tail goroutine outlives
+// the call.
 //
 // Quitting the console does NOT stop the supervised services.
-//
-// Run returns [ErrNoSupervisor] when sup is nil.
-func Run(sup *supervisor.Supervisor) error {
-	if sup == nil {
-		return ErrNoSupervisor
-	}
-	return RunWith(sup, Options{})
-}
-
-// RunWith is [Run] with explicit [Options]. cmd/mabo-ctl uses it to name the
-// config root and to pass the per-service colours from mabo-ctl.yaml; Run is the
-// same call with an empty Options.
 //
 // It returns [ErrNoSupervisor] when ctrl is nil.
 func RunWith(ctrl Controller, opt Options) error {

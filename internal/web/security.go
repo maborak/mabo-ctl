@@ -1,7 +1,6 @@
 package web
 
 import (
-	"crypto/subtle"
 	"fmt"
 	"log"
 	"net"
@@ -106,6 +105,12 @@ func (r *statusRecorder) Flush() {
 	}
 }
 
+// Unwrap exposes the wrapped writer to http.ResponseController. The SSE
+// handlers use it to put a deadline on each write; without this method the
+// recorder would hide the connection's SetWriteDeadline and a stalled stream
+// could block forever.
+func (r *statusRecorder) Unwrap() http.ResponseWriter { return r.ResponseWriter }
+
 // guard is the middleware every request passes through: security headers, then
 // the Host check, then the Origin check.
 //
@@ -128,7 +133,7 @@ func (s *Server) guard(next http.Handler) http.Handler {
 			case rec.status >= 400:
 				auditLog.Printf("refused %d %s %s from %s",
 					rec.status, r.Method, r.URL.Path, r.RemoteAddr)
-			case r.Method == http.MethodPost:
+			case r.Method == http.MethodPost && !terminalChatter(r) && r.URL.Path != "/api/mirror":
 				auditLog.Printf("accepted %d %s %s from %s",
 					rec.status, r.Method, r.URL.Path, r.RemoteAddr)
 			}
@@ -292,7 +297,7 @@ func (s *Server) trustedHost(hostport string) bool {
 // requireToken wraps a mutating handler with the session-token check.
 //
 // The comparison is constant time, and the token is read from the HEADER ALONE
-// — never from the query string and never from the cookie [Server.sessionCookie]
+// — never from the query string and never from the cookie [Server.setCredentialCookie]
 // sets. That asymmetry with [Server.requireSession] is the CSRF defence: a
 // cross-origin page can make the browser issue a POST, and a cookie would ride
 // along with it, but no cross-origin page can attach a custom header without a
@@ -300,12 +305,19 @@ func (s *Server) trustedHost(hostport string) bool {
 func (s *Server) requireToken(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		got := r.Header.Get(tokenHeader)
-		if subtle.ConstantTimeCompare([]byte(got), []byte(s.token)) != 1 {
+		a, ok := s.credentialAccess(got)
+		if !ok {
 			http.Error(w, "forbidden: missing or invalid "+tokenHeader+" header; the session "+
 				"token is printed with the console URL and rendered into the page",
 				http.StatusForbidden)
 			return
 		}
+		if !mayAccess(a, r) {
+			s.noteGuestRequest(r, a, true)
+			http.Error(w, "forbidden: this access role cannot perform that operation", http.StatusForbidden)
+			return
+		}
+		s.touchGuest(r, a)
 		next.ServeHTTP(w, r)
 	})
 }
@@ -327,10 +339,9 @@ func (s *Server) cookieName() string { return "mabo-ctl_console_" + strconv.Itoa
 // token and drive start/stop/restart as the developer. The token guarded the
 // door and was posted on it.
 //
-// Three sources are accepted, and ALL of them are checked before refusing,
-// rather than the first one present winning: the browser sends the cookie of
-// every console on this loopback host, so a stale cookie from another run must
-// not veto a perfectly good token in the query.
+// Explicit query/header credentials take precedence over ambient cookies. An
+// invalid explicit credential fails closed, never falling back to an owner
+// cookie; a stale cookie still cannot veto a valid explicit credential.
 //
 //   - the query parameter, which is what the printed URL carries and the only
 //     credential a browser navigation can present;
@@ -345,19 +356,25 @@ func (s *Server) cookieName() string { return "mabo-ctl_console_" + strconv.Itoa
 // tag, never from document.cookie.
 func (s *Server) requireSession(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ok, fromQuery := s.session(r)
+		a, fromQuery, ok := s.requestAccess(r)
 		if !ok {
 			http.Error(w, "forbidden: this console requires its session token. Open the URL "+
 				"mabo-ctl printed, which carries it, or send it as the "+tokenHeader+" header.",
 				http.StatusForbidden)
 			return
 		}
+		if !mayAccess(a, r) {
+			s.noteGuestRequest(r, a, true)
+			http.Error(w, "forbidden: this route requires operator access", http.StatusForbidden)
+			return
+		}
 		// Only a credential that arrived in the URL mints the cookie. Refreshing
 		// it from a request that already had one would extend a session on every
 		// poll for no benefit.
 		if fromQuery {
-			s.setSessionCookie(w)
+			s.setCredentialCookie(w, a.Credential)
 		}
+		s.touchGuest(r, a)
 		next.ServeHTTP(w, r)
 	})
 }
@@ -365,10 +382,8 @@ func (s *Server) requireSession(next http.Handler) http.Handler {
 // session reports whether r carries the session token, and whether it arrived in
 // the QUERY — which is the only case that mints a cookie.
 //
-// All three sources are checked before refusing, rather than the first one
-// present winning: the browser sends the cookie of every console on this
-// loopback host, so a stale cookie from another run must not veto a perfectly
-// good token in the query.
+// An explicit query, then an explicit header, then the cookie is decisive. This
+// keeps a shared URL scoped even when an operator cookie is already present.
 //
 // It is separate from [Server.requireSession] because the console page does not
 // want that middleware's refusal. A 403 with no body is the right answer for an
@@ -376,22 +391,11 @@ func (s *Server) requireSession(next http.Handler) http.Handler {
 // token on it; [Server.handleIndex] asks this question itself and answers with a
 // page they can type into.
 func (s *Server) session(r *http.Request) (ok, fromQuery bool) {
-	fromQuery = s.tokenMatches(r.URL.Query().Get("token"))
-	if fromQuery || s.tokenMatches(r.Header.Get(tokenHeader)) {
-		return true, fromQuery
-	}
-	if c, err := r.Cookie(s.cookieName()); err == nil && s.tokenMatches(c.Value) {
-		return true, false
-	}
-	return false, false
+	_, fromQuery, ok = s.requestAccess(r)
+	return ok, fromQuery
 }
 
-// tokenMatches compares got against the session token in constant time.
-func (s *Server) tokenMatches(got string) bool {
-	return subtle.ConstantTimeCompare([]byte(got), []byte(s.token)) == 1
-}
-
-// setSessionCookie issues the cookie that lets a reload of the console page
+// setCredentialCookie issues the cookie that lets a reload of the console page
 // succeed after the page has stripped the token from the address bar.
 //
 // Secure is set exactly when a non-loopback origin is trusted, and the
@@ -407,10 +411,10 @@ func (s *Server) tokenMatches(got string) bool {
 //
 // MaxAge is left at zero so it is a session cookie, gone when the browser
 // closes — the token it carries dies with the mabo-ctl process anyway.
-func (s *Server) setSessionCookie(w http.ResponseWriter) {
+func (s *Server) setCredentialCookie(w http.ResponseWriter, credential string) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     s.cookieName(),
-		Value:    s.token,
+		Value:    credential,
 		Path:     "/",
 		HttpOnly: true,
 		Secure:   s.trustsANonLoopbackOrigin(),

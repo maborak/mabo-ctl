@@ -193,7 +193,8 @@ consumers, gRPC daemons, databases.
 **Stop:** SIGTERM, wait `STOP_GRACE`, then SIGKILL. Kill the process *group*,
 not the pid — `npm run dev` spawns a child that survives a bare pid kill and
 keeps the port bound, which is how the parent repo accumulated 28 orphaned
-`astro dev` processes across three days.
+`astro dev` processes across three days. An interrupted stop never escalates:
+SIGKILL is earned by the grace running out, not by the waiter going away.
 
 ## Bugs found in the shell version — do not reproduce these
 

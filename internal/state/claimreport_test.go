@@ -70,3 +70,30 @@ func testDir(t *testing.T) *Dir {
 	}
 	return d
 }
+
+// TestActiveClaimReportsOnlyAStartInFlight: a live owner's fresh claim is a
+// start in progress; a dead owner's claim is wreckage and is not reported.
+func TestActiveClaimReportsOnlyAStartInFlight(t *testing.T) {
+	d := testDir(t)
+	if _, _, ok := d.ActiveClaim("svc", time.Now()); ok {
+		t.Fatal("ActiveClaim reported a claim that does not exist")
+	}
+	at := time.Now()
+	if _, err := d.ClaimPID("svc", os.Getpid(), at); err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+	pid, since, ok := d.ActiveClaim("svc", time.Now())
+	if !ok || pid != os.Getpid() || since.Sub(at).Abs() > time.Second {
+		t.Errorf("ActiveClaim = %d, %s, %v; want this process's claim", pid, since, ok)
+	}
+	if err := d.ReleaseClaim("svc"); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := d.ClaimPID("svc", deadPID(t), time.Now()); err != nil {
+		t.Fatalf("claim for a dead owner: %v", err)
+	}
+	if _, _, ok := d.ActiveClaim("svc", time.Now()); ok {
+		t.Error("ActiveClaim reported a dead owner's claim; that is wreckage, not a start in flight")
+	}
+}

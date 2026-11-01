@@ -258,9 +258,10 @@ func (a *app) handOff(cmd *cobra.Command, m startMode, console *web.Server, outc
 	return outcome
 }
 
-// watchDeaths starts a [notifier] against the real supervisor and returns its
-// stop function. It reports nothing at startup: a watcher that announced
-// itself would train the operator to dismiss mabo-ctl notifications.
+// watchDeaths starts a [notifier] against the real supervisor — and, across a
+// configuration reload the console applies, against the one that replaced it —
+// and returns its stop function. It reports nothing at startup: a watcher that
+// announced itself would train the operator to dismiss mabo-ctl notifications.
 func (a *app) watchDeaths(ctx context.Context) func() {
 	ctx, cancel := context.WithCancel(ctx)
 	sup, err := a.realSupervisor()
@@ -268,7 +269,8 @@ func (a *app) watchDeaths(ctx context.Context) func() {
 		cancel()
 		return func() {}
 	}
-	n := newNotifier(sup, sendDesktopNotification)
+	a.resident.Store(sup)
+	n := newNotifier(residentStatus{a}, sendDesktopNotification)
 	go n.watch(ctx)
 	return cancel
 }
@@ -283,7 +285,7 @@ func (a *app) attachConsole() error {
 	if err != nil {
 		return err
 	}
-	return a.env.RunConsole(sup)
+	return a.runConsole(sup)
 }
 
 // webConsole binds srv, prints its URL, and hands the terminal to the prompt —

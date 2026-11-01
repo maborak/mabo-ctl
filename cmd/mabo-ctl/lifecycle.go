@@ -283,7 +283,7 @@ func (a *app) runDefault(cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
-	return a.env.RunConsole(sup)
+	return a.runConsole(sup)
 }
 
 // startCmd builds `mabo-ctl start`.
