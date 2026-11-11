@@ -307,14 +307,12 @@ func (s *Server) requireToken(next http.Handler) http.Handler {
 		got := r.Header.Get(tokenHeader)
 		a, ok := s.credentialAccess(got)
 		if !ok {
-			http.Error(w, "forbidden: missing or invalid "+tokenHeader+" header; the session "+
-				"token is printed with the console URL and rendered into the page",
-				http.StatusForbidden)
+			writeJSON(w, http.StatusForbidden, errorResponse{Error: "invalid_api_key"})
 			return
 		}
 		if !mayAccess(a, r) {
 			s.noteGuestRequest(r, a, true)
-			http.Error(w, "forbidden: this access role cannot perform that operation", http.StatusForbidden)
+			writeJSON(w, http.StatusForbidden, errorResponse{Error: "forbidden"})
 			return
 		}
 		s.touchGuest(r, a)
@@ -358,14 +356,12 @@ func (s *Server) requireSession(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		a, fromQuery, ok := s.requestAccess(r)
 		if !ok {
-			http.Error(w, "forbidden: this console requires its session token. Open the URL "+
-				"mabo-ctl printed, which carries it, or send it as the "+tokenHeader+" header.",
-				http.StatusForbidden)
+			writeJSON(w, http.StatusForbidden, errorResponse{Error: "invalid_api_key"})
 			return
 		}
 		if !mayAccess(a, r) {
 			s.noteGuestRequest(r, a, true)
-			http.Error(w, "forbidden: this route requires operator access", http.StatusForbidden)
+			writeJSON(w, http.StatusForbidden, errorResponse{Error: "forbidden"})
 			return
 		}
 		// Only a credential that arrived in the URL mints the cookie. Refreshing

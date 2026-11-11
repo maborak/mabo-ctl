@@ -125,6 +125,23 @@ func TestSharedPagesNeverExposeTheOperatorCredential(t *testing.T) {
 	}
 }
 
+func TestAPIFrameCredentialOverridesAmbientOperatorCookie(t *testing.T) {
+	t.Parallel()
+	s := newRecorderServer(t, twoServices())
+	_, key := createTestShare(t, s, "read")
+	r := httptest.NewRequest(http.MethodGet, "http://"+recorderAddr+"/api-docs?token="+key, nil)
+	r.AddCookie(&http.Cookie{Name: s.cookieName(), Value: s.Token()})
+	w := httptest.NewRecorder()
+	s.h.ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("scoped API frame: %d %s", w.Code, w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), s.Token()) ||
+		!strings.Contains(w.Body.String(), `name="mabo-ctl-token" content="`+key+`"`) {
+		t.Fatal("API frame did not preserve the UI page's explicit shared credential")
+	}
+}
+
 func TestRevocationClosesGuestStreamsAndPreventsRejoining(t *testing.T) {
 	t.Parallel()
 	s := newRecorderServer(t, twoServices())

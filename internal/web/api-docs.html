@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
+<meta name="mabo-ctl-token" content="__RAPIDOC_TOKEN__">
 <title>mabo-ctl — API Reference</title>
 <style>
   :root { color-scheme: light dark; }
@@ -37,6 +38,10 @@
   }
   .framed .topbar { display: none; }
   .framed #api-reference { height: 100vh; }
+  .server-editor { padding: 8px 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .server-editor input { min-width: 240px; flex: 1; padding: 6px; font: inherit; }
+  .server-editor button { padding: 6px 12px; font: inherit; cursor: pointer; }
+  .server-editor p { flex-basis: 100%; margin: 0; }
 </style>
 </head>
 <body>
@@ -51,19 +56,17 @@
 
 <!--
   The playground: RapiDoc API Reference (vendored at /api-docs/rapidoc.js).
-  Every endpoint has an interactive API client. __RAPIDOC_TOKEN__ and
-  __RAPIDOC_SERVER__ are replaced by the server with the session token and
-  the address actually bound, so try-it requests are authenticated and reach
-  this exact console. The spec is loaded from /api/openapi.yaml (a
+  Every endpoint has an interactive API client. The authenticated page's token
+  initializes the spec's single header scheme once. The browser's origin selects
+  this console, including through tunnels. The spec is loaded from /api/openapi.yaml (a
   same-origin, session-authenticated request).
 -->
 <div id="api-reference">
   <rapi-doc
     spec-url="/api/openapi.yaml"
-    server-url="__RAPIDOC_SERVER__"
-    api-key-name="X-Mabo-Ctl-Token"
-    api-key-value="__RAPIDOC_TOKEN__"
-    api-key-location="header"
+    server-url="/"
+    default-api-server="/"
+    persist-auth="false"
     show-header="false"
     theme="auto"
     render-style="view"
@@ -74,7 +77,14 @@
     load-fonts="false"
     regular-font="Monaco, Menlo, Consolas, monospace"
     mono-font="Monaco, Menlo, Consolas, monospace"
-  ></rapi-doc>
+  >
+    <div slot="servers" class="server-editor">
+      <label for="api-server-url">Server URL</label>
+      <input id="api-server-url" type="url" aria-describedby="server-note" spellcheck="false">
+      <button type="button" id="apply-api-server" disabled>Apply URL</button>
+      <p id="server-note" role="status">Defaults to this browser's origin. Try-it requests stay same-origin to protect your key.</p>
+    </div>
+  </rapi-doc>
 </div>
 
 <noscript><p style="padding:24px">The API reference needs JavaScript to render.</p></noscript>
@@ -84,12 +94,48 @@
   // where this is, and the Console link would nest the console inside itself.
   // The tab passes its resolved theme so both halves of the page match.
   (function () {
-    if (window.self === window.top) { return; }
-    document.body.classList.add("framed");
-    var t = new URLSearchParams(window.location.search).get("theme");
-    if (t === "light" || t === "dark") {
-      document.querySelector("rapi-doc").setAttribute("theme", t);
-      document.documentElement.style.colorScheme = t;
+    var reference = document.querySelector("rapi-doc");
+    var serverInput = document.getElementById("api-server-url");
+    var applyServer = document.getElementById("apply-api-server");
+    var serverNote = document.getElementById("server-note");
+    var origin = window.location.origin;
+    serverInput.value = origin;
+    reference.setAttribute("server-url", origin);
+    reference.setAttribute("default-api-server", origin);
+    // Once only: clearing or replacing the key in RapiDoc must stick.
+    reference.addEventListener("spec-loaded", function (event) {
+      var token = document.querySelector('meta[name="mabo-ctl-token"]').content;
+      reference.setApiKey("tokenHeader", token);
+      // Do not offer the spec's internal loopback address to a tunneled browser.
+      event.detail.servers.splice(0, event.detail.servers.length, {url: origin, computedUrl: origin});
+      reference.setApiServer(origin);
+      applyServer.disabled = false;
+    }, {once: true});
+    applyServer.addEventListener("click", function () {
+      try {
+        var url = new URL(serverInput.value);
+        if (!/^https?:$/.test(url.protocol) || url.username || url.password || url.search || url.hash) {
+          throw new Error("Use an HTTP(S) base URL without credentials, query or fragment.");
+        }
+        if (url.origin !== origin) {
+          throw new Error("Use this console's origin. For another host, open its /api-docs page; your session key is never forwarded to another origin.");
+        }
+        var base = url.href.replace(/\/$/, "");
+        var servers = reference.resolvedSpec.servers;
+        if (!servers.some(function (server) { return server.url === base; })) {
+          servers.push({url: base, computedUrl: base});
+        }
+        reference.setApiServer(base);
+        serverNote.textContent = "Using " + base;
+      } catch (err) { serverNote.textContent = err.message; }
+    });
+    if (window.self !== window.top) {
+      document.body.classList.add("framed");
+      var t = new URLSearchParams(window.location.search).get("theme");
+      if (t === "light" || t === "dark") {
+        reference.setAttribute("theme", t);
+        document.documentElement.style.colorScheme = t;
+      }
     }
   }());
 </script>

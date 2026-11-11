@@ -46,6 +46,63 @@ func TestServeRefusesNonLoopbackAddress(t *testing.T) {
 	}
 }
 
+func TestServeRemoteTerminalRequiresExplicitTerminalFlag(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t, "serve", "--i-know-allow-remote-terminal-is-dangerous")
+	if code := h.run(); code != exitUsage {
+		t.Fatalf("exit = %d, want usage error: %s", code, h.stderr)
+	}
+	if !strings.Contains(h.stderr.String(), "requires explicit --terminal") {
+		t.Fatalf("missing explicit terminal requirement: %s", h.stderr)
+	}
+	if h.stdout.Len() != 0 {
+		t.Fatal("printed a URL despite refusing remote terminals")
+	}
+}
+
+func TestServeContinuesWithRemoteTerminalDisabled(t *testing.T) {
+	for _, fromConfig := range []bool{false, true} {
+		name := "flag"
+		if fromConfig {
+			name = "config"
+		}
+		t.Run(name, func(t *testing.T) {
+			h := newHarness(t)
+			a := serveApp(t, h)
+			if fromConfig {
+				cfg, err := a.config()
+				if err != nil {
+					t.Fatal(err)
+				}
+				cfg.ConsoleTerminal = true
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			// Opening happens after binding and announcing the console. Cancel
+			// there to prove startup succeeds without leaving a server running.
+			h.env.OpenURL = func(context.Context, string) error {
+				cancel()
+				return nil
+			}
+			if err := a.serve(ctx, serveOptions{
+				Addr: "0.0.0.0:0", AddrSet: true, Force: true,
+				Terminal: !fromConfig, Open: true,
+			}); err != nil {
+				t.Fatalf("console should keep serving: %v", err)
+			}
+			if !strings.Contains(h.stdout.String(), "?token=") {
+				t.Fatalf("no console URL: %s", h.stdout)
+			}
+			msg := h.stderr.String()
+			if !strings.Contains(msg, "Terminal tab disabled") ||
+				!strings.Contains(msg, "--i-know-allow-remote-terminal-is-dangerous") ||
+				strings.Contains(msg, "Terminal tab on") {
+				t.Fatalf("incorrect terminal warning: %s", msg)
+			}
+		})
+	}
+}
+
 // TestServeRejectsMalformedAddress checks that a --addr that is not host:port
 // is a usage error naming the flag, not a listener error later on.
 func TestServeRejectsMalformedAddress(t *testing.T) {

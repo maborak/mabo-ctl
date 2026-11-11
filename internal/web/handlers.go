@@ -195,18 +195,18 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 // attacker.
 //
 // An AUTHENTICATED response renders the RapiDoc API Reference and replaces
-// two markers in the embedded shell:
+// the credential marker in the embedded shell:
 //
 //   - __RAPIDOC_TOKEN__ → the session token, wired as the X-Mabo-Ctl-Token
-//     api-key so every try-it request — reads AND mutations — is
-//     authenticated exactly like the console buttons. The token is hex, so it
+//     header scheme once so every try-it request — reads AND mutations — is
+//     authenticated exactly like the console buttons. The token is URL-safe, so it
 //     needs no escaping in the HTML attribute (see [Server.renderPage]'s
 //     injectToken for the same decision), and it is delivered only to a caller
 //     who has already proven possession of it: the same contract as the
 //     console page.
-//   - __RAPIDOC_SERVER__ → the address mabo-ctl actually bound, so try-it
-//     requests reach THIS console however the port was chosen, instead of
-//     the spec's 127.0.0.1:7999 default.
+//
+// The browser's actual origin supplies the API server, so tunnels work without
+// trusting forwarding headers or exposing an internal loopback target.
 //
 // The page loads the vendor bundle from /api-docs/rapidoc.js and RapiDoc
 // fetches the spec itself from /api/openapi.yaml (both same-origin requests,
@@ -229,10 +229,8 @@ func (s *Server) handleDocs(w http.ResponseWriter, r *http.Request) {
 	if fromQuery {
 		s.setCredentialCookie(w, a.Credential)
 	}
-	// The markers appear in the <rapi-doc> attributes (and once in a comment),
-	// so every occurrence must be replaced.
+	// The marker appears in a meta attribute; credentials are validated URL-safe.
 	page := strings.ReplaceAll(apiDocsHTML, "__RAPIDOC_TOKEN__", a.Credential)
-	page = strings.ReplaceAll(page, "__RAPIDOC_SERVER__", "http://"+s.Addr())
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(page))
 }

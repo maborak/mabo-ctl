@@ -39,8 +39,21 @@ Three front ends over ONE supervisor:
    repo; the tty broker additionally holds a `.mabo-ctl/tty/*.sock` unix-domain
    socket for local PTY IPC, which is not a network surface. Its opt-in
    Terminal tab (`serve --terminal`, `supervisor.Terminals`) runs interactive
-   shells: loopback bind and loopback Host/Origin only, never through
-   `--allow-origin` — keep that gate in `internal/web/terminal.go`.
+   shells and is loopback-only by default. Remote terminals require both
+   `--terminal` and `--i-know-allow-remote-terminal-is-dangerous`. Non-loopback
+   binding additionally requires `--i-know-this-is-dangerous`. Without remote
+   terminal permission, a non-loopback console keeps serving with terminals
+   disabled. Keep the per-request gate in `internal/web/terminal.go`.
+
+   `console_terminal: true`, `--allow-origin`, and `--i-know-this-is-dangerous`
+   must never independently authorize remote terminals. With explicit remote
+   terminal permission, tunnels additionally need their public HTTPS origin in
+   the trusted-origin list. Validate Host and Origin; proxy headers never grant
+   trust or authorization. Without that permission, reject trusted tunnel
+   origins and proxy-forwarded terminal requests.
+
+   Keep terminal access operator-only. Deny terminals to every shared-link
+   role, including when remote terminals are enabled.
    CONFIG can mint in-memory READ/VIEW/WRITE sharing capabilities (not user
    accounts). `internal/web/access.go` owns their closed, server-side route
    allowlist: WRITE means service lifecycle only; no guest gets terminals,

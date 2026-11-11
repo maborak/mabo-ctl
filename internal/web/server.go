@@ -239,9 +239,14 @@ type Options struct {
 
 	// Terminals backs the Terminal tab. Nil turns it off: every terminal route
 	// answers 404 and the page says how to enable it. A non-nil value needs a
-	// loopback Addr — an interactive shell is never served to the network,
-	// whatever Force says.
+	// loopback Addr unless AllowRemoteTerminal is explicitly enabled; otherwise
+	// the console keeps serving with terminals disabled.
 	Terminals *supervisor.Terminals
+
+	// AllowRemoteTerminal permits operator shells on a non-loopback Addr.
+	// Force is independently required for that bind. Trusted origins may also
+	// access terminals through a tunnel; proxy headers never establish trust.
+	AllowRemoteTerminal bool
 
 	// AccessKey overrides the generated session key. Empty generates a fresh
 	// cryptographically random key.
@@ -403,11 +408,13 @@ func NewWith(ctrl Controller, opt Options) (*Server, error) {
 	if err := CheckAddr(opt.Addr, opt.Force); err != nil {
 		return nil, err
 	}
-	if opt.Terminals != nil {
-		if loopback, err := isLoopbackAddr(opt.Addr); err != nil || !loopback {
-			return nil, fmt.Errorf("%w: the terminal runs a shell as you and is served only on a loopback "+
-				"address, not %s; drop --terminal (and console_terminal) or bind 127.0.0.1",
-				ErrUnsafeAddr, opt.Addr)
+	if opt.Terminals != nil && !opt.AllowRemoteTerminal {
+		loopback, err := isLoopbackAddr(opt.Addr)
+		if err != nil {
+			return nil, err
+		}
+		if !loopback {
+			opt.Terminals = nil
 		}
 	}
 

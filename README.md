@@ -701,9 +701,40 @@ only once; copy the new URL when it is created.
 repository root. The xterm.js emulator supports interactive programs such as
 Claude Code, OpenCode, vim and htop. Shells keep running when
 the tab is closed or reloaded — the page reattaches and replays the scrollback —
-and are hung up when `serve` stops. A shell runs as you, so the terminal is
-refused on a non-loopback console and to a browser arriving through
-`--allow-origin`; see [SECURITY.md](SECURITY.md).
+and are hung up when `serve` stops. A shell runs as you, so terminals are
+loopback-only by default. Remote terminals require explicit `--terminal` plus
+`--i-know-allow-remote-terminal-is-dangerous`; a non-loopback bind also requires
+`--i-know-this-is-dangerous`. For example:
+
+```sh
+mabo-ctl serve --terminal --addr=192.168.0.29:7999 \
+  --i-know-this-is-dangerous --i-know-allow-remote-terminal-is-dangerous
+```
+
+Without the remote-terminal flag, a non-loopback console keeps running with the
+Terminal box disabled and prints a warning instead of refusing to start.
+
+Only the operator gets terminals, never shared-link users. With the remote-terminal
+flag, tunnels are supported when their public HTTPS origin is explicitly trusted:
+add `--allow-origin=https://your-public-tunnel-host` (not the tunnel server's
+WebSocket URL). Without that flag, trusted origins and proxies cannot access
+terminals. Plain HTTP
+does not encrypt tokens or shell traffic; use only a trusted network or an
+encrypted connection. See [SECURITY.md](SECURITY.md).
+
+The top bar shows a live connection trace, status-response latency, received
+application payload rate, and time since the last status reply. Latency includes
+server processing, and traffic is not total wire bandwidth. Token/Copy lives in
+Config. In the Terminal workspace, × hides the service output below the shell;
+selecting a service in the sidebar reopens it without closing any shell.
+
+VIEW/mirror guests follow the presenter's log scroll; local wheel, touch,
+keyboard and scrollbar scrolling is disabled. READ/WRITE guests still browse
+independently. Log separators mark entries, keeping recognizable Python
+tracebacks and indented continuations together. Plain-text grouping is best
+effort: the stream carries newline-delimited lines, not logging-call boundaries.
+JSON records remain separate, and raw logs, severity filters and line counts
+are unchanged.
 
 ```sh
 $ mabo-ctl serve
@@ -746,8 +777,11 @@ browser: every route with its parameters, request bodies and responses, plus a
 working **try-it playground** on each operation. The playground sends real
 same-origin requests with the session token already wired in as the
 `X-Mabo-Ctl-Token` header — reads and mutations authenticate exactly like the
-console buttons — and the try-it server is pinned to the port this console
-actually bound. The same spec is served at `/api/openapi.yaml` for code
+console buttons. The server defaults to the browser's origin, including HTTPS
+tunnels, and supports same-origin base-URL edits. One key control serves reads
+and writes; manual clearing or replacement sticks, including across theme changes.
+Theme selection and expandable keyboard help live in the sidebar footer.
+The same spec is served at `/api/openapi.yaml` for code
 generators, and documented by hand in [`docs/API.md`](docs/API.md).
 
 > **⚠ This is the one mabo-ctl surface that can be driven by something other than

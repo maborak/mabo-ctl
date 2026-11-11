@@ -44,6 +44,10 @@ A `GET` without a valid session gets the unlock page (HTML form to paste the
 token). A `GET` with a valid session gets the console page. A `POST` without
 the header gets `403`.
 
+API authentication failures use `403` with JSON `{"error":"invalid_api_key"}`;
+authenticated callers without the required role receive
+`{"error":"forbidden"}`. Responses do not include login instructions or keys.
+
 The operator token has full access. Shared tokens have server-enforced scopes:
 `read` reads stack/configuration/logs and navigates independently, `view` also
 reads the operator's presentation state, and `write` adds only service
@@ -861,13 +865,19 @@ mabo-ctl, with `TERM=xterm-256color`. A shell can run anything, so these
 routes are held to more than the rest of the API:
 
 - **Opt-in.** They exist only when serve was started with `--terminal` or the
-  config sets `console_terminal: true`. Otherwise every one answers `404`.
-- **Loopback only.** `serve --terminal` refuses a non-loopback bind, and each
-  request must name the loopback address itself in `Host` and, when it sends
+  config sets `console_terminal: true`, and the bind's terminal permissions
+  allow it. Otherwise every one answers `404`; the console keeps serving with
+  its Terminal box disabled.
+- **Loopback by default.** Remote shells require explicit `--terminal` plus
+  `--i-know-allow-remote-terminal-is-dangerous`; a non-loopback bind also requires
+  `--i-know-this-is-dangerous`. `console_terminal` alone never authorizes remote
+  shells, and every shared-link role is denied terminals. By default each
+  request must name the bound address itself in `Host` and, when it sends
   one, in `Origin`, and must carry none of the headers a relaying proxy adds
   (`Forwarded`, `X-Forwarded-For`, `X-Forwarded-Host`, `X-Real-Ip`,
-  `Cf-Connecting-Ip`). A browser reaching the console through `--allow-origin`
-  (a tunnel, a LAN name) gets `403` here while every other route works.
+  `Cf-Connecting-Ip`). With remote-terminal permission, explicitly trusted
+  `--allow-origin` hosts and origins may also use terminals through a tunnel.
+  Proxy headers are then permitted but never used to establish trust.
 - **Bounded.** At most 16 terminals are open at once; opening another answers
   `429`.
 - The usual guards still apply first: session for reads, token header for
@@ -977,14 +987,21 @@ external scripts, no telemetry — the page's only requests are to mabo-ctl
 itself.
 
 The spec is loaded from `/api/openapi.yaml` (a same-origin, session-authenticated
-request), and the try-it server is pinned to the address mabo-ctl actually
-bound, so the playground reaches this console whatever port it is on.
+request), and the try-it server defaults to the browser's origin, including
+the public HTTPS URL when reached through a tunnel. The Server URL field permits
+same-origin base-URL edits. For another origin, open that console's `/api-docs`;
+the playground does not forward the current session key to other origins.
 
 **Every endpoint has a try-it playground** — the "Try it" panel on each
 operation sends a real same-origin request, with path/query parameters, a
 request-body editor (generated sample payload), and a rendered response. The
 session token is wired in automatically as the `X-Mabo-Ctl-Token` api-key, so
 reads **and** mutations are authenticated exactly like the console buttons.
+There is one header-key control for both reads and writes. Initialization happens
+once: manually clearing or replacing the key remains in effect for this page.
+Keys are not persisted to local storage, and theme changes do not reload the API
+frame. The console passes its own credential to the frame rather than relying on
+an ambient cookie that another browser tab may have changed.
 Live SSE streams render as the data arrives.
 
 **Auth:** Session cookie or token header required (shows unlock form if

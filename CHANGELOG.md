@@ -8,6 +8,70 @@ contract and service phase names are stable.
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-11-11
+
+### Added
+
+- Explicit remote-terminal permission with
+  `serve --terminal --i-know-allow-remote-terminal-is-dangerous`. Non-loopback
+  binds also require `--i-know-this-is-dangerous`; HTTPS tunnels additionally
+  require their public origin in `--allow-origin`.
+- A live connection indicator showing status-response latency, received
+  application payload rate, reply freshness, and slow/disconnected states.
+- A close control for the service-output panel below the terminal. Selecting a
+  service in the sidebar reopens the panel without closing any shell.
+- An editable same-origin API base URL, defaulting to the browser's origin so
+  the playground works through HTTPS tunnels.
+
+### Changed
+
+- A non-loopback console keeps running with the Terminal box disabled when
+  remote-terminal permission is missing, rather than refusing to start.
+- Token/Copy lives in Config; theme selection and expandable keyboard help
+  occupy a compact sidebar footer.
+- API authentication failures return concise JSON
+  `{"error":"invalid_api_key"}`. Role denials return `{"error":"forbidden"}`;
+  HTTP status codes remain unchanged.
+- Log separators mark recognizable multiline entries rather than every
+  physical line. Python tracebacks, chained exceptions and indented
+  continuations stay together; separate JSON records remain separate. Raw
+  logs, line counts and severity filtering are unchanged. Plain-text grouping
+  is best effort because the stream does not preserve logging-call boundaries.
+
+### Fixed
+
+- Remote-terminal permission now admits explicitly trusted HTTPS tunnels while
+  retaining Host/Origin checks and operator-only access.
+- The API playground initializes one editable header-key control from the UI
+  session, avoiding duplicate token headers. Clearing or replacing the key
+  sticks, and theme changes no longer reload the API frame or discard edits.
+- API frames use the UI page's explicit credential instead of an ambient cookie
+  that another browser tab may have replaced with a different access role.
+- VIEW/mirror guests cannot override presenter scrolling with wheel, touch,
+  keyboard or scrollbar input. READ/WRITE guests still browse independently.
+- Following a log before its first creation no longer drops startup output.
+  Backlog replay and live following now share one file handle and an exact
+  consumed offset, preserving concurrent writes and incomplete final lines.
+
+### Security
+
+- Terminals remain loopback-only by default and unavailable to every shared-link
+  role. Neither YAML terminal settings nor dangerous-bind or trusted-origin
+  settings alone authorize remote shells. Proxy headers never establish trust.
+- API base-URL edits remain same-origin; the playground never forwards the
+  current session key to another origin or persists it to local storage.
+
+### Upgrading
+
+- Rebuild or install the release, restart `serve`, and reload browser tabs.
+  Finish terminal work first: restarting closes shell sessions and invalidates
+  shared links, while managed services keep running.
+- OpenAPI uses one `tokenHeader` security scheme for reads and mutations. Clients
+  configured with the former `sessionHeader` scheme name should use
+  `tokenHeader`; the `X-Mabo-Ctl-Token` HTTP header is unchanged.
+- API clients parsing authentication errors should expect the JSON bodies above
+  instead of the previous plain-text login instructions.
+
 ## [1.3.0] - 2026-11-01
 
 ### Added

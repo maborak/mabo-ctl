@@ -783,3 +783,94 @@ tab changes, one initial PTY, resize/refit and reattachment after page reload.
 ```bash
 go test ./internal/web -run TestTerminalSyncDoesNotRaceItsInitialOpen
 ```
+
+## 28. Remote-terminal permission still rejected trusted tunnels
+
+**Shape.** The constructor accepted explicit remote-terminal permission, but the
+per-request terminal gate still required a direct bound Host/Origin and rejected
+all proxy headers. The console worked through a trusted tunnel while its
+Terminal tab returned 403, even with the remote-terminal danger flag.
+
+**Fix.** Only with explicit remote-terminal permission, accept the console's
+validated trusted hosts and origins and allow proxy headers. Never derive trust
+from forwarding headers. Default loopback restrictions and operator-only access
+remain unchanged; every shared-link role is still denied every terminal route.
+
+**Detector.**
+```bash
+go test ./internal/web -run 'TestRemoteTerminal|TestTerminalRefusesATrustedRemoteOrigin|TestTerminalRefusesARelayedRequest'
+```
+
+## 29. API playground disagreed with the authenticated console
+
+**Shape.** The reference injected a generic API key alongside two named schemes
+for the same header. Authentication controls could disagree or produce duplicate
+headers, while the default server named the internal loopback bind even when the
+browser used a public HTTPS tunnel. Theme changes reloaded the API frame and
+discarded manual credential edits.
+
+**Fix.** Use one named header scheme, initialized once from this UI page's
+credential. Select the browser's origin, allow same-origin base-URL edits, and
+update theme in place. The frame carries the page's explicit credential so an
+ambient cookie from another tab cannot upgrade its role. Do not forward the key
+to another origin or persist it to local storage.
+
+**Detector.**
+```bash
+go test ./internal/web -run 'TestDocsPageServesRapidocWithTokenWiredIn|TestSharedPagesNeverExposeTheOperatorCredential|TestThemeAndKeybindingHelpUseCompactSidebarFooter|TestAPIAuthErrorsAreConciseJSON'
+```
+
+## 30. Mirror guests could override the presenter's scroll locally
+
+**Shape.** Disabling buttons and inputs did not stop wheel, touch, keyboard or
+scrollbar scrolling. A VIEW guest could scroll away and change the log pane's
+follow state between mirror updates.
+
+**Fix.** Scope local scroll-input suppression and hidden scrollbars to VIEW.
+Presenter updates still set scroll positions programmatically; scroll events
+in a VIEW pane never change follow state. Jump to latest is disabled and the
+embedded API frame is inert for VIEW. Independent READ/WRITE browsing and
+operator scrolling are unchanged.
+
+**Detector.**
+```bash
+go test ./internal/web -run TestMirrorViewBlocksLocalScrollWithoutBlockingPresenter
+```
+
+## 31. Multiline tracebacks got a separator on every physical line
+
+**Shape.** Each newline-delimited SSE frame became a separate padded, bordered
+row. A single Python traceback looked like many separate log events.
+
+**Fix.** Assign presentation-only entry boundaries at ingest. Group recognizable
+tracebacks (including chained exceptions) and indented continuations, never JSON
+records or adjacent lines from different services. One renderer applies the same
+boundaries during live flush and filter/pause rebuild. Raw lines remain intact;
+plain-text logging-call boundaries cannot be recovered exactly from this stream.
+
+**Detector.**
+```bash
+go test ./internal/web -run TestLogSeparatorsUseEntryBoundaries
+```
+
+## 32. A follower skipped startup output when its log did not exist yet
+
+**Shape.** Tail read the backlog through one handle, then opened the live file
+and sought to its current end. If the log did not exist, it waited for creation
+and skipped everything written before the next poll. Writes arriving while the
+backlog was being delivered could also be skipped, and a partial backlog line
+was emitted before its terminating newline.
+
+**Where it bit us.** Fresh-stack HTTPS-proxy browser smoke testing: the console
+selected a stopped service, its first start produced output, but the log pane
+stayed empty and reported live. Reloading after the log existed hid the bug.
+
+**Fix.** Open once. Snapshot existing complete backlog lines through that handle
+and follow from their consumed offset. A log created after following begins is
+read from its start; partial final lines wait for completion. Rotation detection
+and context cancellation remain unchanged.
+
+**Detector.**
+```bash
+go test ./internal/supervisor -race -run 'TestTailFollowKeepsStartupAndConcurrentOutput|TestFollowBacklogCompleteLineOffsets|TestTailFollowsTheLogAcrossARotation'
+```

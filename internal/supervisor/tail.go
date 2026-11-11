@@ -2,6 +2,7 @@ package supervisor
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -96,18 +97,12 @@ func (s *Supervisor) Tail(ctx context.Context, svc string, n int, follow bool, o
 		return nil
 	}
 
-	// Emit the backlog first so a follower does not start from an empty pane.
-	for _, line := range strings.Split(s.logTail(svc, n), "\n") {
-		if line == "" {
-			continue
-		}
-		if !send(ctx, out, line) {
-			return ctx.Err()
-		}
-	}
-
 	f, err := os.Open(path)
+	existed := err == nil
 	if err != nil {
+		if !os.IsNotExist(err) {
+			return fmt.Errorf("open %s: %w", path, err)
+		}
 		// The service may not have started yet. Wait for the file rather than
 		// failing: in the TUI, selecting a stopped service and then starting it
 		// must light the pane up without re-selecting.
@@ -118,9 +113,24 @@ func (s *Supervisor) Tail(ctx context.Context, svc string, n int, follow bool, o
 	}
 	defer func() { _ = f.Close() }()
 
-	offset, err := f.Seek(0, io.SeekEnd)
-	if err != nil {
+	// Snapshot the backlog through this same handle and follow from the exact
+	// consumed offset. Seeking to EOF after sending the backlog loses concurrent
+	// writes; doing so after waiting for a new file loses its startup output.
+	var backlog []string
+	var offset int64
+	if existed {
+		backlog, offset, err = followBacklog(f, n)
+		if err != nil {
+			return fmt.Errorf("backlog %s: %w", path, err)
+		}
+	}
+	if _, err := f.Seek(offset, io.SeekStart); err != nil {
 		return fmt.Errorf("seek %s: %w", path, err)
+	}
+	for _, line := range backlog {
+		if !send(ctx, out, line) {
+			return ctx.Err()
+		}
 	}
 
 	reader := bufio.NewReaderSize(f, 64*1024)
@@ -192,6 +202,37 @@ func (s *Supervisor) Tail(ctx context.Context, svc string, n int, follow bool, o
 			}
 		}
 	}
+}
+
+// followBacklog reads a fixed snapshot of complete lines from f and reports the
+// offset immediately after them. A partial final line stays for the live reader
+// to deliver once its newline arrives, instead of being split across updates.
+func followBacklog(f *os.File, n int) ([]string, int64, error) {
+	info, err := f.Stat()
+	if err != nil {
+		return nil, 0, err
+	}
+	var ring []string
+	var offset int64
+	sc := bufio.NewScanner(io.NewSectionReader(f, 0, info.Size()))
+	sc.Buffer(make([]byte, 0, 64*1024), maxLineBytes)
+	sc.Split(func(data []byte, atEOF bool) (int, []byte, error) {
+		if atEOF && bytes.IndexByte(data, '\n') < 0 {
+			return 0, nil, nil
+		}
+		advance, token, err := bufio.ScanLines(data, atEOF)
+		offset += int64(advance)
+		return advance, token, err
+	})
+	for sc.Scan() {
+		if n > 0 {
+			if len(ring) == n {
+				ring = ring[1:]
+			}
+			ring = append(ring, sc.Text())
+		}
+	}
+	return ring, offset, sc.Err()
 }
 
 // send delivers line unless ctx is cancelled first, reporting whether it went.

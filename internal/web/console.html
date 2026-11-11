@@ -533,10 +533,17 @@ main {
 .filter-wrap { flex: 1 1 auto; min-width: 90px; max-width: 260px; }
 
 .hints {
-  flex: none; display: flex; gap: var(--sp-3); flex-wrap: wrap;
+  flex: none; display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3);
   padding: var(--sp-2) var(--sp-3);
   border-top: 1px solid var(--border);
   font-size: var(--fs-xs); color: var(--text-faint);
+}
+.key-help { position: relative; }
+.key-help summary { cursor: pointer; }
+.key-help .key-list {
+  position: absolute; bottom: 100%; right: 0; z-index: 20; min-width: 170px;
+  padding: 12px; border: 1px solid var(--border); border-radius: var(--r-sm);
+  background: var(--surface); box-shadow: var(--shadow); display: grid; gap: 7px;
 }
 .hints kbd {
   font-family: var(--mono); font-size: 10.5px;
@@ -803,6 +810,13 @@ body.resizing iframe { pointer-events: none; }
   grid-template-rows: minmax(160px, 1fr) 8px minmax(180px, var(--terminal-output-height, 220px));
 }
 .terminal-workspace > .tabview, .terminal-workspace .term-body { min-height: 0; }
+.terminal-workspace.output-closed { grid-template-rows: minmax(160px, 1fr); }
+.btn-close-output { display: none; }
+.terminal-output .btn-close-output { display: inline-flex; }
+.connection-health { display: inline-flex; align-items: center; gap: 7px; font: 11px var(--mono); color: var(--text-dim); }
+.connection-health svg { width: 72px; height: 24px; color: var(--accent); }
+.connection-health.slow svg { color: var(--ph-slow); }
+.connection-health.down svg { color: var(--ph-failed); }
 .terminal-output { display: flex; min-width: 0; min-height: 0; }
 .terminal-output > .detail { flex: 1 1 auto; }
 .terminal-output .detail-scroll { display: contents; }
@@ -1053,8 +1067,13 @@ ol.argv-list li code { color: var(--text); }
   height: 300px; overflow: auto; overflow-wrap: anywhere;
 }
 .log-line { padding: 0 var(--sp-3); white-space: pre-wrap; color: var(--text); }
-.log-body.separated .log-line { padding-top: var(--sp-2); padding-bottom: var(--sp-2); }
-.log-body.separated .log-line + .log-line { border-top: 1px dashed var(--border-strong); }
+.log-body.separated .log-line.entry-start { padding-top: var(--sp-2); margin-top: var(--sp-2); }
+.log-body.separated .log-line + .log-line.entry-start { border-top: 1px dashed var(--border-strong); }
+/* Hidden overflow still permits presenter-driven scrollTop updates. */
+.view-mirror, .view-mirror body,
+.view-mirror .svc-list, .view-mirror .log-body, .view-mirror .detail-scroll,
+.view-mirror .cfg-body, .view-mirror .activity { overflow: hidden !important; }
+.view-mirror #api-frame { pointer-events: none; }
 .log-separators {
   display: inline-flex; align-items: center; gap: var(--sp-1);
   font-size: var(--fs-xs); color: var(--text-dim); cursor: pointer;
@@ -1422,14 +1441,21 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
          aria-labelledby="services-heading" tabindex="-1"></div>
 
     <div class="hints">
-      <span><kbd>j</kbd><kbd>k</kbd> select</span>
-      <span><kbd>s</kbd> start</span>
-      <span><kbd>x</kbd> stop</span>
-      <span><kbd>r</kbd> restart</span>
-      <span><kbd>/</kbd> filter</span>
-      <span><kbd>b</kbd> sidebar</span>
-      <span><kbd>c</kbd> config</span>
-      <span id="sort-note">declaration order</span>
+      <button type="button" id="btn-theme" class="ghost tiny theme-toggle"
+              title="Colour theme: follow the system, light or dark"><span class="g" aria-hidden="true">◐</span><span id="theme-word">System</span></button>
+      <details class="key-help">
+        <summary title="Keyboard shortcuts and service ordering">Keys ?</summary>
+        <div class="key-list">
+          <span><kbd>j</kbd><kbd>k</kbd> select</span>
+          <span><kbd>s</kbd> start</span>
+          <span><kbd>x</kbd> stop</span>
+          <span><kbd>r</kbd> restart</span>
+          <span><kbd>/</kbd> filter</span>
+          <span><kbd>b</kbd> sidebar</span>
+          <span><kbd>c</kbd> config</span>
+          <span id="sort-note">declaration order</span>
+        </div>
+      </details>
     </div>
   </section>
   <div class="resize-handle sidebar-resizer" id="sidebar-resizer" role="separator" tabindex="0"
@@ -1453,11 +1479,9 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     <span id="link-state" class="link-state wait" role="status">
       <span class="dot" aria-hidden="true"></span><span id="link-text">connecting</span>
     </span>
-    <button type="button" id="btn-theme" class="ghost tiny theme-toggle"
-            title="Colour theme: follow the system, light or dark"><span class="g" aria-hidden="true">◐</span><span id="theme-word">System</span></button>
-    <span class="token" id="token-chip" title="the per-run session token; every start, stop and restart carries it">
-      <b>token</b><span class="val" id="token-val">…</span>
-      <button type="button" class="ghost tiny" id="btn-copy-token">Copy</button>
+    <span class="connection-health" id="connection-health" title="Status response time includes server work. RX counts received application payload, not total network bandwidth.">
+      <svg viewBox="0 0 72 24" aria-hidden="true"><polyline id="connection-line" fill="none" stroke="currentColor" stroke-width="2" points="0,22 72,22"/></svg>
+      <span id="connection-metrics" aria-label="Connection measurements">measuring…</span>
     </span>
   </div>
 
@@ -1537,6 +1561,10 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
         <h2 id="config-heading">Configuration</h2>
         <span class="cfg-note" id="cfg-note"></span>
         <div class="spacer"></div>
+        <span class="token" id="token-chip" title="the per-run session token; every start, stop and restart carries it">
+          <b>token</b><span class="val" id="token-val">…</span>
+          <button type="button" class="ghost tiny" id="btn-copy-token">Copy</button>
+        </span>
         <button type="button" class="ghost tiny" id="btn-config-reload"
                 title="Re-read /api/config">Reload</button>
       </div>
@@ -1566,7 +1594,8 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
         <p>The terminal runs a real shell with your permissions, so it is opt-in.
           Restart the console with <code>mabo-ctl serve --terminal</code>, or set
           <code>console_terminal: true</code> in <code>mabo-ctl.yaml</code>.
-          It is only available on a loopback console.</p>
+          Loopback-only by default; remote shells require explicit --terminal and
+          --i-know-allow-remote-terminal-is-dangerous at startup.</p>
       </div>
       {{end}}
     </section>
@@ -1632,6 +1661,21 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
   var CAN_WRITE = IS_OWNER || ROLE === "write";
   var mirrorApplying = false;
   var accessEnded = false;
+  if (ROLE === "view") {
+    document.documentElement.classList.add("view-mirror");
+    // preventDefault is scoped to local input, never presenter-applied scroll.
+    document.addEventListener("wheel", function (ev) {
+      if (!ev.ctrlKey && !ev.metaKey) { ev.preventDefault(); }
+    }, {capture: true, passive: false});
+    document.addEventListener("touchmove", function (ev) {
+      if (ev.touches.length === 1) { ev.preventDefault(); }
+    }, {capture: true, passive: false});
+    document.addEventListener("keydown", function (ev) {
+      if (!ev.ctrlKey && !ev.metaKey && ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "PageUp", "PageDown", "Home", "End", " "].indexOf(ev.key) >= 0) {
+        ev.preventDefault();
+      }
+    }, {capture: true});
+  }
 
   function credentialURL(path) {
     return path + (path.indexOf("?") < 0 ? "?" : "&") + "token=" + encodeURIComponent(TOKEN);
@@ -1832,6 +1876,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
       // headers landed just before the laptop slept would hang this promise
       // forever.
       return res.text().then(function (body) {
+        noteTraffic(body);
         if (!res.ok) {
           if (!IS_OWNER && (res.status === 401 || res.status === 403) &&
               (path === "/api/status" || path === "/api/services" || path === "/api/mirror")) { endGuestAccess(); }
@@ -1883,6 +1928,32 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
 
   var health = { events: "connecting", poll: "ok", pollWhy: "", eventsWhy: "" };
 
+  // Measure existing traffic only: no extra probe requests or server telemetry.
+  var connection = { bytes: 0, rate: 0, sampledAt: performance.now(), rtt: null, lastReply: 0, history: [] };
+  var payloadEncoder = new TextEncoder();
+  function noteTraffic(data) { connection.bytes += payloadEncoder.encode(data || "").byteLength; }
+  function paintConnection() {
+    var now = performance.now(), elapsed = now - connection.sampledAt;
+    if (elapsed >= 1000) {
+      connection.rate = connection.bytes * 1000 / elapsed;
+      connection.bytes = 0; connection.sampledAt = now;
+    }
+    var age = connection.lastReply ? Math.max(0, (now - connection.lastReply) / 1000) : null;
+    var down = health.poll === "down" || health.events === "down" || health.events === "retrying";
+    var slow = !down && (connection.rtt >= 1000 || (age !== null && age > 10 && document.visibilityState === "visible"));
+    document.getElementById("connection-health").className = "connection-health" + (down ? " down" : slow ? " slow" : "");
+    document.getElementById("connection-metrics").textContent =
+      (down ? "offline · " : slow ? "slow · " : "") +
+      (connection.rtt === null ? "RTT –" : Math.round(connection.rtt) + " ms") +
+      " · RX " + (connection.rate / 1024).toFixed(1) + " KiB/s" +
+      (age === null ? "" : " · " + Math.floor(age) + "s ago");
+    var points = connection.history.map(function (rtt, i) {
+      return (i * 72 / 23).toFixed(1) + "," + (22 - Math.min(rtt / 2000, 1) * 20).toFixed(1);
+    });
+    if (points.length === 1) { points.push("72," + points[0].split(",")[1]); }
+    if (points.length) { document.getElementById("connection-line").setAttribute("points", points.join(" ")); }
+  }
+
   var banner      = document.getElementById("banner");
   var bannerTitle = document.getElementById("banner-title");
   var bannerWhy   = document.getElementById("banner-why");
@@ -1921,6 +1992,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     else { cls += "wait"; label = "connecting"; }
     linkState.className = cls;
     linkText.textContent = label;
+    paintConnection();
   }
 
   /* =======================================================================
@@ -2131,7 +2203,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     });
     separators.appendChild(this.separatorBox);
     separators.appendChild(txt("Separators"));
-    separators.title = "Add spacing and dashed borders between log entries, not wrapped text rows";
+    separators.title = "Separate log entries; indented continuations and Python tracebacks stay together (best effort for plain text)";
     bar.appendChild(separators);
 
     var fontControl = el("label", "log-font");
@@ -2182,6 +2254,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     this.jump = el("button", "jump primary", "Jump to latest");
     this.jump.type = "button";
     this.jump.hidden = true;
+    this.jump.disabled = ROLE === "view";
     this.jump.addEventListener("click", function () {
       self.setFollow(true);
       self.scrollToEnd();
@@ -2198,6 +2271,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     // stopped moving.
     this.lastTop = 0;
     this.body.addEventListener("scroll", function () {
+      if (ROLE === "view") { return; } // Only the presenter owns follow/scroll.
       var top = self.body.scrollTop;
       var atEnd = self.body.scrollHeight - top - self.body.clientHeight <= FOLLOW_SLACK_PX;
       if (atEnd) {
@@ -2310,13 +2384,38 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     this.paintCount();
   };
 
+  // The wire carries lines, not logging-call/write boundaries. Group only
+  // recognizable continuations; never merge JSON records or different services.
+  function logEntry(text, kind, svc, previous) {
+    var trace = /^(?:[A-Z]+:\s*)?Traceback \(most recent call last\):/.test(text);
+    var structured = false;
+    if (/^\s*[\[{]/.test(text)) {
+      try { JSON.parse(text); structured = true; } catch (e) { /* plain text/source code */ }
+    }
+    if (previous && !kind && !previous.kind && previous.svc === (svc || "") && !structured) {
+      var entry = previous.entry;
+      var chain = /^(During handling of the above exception|The above exception was the direct cause)/.test(text);
+      if (entry.traceback && chain) { entry.chain = true; return entry; }
+      if (trace && entry.chain) { entry.chain = false; entry.complete = false; return entry; }
+      if (!trace && !entry.structured) {
+        if (/^\s/.test(text) || text === "") { return entry; }
+        if (entry.traceback && !entry.complete &&
+            !/^(DEBUG|INFO|WARN(?:ING)?|ERROR|CRITICAL|FATAL):/.test(text) && /^[\w.]+(?::|$)/.test(text)) {
+          entry.complete = true;
+          return entry;
+        }
+      }
+    }
+    return {traceback: trace, structured: structured, complete: false, chain: false};
+  }
+
   LogPane.prototype.push = function (text, kind, svc) {
     // Classify once at ingest: tail-backfill and live lines both enter here,
     // and flush/rebuild must never re-parse a line already in the buffer.
     var sev = detectLevel(text);
     this.buf.push({
       text: text, kind: kind || "", lvl: sev ? sev.lvl : "", tint: sev ? sev.tint : "",
-      svc: svc || ""
+      svc: svc || "", entry: logEntry(text, kind, svc, this.buf[this.buf.length - 1])
     });
     if (this.buf.length > MAX_LINES) { this.buf.splice(0, this.buf.length - MAX_LINES); }
     if (this.paused) {
@@ -2352,6 +2451,13 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     return rec.text;
   };
 
+  LogPane.prototype.appendRecord = function (fragment, rec) {
+    fragment.appendChild(el("div", "log-line" + (this.drawnEntry !== rec.entry ? " entry-start" : "") +
+      (rec.kind ? " " + rec.kind : "") + (rec.lvl ? " lvl-" + rec.lvl : "") +
+      (rec.tint ? " " + rec.tint : ""), this.lineText(rec)));
+    this.drawnEntry = rec.entry;
+  };
+
   LogPane.prototype.flush = function () {
     var batch = this.pending;
     this.pending = [];
@@ -2361,8 +2467,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     for (var i = 0; i < batch.length; i++) {
       if (!this.matches(batch[i])) { continue; }
       var r = batch[i];
-      frag.appendChild(el("div", "log-line" + (r.kind ? " " + r.kind : "") +
-        (r.lvl ? " lvl-" + r.lvl : "") + (r.tint ? " " + r.tint : ""), this.lineText(r)));
+      this.appendRecord(frag, r);
       drew++;
     }
     if (drew) {
@@ -2380,6 +2485,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
   };
 
   LogPane.prototype.rebuild = function () {
+    this.drawnEntry = null;
     var lines = this.body.getElementsByClassName("log-line");
     while (lines.length) { this.body.removeChild(lines[0]); }
 
@@ -2387,8 +2493,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     for (var i = 0; i < this.buf.length; i++) {
       if (!this.matches(this.buf[i])) { continue; }
       var r = this.buf[i];
-      frag.appendChild(el("div", "log-line" + (r.kind ? " " + r.kind : "") +
-        (r.lvl ? " lvl-" + r.lvl : "") + (r.tint ? " " + r.tint : ""), this.lineText(r)));
+      this.appendRecord(frag, r);
       drew++;
     }
     this.body.appendChild(frag);
@@ -2473,6 +2578,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     };
 
     es.onmessage = function (ev) {
+      noteTraffic(ev.data);
       // A frame that arrives for a service the pane has since moved off is
       // dropped rather than mixed into another service's output.
       if (self.name !== want) { return; }
@@ -2870,6 +2976,13 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
       head.appendChild(this.btnStop);
       head.appendChild(this.btnRestart);
       head.appendChild(this.btnOpen);
+      var closeOutput = textButton("×", "ghost tiny btn-close-output", function () {
+        setServiceOutputVisible(false);
+        document.getElementById("tab-terminal").focus();
+      });
+      closeOutput.setAttribute("aria-label", "Hide service output below terminal");
+      closeOutput.title = "Hide service output; select a service in the sidebar to reopen";
+      head.appendChild(closeOutput);
       detailEl.appendChild(head);
 
       /* --- scrolling body --- */
@@ -3102,6 +3215,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     // A deliberate pick (click, j/k) settles the selection for good.
     if (focusRow) {
       autoSelect = false;
+      if (currentTab === "terminal") { setServiceOutputVisible(true); }
       if (currentTab !== "terminal") { showTab("output"); }
     }
     if (selected === name) {
@@ -3340,8 +3454,13 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     themeWord.textContent = themePref.charAt(0).toUpperCase() + themePref.slice(1);
     btnTheme.title = "Colour theme: " + themePref + (themePref === "system"
       ? " (currently " + (dark ? "dark" : "light") + ")" : "") + ". Click to change.";
-    // A loaded API reference is reloaded in the new theme.
-    if (apiFrame && apiFrame.getAttribute("src")) { apiFrame.setAttribute("src", apiSrc()); }
+    // Update in place: reloading would discard manually edited API credentials.
+    if (apiFrame && apiFrame.contentDocument) {
+      var apiDoc = apiFrame.contentDocument;
+      var reference = apiDoc.querySelector("rapi-doc");
+      if (reference) { reference.setAttribute("theme", dark ? "dark" : "light"); }
+      apiDoc.documentElement.style.colorScheme = dark ? "dark" : "light";
+    }
   }
 
   (function () {
@@ -3867,7 +3986,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
 
   function pointAt(x, y) {
     var target = document.elementFromPoint(x, y);
-    if (!target || target.closest("#cfg-access, #cfg-token, #cfg-origins, #terminal-view, .secret-input, [type=password]")) { return null; }
+    if (!target || target.closest("#cfg-access, #cfg-token, #token-chip, #cfg-origins, #terminal-view, .secret-input, [type=password]")) { return null; }
     for (var region in pointerRegions) {
       if (!owns.call(pointerRegions, region)) { continue; }
       var node = target.closest(pointerRegions[region]);
@@ -4602,10 +4721,17 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
   };
   var tabButtons = document.querySelectorAll(".tabs .tab");
   var apiFrame = document.getElementById("api-frame");
+  apiFrame.inert = ROLE === "view";
 
   var TAB_KEY = "mabo-ctl.tab";
   var terminalOutput = document.getElementById("terminal-output");
   var stage = document.querySelector(".stage");
+  function setServiceOutputVisible(visible) {
+    terminalOutput.hidden = !visible;
+    outputResize.hidden = !visible;
+    TAB_VIEWS.terminal.classList.toggle("output-closed", !visible);
+    if (currentTab === "terminal") { terminals.fitActive(); }
+  }
 
   function placeServiceOutput(docked) {
     if (docked) {
@@ -4617,10 +4743,10 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     pane.setCompact(docked);
   }
 
-  // No token in the frame's URL: this page already holds the session cookie,
-  // and a credential in a URL is one more place for it to be copied from.
+  // Bind the frame to THIS page's credential, not an ambient cookie another
+  // browser tab may have replaced with a different access role.
   function apiSrc() {
-    return "/api-docs?theme=" + (document.documentElement.getAttribute("data-theme") || "light");
+    return credentialURL("/api-docs?theme=" + (document.documentElement.getAttribute("data-theme") || "light"));
   }
 
   function showTab(name) {
@@ -4962,6 +5088,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
       s.es = es;
       es.onopen = function () { if (!s.dead) { s.term.reset(); } };
       es.onmessage = function (ev) {
+        noteTraffic(ev.data);
         // A frame queued before the tab was closed must not be written to a
         // terminal that has already been disposed.
         if (s.dead) { return; }
@@ -5203,6 +5330,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     if (pollCtl) { pollCtl.abort(); }
     var seq = ++pollSeq;
     var ctl = new AbortController();
+    var pollStarted = performance.now();
     pollCtl = ctl;
     // The abort above is the normal way the old fetch settles. This is the
     // backstop for a browser whose network stack never rejects it.
@@ -5214,6 +5342,10 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
       .then(function (list) {
         if (seq !== pollSeq) { return; }   // a newer poll owns the page
         health.poll = "ok";
+        connection.rtt = performance.now() - pollStarted;
+        connection.lastReply = performance.now();
+        connection.history.push(connection.rtt);
+        if (connection.history.length > 24) { connection.history.shift(); }
         health.pollWhy = "";
         applyStatuses(list || []);
       })
@@ -5313,6 +5445,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
       if (owns.call(rows, k)) { rows[k].paintUptime(); }
     }
     detail.paintUptime();
+    paintConnection();
     if (tipRow) { paintTip(); }
   }, 1000);
 
@@ -5348,6 +5481,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     };
 
     es.onmessage = function (ev) {
+      noteTraffic(ev.data);
       var e;
       try { e = JSON.parse(ev.data); } catch (err) { return; }
       health.events = "live";

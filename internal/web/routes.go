@@ -125,7 +125,7 @@ var consoleRoutes = []Route{
 	{http.MethodPost, "/api/{svc}/stop", "stop one named service", RouteMutate, false},
 	{http.MethodPost, "/api/{svc}/restart", "restart one named service", RouteMutate, false},
 
-	// The Terminal tab: opt-in, loopback-only interactive shells. Every route
+	// The Terminal tab: opt-in, loopback-by-default interactive shells. Every route
 	// also answers 404 while the terminal is off and 403 to a request that did
 	// not come from a browser on this machine at the loopback address.
 	{http.MethodGet, "/api/terminals",
