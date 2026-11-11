@@ -874,3 +874,35 @@ and context cancellation remain unchanged.
 ```bash
 go test ./internal/supervisor -race -run 'TestTailFollowKeepsStartupAndConcurrentOutput|TestFollowBacklogCompleteLineOffsets|TestTailFollowsTheLogAcrossARotation'
 ```
+
+## 33. Background log rendering retained an unbounded second history
+
+**Shape.** The log ring held at most 2,000 lines, but each incoming line also
+entered an unbounded `pending` array awaiting `requestAnimationFrame`. Browsers
+suspend those callbacks in background tabs while SSE may keep delivering data.
+Evicted history records remained reachable from `pending`; returning to the tab
+also tried to construct the entire accumulated DOM before trimming it. A line
+count alone did not bound large log strings. Terminal scrollback separately
+bounded parsed rows, not output queued for xterm's asynchronous parser.
+
+**Evidence.** Suspending paint and ingesting 100,000 roughly 1 KiB lines retained
+all 100,000 in `pending` (100,988,890 text characters), despite a 2,000-line ring.
+This is a reproducible memory-growth path, not proof of any particular Chrome
+crash without that browser's diagnostics.
+
+An isolated Chrome 156 stress test measured 116,321,600 bytes of JavaScript heap
+with the old client after those 100,000 lines, versus 4,945,360 bytes with the
+bounded client. Another 100,000 lines left the bounded client at 4,961,248 bytes.
+These are controlled retained-heap measurements, not whole-browser memory or a
+claim that the user's original crash was diagnosed from a crash report.
+
+**Fix.** Eviction releases pending references too; count and text budgets bound
+both history and DOM. Oversized display prefixes are copied so sliced strings
+cannot retain the original allocation. Rebuilds cancel obsolete paints. Bound
+unparsed terminal output and recover visibly from recent server scrollback once
+the parser drains; preserve replay suppression and leave shells/log files alone.
+
+**Detector.**
+```bash
+go test ./internal/web -run 'TestConsoleLogRetentionBoundsEveryQueue|TestConsoleTerminalOutputHasBackpressure'
+```

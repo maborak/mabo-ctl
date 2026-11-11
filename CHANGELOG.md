@@ -8,6 +8,21 @@ contract and service phase names are stable.
 
 ## [Unreleased]
 
+### Fixed
+
+- Bound the browser's pending log-render queue as well as displayed history.
+  Background tabs no longer retain every incoming line while animation frames
+  are suspended. Log previews are limited to 2,000 lines and 2 Mi UTF-16 code
+  units, with explicit display-only truncation for lines over 16 Ki code units.
+  Raw service log files remain unchanged.
+- Filtering, clearing and resuming logs cancel stale paints instead of replaying
+  pending records twice. DOM pruning follows the retained text budget even when
+  new lines do not match the active filter.
+- Bound each terminal's unparsed browser output at 2 MiB. An overloaded display
+  detaches and, when visible and drained, reloads recent server scrollback.
+  Recovery explicitly warns that older terminal output may be omitted; the
+  shell itself keeps running and replay cannot generate shell input.
+
 ## [1.4.0] - 2026-11-11
 
 ### Added

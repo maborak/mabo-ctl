@@ -1703,6 +1703,8 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
      ======================================================================= */
 
   var MAX_LINES        = 2000;   // ring buffer for the one open pane, DOM included
+  var MAX_LOG_CHARS    = 2 * 1024 * 1024; // retained UTF-16 code units, not raw log storage
+  var MAX_LOG_LINE_CHARS = 16 * 1024;     // oversized lines get an explicit display-only preview
   var POLL_VISIBLE_MS  = 2000;
   var POLL_HIDDEN_MS   = 10000;  // a background tab must not hammer health probes
   var STATUS_TIMEOUT   = 8000;
@@ -2074,6 +2076,9 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     this.all = false;         // merged mode: every service's tail in this pane
     this.buf = [];            // { text, kind }
     this.pending = [];
+    this.bufferChars = 0;
+    this.dropped = 0;
+    this.seq = 0;
     this.frame = 0;
     this.paused = false;
     this.pausedCount = 0;
@@ -2322,9 +2327,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     this.lastName = name;
     this.all = false;
     this.btnAll.setAttribute("aria-pressed", "false");
-    this.buf = [];
-    this.pending = [];
-    this.pausedCount = 0;
+    this.resetBuffer();
     this.retryAt = RECONNECT_MIN;
     this.setLevelFilter("");   // a new service starts unfiltered
     this.title.textContent = "output · " + name;
@@ -2344,9 +2347,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     this.name = "all";
     this.all = true;
     this.btnAll.setAttribute("aria-pressed", "true");
-    this.buf = [];
-    this.pending = [];
-    this.pausedCount = 0;
+    this.resetBuffer();
     this.retryAt = RECONNECT_MIN;
     this.setLevelFilter("");
     this.title.textContent = "output · all services";
@@ -2409,21 +2410,40 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     return {traceback: trace, structured: structured, complete: false, chain: false};
   }
 
+  function logPreview(text) {
+    if (text.length <= MAX_LOG_LINE_CHARS) { return text; }
+    var end = MAX_LOG_LINE_CHARS;
+    var last = text.charCodeAt(end - 1);
+    if (last >= 0xD800 && last <= 0xDBFF) { end--; }
+    // Copy the small prefix: a sliced string can otherwise retain its entire
+    // oversized backing string in the browser, defeating the display budget.
+    return JSON.parse(JSON.stringify(text.slice(0, end))) + " … [display truncated; full line remains in the log file]";
+  }
+
   LogPane.prototype.push = function (text, kind, svc) {
     // Classify once at ingest: tail-backfill and live lines both enter here,
     // and flush/rebuild must never re-parse a line already in the buffer.
     var sev = detectLevel(text);
     this.buf.push({
-      text: text, kind: kind || "", lvl: sev ? sev.lvl : "", tint: sev ? sev.tint : "",
-      svc: svc || "", entry: logEntry(text, kind, svc, this.buf[this.buf.length - 1])
+      text: logPreview(text), kind: kind || "", lvl: sev ? sev.lvl : "", tint: sev ? sev.tint : "",
+      svc: svc || "", entry: logEntry(text, kind, svc, this.buf[this.buf.length - 1]), seq: ++this.seq
     });
-    if (this.buf.length > MAX_LINES) { this.buf.splice(0, this.buf.length - MAX_LINES); }
+    var rec = this.buf[this.buf.length - 1];
+    this.bufferChars += rec.text.length;
+    while (this.buf.length > MAX_LINES || this.bufferChars > MAX_LOG_CHARS) {
+      var evicted = this.buf.shift();
+      this.bufferChars -= evicted.text.length;
+      // rAF may stop for days in a background tab. Pending output must never
+      // retain records that were evicted from the bounded history.
+      if (this.pending[0] === evicted) { this.pending.shift(); }
+      this.dropped++;
+    }
     if (this.paused) {
       this.pausedCount++;
       this.paintCount();
       return;
     }
-    this.pending.push(this.buf[this.buf.length - 1]);
+    this.pending.push(rec);
     this.schedule();
   };
 
@@ -2452,15 +2472,18 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
   };
 
   LogPane.prototype.appendRecord = function (fragment, rec) {
-    fragment.appendChild(el("div", "log-line" + (this.drawnEntry !== rec.entry ? " entry-start" : "") +
+    var node = el("div", "log-line" + (this.drawnEntry !== rec.entry ? " entry-start" : "") +
       (rec.kind ? " " + rec.kind : "") + (rec.lvl ? " lvl-" + rec.lvl : "") +
-      (rec.tint ? " " + rec.tint : ""), this.lineText(rec)));
+      (rec.tint ? " " + rec.tint : ""), this.lineText(rec));
+    node.dataset.seq = String(rec.seq);
+    fragment.appendChild(node);
     this.drawnEntry = rec.entry;
   };
 
   LogPane.prototype.flush = function () {
     var batch = this.pending;
     this.pending = [];
+    if (this.paused) { return; }
     if (!batch.length) { return; }
 
     var frag = document.createDocumentFragment(), drew = 0;
@@ -2473,47 +2496,51 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     if (drew) {
       this.empty.hidden = true;
       this.body.appendChild(frag);
-      this.trimDOM();
     }
+    this.trimDOM();
     this.paintCount();
     if (this.follow) { this.scrollToEnd(); }
   };
 
   LogPane.prototype.trimDOM = function () {
     var lines = this.body.getElementsByClassName("log-line");
-    while (lines.length > MAX_LINES) { this.body.removeChild(lines[0]); }
+    var first = this.buf.length ? this.buf[0].seq : this.seq + 1;
+    while (lines.length && (lines.length > MAX_LINES || Number(lines[0].dataset.seq) < first)) {
+      this.body.removeChild(lines[0]);
+    }
   };
 
   LogPane.prototype.rebuild = function () {
+    // A rebuild already includes pending records. Do not append them a second
+    // time when an earlier scheduled animation frame finally runs.
+    if (this.frame) { cancelAnimationFrame(this.frame); this.frame = 0; }
+    this.pending = [];
     this.drawnEntry = null;
     var lines = this.body.getElementsByClassName("log-line");
     while (lines.length) { this.body.removeChild(lines[0]); }
 
-    var frag = document.createDocumentFragment(), drew = 0;
+    var frag = document.createDocumentFragment();
     for (var i = 0; i < this.buf.length; i++) {
       if (!this.matches(this.buf[i])) { continue; }
       var r = this.buf[i];
       this.appendRecord(frag, r);
-      drew++;
     }
     this.body.appendChild(frag);
-    this.empty.hidden = drew > 0;
-    if (!drew) {
-      // Name the level the way the service list names its phase: a reader who
-      // sees an empty pane has to know which of the two active filters ate it.
-      this.empty.textContent = this.buf.length
-        ? "No line matches this filter (" + this.buf.length + " held)" +
-          (this.levelFilter ? " at level " + this.levelFilter : "") + "."
-        : "No output yet.";
-    }
     this.paintCount();
     if (this.follow) { this.scrollToEnd(); }
   };
 
-  LogPane.prototype.clearBuffer = function () {
+  LogPane.prototype.resetBuffer = function () {
+    if (this.frame) { cancelAnimationFrame(this.frame); this.frame = 0; }
     this.buf = [];
     this.pending = [];
+    this.bufferChars = 0;
+    this.dropped = 0;
     this.pausedCount = 0;
+  };
+
+  LogPane.prototype.clearBuffer = function () {
+    this.resetBuffer();
     this.rebuild();
   };
 
@@ -2521,10 +2548,17 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
 
   LogPane.prototype.paintCount = function () {
     var shown = this.body.getElementsByClassName("log-line").length;
+    this.empty.hidden = shown > 0;
+    if (!shown) {
+      this.empty.textContent = this.buf.length
+        ? "No line matches this filter (" + this.buf.length + " held)" +
+          (this.levelFilter ? " at level " + this.levelFilter : "") + "."
+        : "No output yet.";
+    }
     var s = this.buf.length + (this.buf.length === 1 ? " line" : " lines");
     if (this.filter || this.levelFilter) { s = shown + " of " + s; }
     if (this.paused && this.pausedCount) { s += " · " + this.pausedCount + " held"; }
-    if (this.buf.length >= MAX_LINES) { s += " · oldest dropped"; }
+    if (this.dropped) { s += " · " + this.dropped + " older lines discarded from display"; }
     this.count.textContent = s;
   };
 
@@ -4905,6 +4939,10 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
   // The server caps one input body at 1 MiB. JSON escaping can sextuple a
   // control character, so a chunk stays well under that even in the worst case.
   var TERM_INPUT_CHUNK = 128 * 1024;
+  // xterm scrollback bounds parsed rows, not its asynchronous parser queue.
+  // Allow the server's 1 MiB replay plus live output, then detach and recover
+  // from bounded server scrollback rather than grow the browser indefinitely.
+  var TERM_OUTPUT_LIMIT = 2 * 1024 * 1024;
 
   var terminals = {
     body: document.getElementById("term-body"),
@@ -5062,7 +5100,8 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
       term.open(pane);
 
       var s = { id: id, pane: pane, tab: tab, term: term, fit: fit, es: null,
-                queue: "", sending: false, dead: false, replaying: 0, resizeTimer: 0 };
+                queue: "", sending: false, dead: false, replaying: 0, resizeTimer: 0,
+                pendingOutput: 0, outputPaused: false };
       this.sessions[id] = s;
       this.order.push(id);
 
@@ -5083,35 +5122,70 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     // stream opens the output. Every (re)connect replays the scrollback, so the
     // screen is reset first; the server ends with {end:true} when the shell exits.
     stream: function (s) {
+      if (s.dead || s.es || s.pendingOutput) { return; }
+      s.outputPaused = false;
       var self = this;
       var es = new EventSource(credentialURL("/api/terminals/" + encodeURIComponent(s.id) + "/stream"));
       s.es = es;
-      es.onopen = function () { if (!s.dead) { s.term.reset(); } };
+      es.onopen = function () {
+        if (s.dead || s.es !== es) { return; }
+        if (s.pendingOutput) { self.pauseOutput(s); return; }
+        s.term.reset();
+      };
       es.onmessage = function (ev) {
         noteTraffic(ev.data);
         // A frame queued before the tab was closed must not be written to a
         // terminal that has already been disposed.
-        if (s.dead) { return; }
+        if (s.dead || s.es !== es) { return; }
         var msg;
         try { msg = JSON.parse(ev.data); } catch (e) { return; }
-        if (msg.data && msg.replay) {
-          // The scrollback carries old terminal queries; xterm would answer
-          // them again and the answers would land at the shell prompt as
-          // typed garbage. Nothing generated while a replay is parsed is
-          // sent; counting rather than a flag covers a reconnect arriving
-          // before the previous replay finished.
-          s.replaying++;
-          s.term.write(b64bytes(msg.data), function () { s.replaying--; });
-        } else if (msg.data) {
-          s.term.write(b64bytes(msg.data));
-        }
+        if (msg.data) { self.writeOutput(s, b64bytes(msg.data), !!msg.replay); }
         if (msg.end) { self.ended(s); }
       };
       es.onerror = function () {
+        if (s.es !== es) { return; }
         // A closed EventSource (404: the shell is gone) does not retry; one
         // that is merely reconnecting does, and replays on its next open.
         if (es.readyState === 2) { self.ended(s); }
       };
+    },
+
+    pauseOutput: function (s) {
+      if (s.es) {
+        s.es.onopen = s.es.onmessage = s.es.onerror = null;
+        s.es.close(); s.es = null;
+      }
+      s.outputPaused = true;
+      this.note.textContent = "Terminal display paused: output exceeded the browser buffer. When visible, it resumes from recent scrollback; older output may be omitted. The shell keeps running.";
+    },
+
+    writeOutput: function (s, data, replay) {
+      if (s.pendingOutput + data.byteLength > TERM_OUTPUT_LIMIT) {
+        this.pauseOutput(s);
+        return;
+      }
+      var self = this;
+      s.pendingOutput += data.byteLength;
+      // Never send emulator-generated replies while old scrollback is parsed.
+      if (replay) { s.replaying++; }
+      s.term.write(data, function () {
+        s.pendingOutput -= data.byteLength;
+        if (replay) { s.replaying--; }
+        self.resumeOutput(s);
+      });
+    },
+
+    resumeOutput: function (s) {
+      if (s.dead || !s.outputPaused || s.pendingOutput || document.visibilityState !== "visible" ||
+          currentTab !== "terminal" || this.active !== s.id) { return; }
+      this.note.textContent = "Terminal display recovered from recent scrollback; older output may have been omitted.";
+      this.stream(s);
+    },
+
+    recoverOutput: function () {
+      for (var id in this.sessions) {
+        if (owns.call(this.sessions, id)) { this.resumeOutput(this.sessions[id]); }
+      }
     },
 
     ended: function (s) {
@@ -5151,6 +5225,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
       }
       this.fitActive();
       this.focusActive();
+      this.resumeOutput(this.sessions[id]);
     },
 
     close: function (id) {
@@ -5218,6 +5293,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
       new ResizeObserver(function () { terminals.fitActive(); }).observe(terminals.body);
     }
     terminals.refreshCount();
+    terminals.recoverOutput();
   }
 
   // The open tab survives a reload — the one moment a terminal user most needs
