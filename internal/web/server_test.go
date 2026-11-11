@@ -1473,10 +1473,10 @@ func TestTheUnlockPageCarriesNoToken(t *testing.T) {
 }
 
 // TestDocsPageServesRapidocWithTokenWiredIn checks that the API reference page
-// is the RapiDoc API Reference, with the session token wired into the api-key
+// is the RapiDoc API Reference, with the session token wired into its header scheme
 // (X-Mabo-Ctl-Token in the header) so try-it requests are authenticated exactly
-// like the console buttons, and the server pinned to the address actually
-// bound. Like the console page, this is delivered only to a caller who has
+// like the console buttons, and the server taken from the browser's origin.
+// Like the console page, this is delivered only to a caller who has
 // already proven possession of the token.
 func TestDocsPageServesRapidocWithTokenWiredIn(t *testing.T) {
 	t.Parallel()
@@ -1503,14 +1503,21 @@ func TestDocsPageServesRapidocWithTokenWiredIn(t *testing.T) {
 			t.Errorf("the docs page does not contain %s", want)
 		}
 	}
-	// The token is wired in as the api-key value: try-it is authenticated.
-	if !strings.Contains(body, `api-key-value="`+s.Token()) {
+	// One named scheme, initialized once, rather than duplicate token headers.
+	if !strings.Contains(body, `name="mabo-ctl-token" content="`+s.Token()) {
 		t.Errorf("the docs page does not contain the wired-in token")
 	}
-	// The server is pinned to the address actually bound, not the spec's
-	// 127.0.0.1:7999 default, so try-it reaches this console on any port.
-	if !strings.Contains(body, `server-url="http://`+recorderAddr) {
-		t.Errorf("the docs page does not contain the bound server address")
+	for _, want := range []string{
+		`reference.setApiKey("tokenHeader", token);`, `}, {once: true});`,
+		`var origin = window.location.origin;`, `reference.setApiServer(origin);`,
+		`id="api-server-url"`, `url.origin !== origin`, `persist-auth="false"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("API initialization lost %q", want)
+		}
+	}
+	if strings.Contains(body, "api-key-value=") || strings.Contains(body, "http://"+recorderAddr) {
+		t.Error("docs inject duplicate auth or an internal bound address")
 	}
 
 	// The docs page uses the relaxed CSP that allows its same-origin script,
@@ -1521,6 +1528,53 @@ func TestDocsPageServesRapidocWithTokenWiredIn(t *testing.T) {
 	}
 	if !strings.Contains(csp, "connect-src 'self'") {
 		t.Errorf("CSP %q is missing connect-src 'self'", csp)
+	}
+}
+
+func TestAPIAuthErrorsAreConciseJSON(t *testing.T) {
+	t.Parallel()
+	s := newRecorderServer(t, twoServices())
+	for _, method := range []string{http.MethodGet, http.MethodPost} {
+		path := "/api/services"
+		if method == http.MethodPost {
+			path = "/api/backend/start"
+		}
+		for _, key := range []string{"", "bad-api-key"} {
+			r := httptest.NewRequest(method, "http://"+recorderAddr+path, nil)
+			if key != "" {
+				r.Header.Set(tokenHeader, key)
+				// An explicit bad key must not fall back to a valid UI cookie.
+				r.AddCookie(&http.Cookie{Name: s.cookieName(), Value: s.Token()})
+			}
+			w := httptest.NewRecorder()
+			s.h.ServeHTTP(w, r)
+			if w.Code != http.StatusForbidden || !strings.HasPrefix(w.Header().Get("Content-Type"), "application/json") {
+				t.Fatalf("%s invalid authentication: %d %s", method, w.Code, w.Body.String())
+			}
+			if strings.TrimSpace(w.Body.String()) != `{"error":"invalid_api_key"}` {
+				t.Errorf("unexpected authentication error: %s", w.Body.String())
+			}
+		}
+	}
+}
+
+func TestThemeAndKeybindingHelpUseCompactSidebarFooter(t *testing.T) {
+	t.Parallel()
+	footer := strings.Index(consoleHTML, `<div class="hints">`)
+	theme := strings.Index(consoleHTML, `id="btn-theme"`)
+	end := strings.Index(consoleHTML, `</aside>`)
+	if footer < 0 || theme < footer || theme > end || strings.Count(consoleHTML, `id="btn-theme"`) != 1 {
+		t.Fatal("theme control must appear once in the sidebar footer")
+	}
+	for _, want := range []string{
+		`<details class="key-help">`, `<summary title="Keyboard shortcuts and service ordering">Keys ?</summary>`,
+		`<div class="key-list">`, `id="sort-note">declaration order`,
+		`reference.setAttribute("theme", dark ? "dark" : "light");`,
+		`return credentialURL("/api-docs?theme="`,
+	} {
+		if !strings.Contains(consoleHTML, want) {
+			t.Errorf("sidebar/API behavior lost %q", want)
+		}
 	}
 }
 
@@ -2355,6 +2409,93 @@ func TestTerminalSyncDoesNotRaceItsInitialOpen(t *testing.T) {
 	}
 }
 
+func TestConsoleConnectionMeterAndConfigToken(t *testing.T) {
+	t.Parallel()
+	configStart := strings.Index(consoleHTML, `id="config-view"`)
+	token := strings.Index(consoleHTML, `id="token-chip"`)
+	if configStart < 0 {
+		t.Fatal("missing Config panel")
+	}
+	configEnd := strings.Index(consoleHTML[configStart:], `</section>`)
+	if token < configStart || token > configStart+configEnd {
+		t.Fatal("token/Copy control must be inside Config, not the top bar")
+	}
+	for _, want := range []string{
+		`id="connection-health"`, `id="connection-line"`, `id="connection-metrics"`,
+		`var pollStarted = performance.now();`,
+		`connection.rtt = performance.now() - pollStarted;`,
+		`connection.history.length > 24`, `noteTraffic(body);`, `noteTraffic(ev.data);`,
+		`payloadEncoder.encode(data || "").byteLength`,
+		`connection.rate = connection.bytes * 1000 / elapsed;`,
+		`" · RX "`, `" KiB/s"`, `"slow · "`, `"offline · "`,
+		`Status response time includes server work.`,
+		`btnCopyToken.hidden = !IS_OWNER;`, `TOKEN.slice(0, 8) + "…"`,
+	} {
+		if !strings.Contains(consoleHTML, want) {
+			t.Errorf("connection/token UI lost %q", want)
+		}
+	}
+}
+
+func TestConsoleCanDismissAndReopenDockedOutput(t *testing.T) {
+	t.Parallel()
+	for _, want := range []string{
+		`"ghost tiny btn-close-output"`, `setServiceOutputVisible(false);`,
+		`Hide service output below terminal`,
+		`if (currentTab === "terminal") { setServiceOutputVisible(true); }`,
+		`terminalOutput.hidden = !visible;`, `outputResize.hidden = !visible;`,
+		`TAB_VIEWS.terminal.classList.toggle("output-closed", !visible);`,
+		`.terminal-workspace.output-closed { grid-template-rows: minmax(160px, 1fr); }`,
+		`terminals.fitActive();`,
+	} {
+		if !strings.Contains(consoleHTML, want) {
+			t.Errorf("dismissible output lost %q", want)
+		}
+	}
+	selection := consoleHTML[strings.Index(consoleHTML, "  function select(name, focusRow) {"):]
+	if strings.Index(selection, "setServiceOutputVisible(true)") > strings.Index(selection, "if (selected === name)") {
+		t.Fatal("clicking the already selected sidebar service must also reopen output")
+	}
+}
+
+func TestMirrorViewBlocksLocalScrollWithoutBlockingPresenter(t *testing.T) {
+	t.Parallel()
+	for _, want := range []string{
+		`if (ROLE === "view") {`, `classList.add("view-mirror")`,
+		`document.addEventListener("wheel"`, `document.addEventListener("touchmove"`,
+		`{capture: true, passive: false}`, `"PageUp", "PageDown", "Home", "End", " "`,
+		`if (ROLE === "view") { return; } // Only the presenter owns follow/scroll.`,
+		`.view-mirror .svc-list, .view-mirror .log-body, .view-mirror .detail-scroll`,
+		`apiFrame.inert = ROLE === "view";`,
+		`this.jump.disabled = ROLE === "view";`,
+		`pane.body.scrollTop = m.scroll * Math.max(0, pane.body.scrollHeight - pane.body.clientHeight);`,
+	} {
+		if !strings.Contains(consoleHTML, want) {
+			t.Errorf("mirror scrolling lost %q", want)
+		}
+	}
+}
+
+func TestLogSeparatorsUseEntryBoundaries(t *testing.T) {
+	t.Parallel()
+	for _, want := range []string{
+		`function logEntry(text, kind, svc, previous)`,
+		`previous.svc === (svc || "") && !structured`,
+		`entry: logEntry(text, kind, svc, this.buf[this.buf.length - 1])`,
+		`this.drawnEntry !== rec.entry ? " entry-start" : ""`,
+		`this.drawnEntry = null;`, `this.drawnEntry = rec.entry;`,
+		`entry.complete = true;`, `entry.chain = true;`,
+		`Python tracebacks stay together`,
+	} {
+		if !strings.Contains(consoleHTML, want) {
+			t.Errorf("entry grouping lost %q", want)
+		}
+	}
+	if strings.Count(consoleHTML, `this.appendRecord(frag, r);`) != 2 {
+		t.Error("live flush and filtered rebuild must share the entry renderer")
+	}
+}
+
 // TestMirrorPointerIsVisualOnly guards cursor privacy, accessibility and the
 // separation between visual click indicators and input events.
 func TestMirrorPointerIsVisualOnly(t *testing.T) {
@@ -2364,7 +2505,7 @@ func TestMirrorPointerIsVisualOnly(t *testing.T) {
 		`mainColumn.insertBefore(mirrorNote, mainColumn.firstChild);`,
 		`READ ONLY · You can browse`, `WRITE ACCESS · You can start`, `VIEW · `, `BROADCASTING · `,
 		`document.addEventListener("pointermove"`, `document.addEventListener("pointerdown"`,
-		`target.closest("#cfg-access, #cfg-token, #cfg-origins, #terminal-view, .secret-input, [type=password]")`,
+		`target.closest("#cfg-access, #cfg-token, #token-chip, #cfg-origins, #terminal-view, .secret-input, [type=password]")`,
 		`Date.now() - lastClick.at < 1200`, `if (key === remoteClickKey) { return; }`,
 		`.mirror-cursor, .mirror-click {`, `pointer-events: none;`,
 		`@media (prefers-reduced-motion: reduce)`, `hideRemotePointer();`,
@@ -2413,7 +2554,7 @@ func TestConsolePageClassifiesAndFiltersLogLevels(t *testing.T) {
 		`background: var(--accent); border-color: var(--accent); color: var(--bg);`,
 		`this.separatorBox.type = "checkbox";`,
 		`self.body.classList.toggle("separated", self.separatorBox.checked);`,
-		`.log-body.separated .log-line + .log-line { border-top: 1px dashed var(--border-strong); }`,
+		`.log-body.separated .log-line + .log-line.entry-start { border-top: 1px dashed var(--border-strong); }`,
 	} {
 		if !strings.Contains(consoleHTML, want) {
 			t.Errorf("console.html lost %q; the log level filter is not wired", want)

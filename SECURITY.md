@@ -53,7 +53,7 @@ written it into their own `mabo-ctl.yaml`:
 | Signal blast radius | mabo-ctl signalling a process it did not start |
 | Secret handling | credentials reaching a log, `--json`, or an HTTP response that a reader would not expect |
 | **The `mabo-ctl serve` web console** | any bypass of its token, `Host`/`Origin`, or method checks |
-| **The console's Terminal tab** | a shell reachable when the terminal is off, through a non-loopback bind, or from an origin other than the loopback address |
+| **The console's Terminal tab** | a shell reachable when disabled, remotely without explicit permission, by a shared-link user, or from an origin other than the bound address |
 
 ### `mabo-ctl serve` deserves particular attention
 
@@ -163,13 +163,22 @@ The controls, as of the current `main`:
   inherited environment mabo-ctl forwards to children is never sent to a browser.
 - **No CORS header is ever set**, so a cross-origin reader cannot see a body
   even on the read-only routes.
-- **The Terminal tab is opt-in and loopback-only.** Its routes run interactive
+- **The Terminal tab is opt-in and loopback-only by default.** Its routes run interactive
   shells — strictly more than the declared commands — so they exist only under
   `serve --terminal` or `console_terminal: true` (404 otherwise), the terminal
-  refuses a non-loopback bind even with `--i-know-this-is-dangerous`, and every
-  terminal request must name the bound loopback address in `Host` and in any
-  `Origin` it sends, and carry no proxy-forwarding header. An origin trusted
-  through `--allow-origin` drives the rest of the console but gets 403 here.
+  requires both explicit `--terminal` and
+  `--i-know-allow-remote-terminal-is-dangerous` for remote access. A non-loopback
+  bind additionally requires `--i-know-this-is-dangerous`; neither that flag nor
+  `console_terminal` alone authorizes remote shells. By default, terminal
+  requests must name the bound address in `Host` and in any `Origin` they send,
+  and carry no proxy-forwarding headers. With remote-terminal permission,
+  explicitly trusted `--allow-origin` hosts and origins are also accepted,
+  including requests carrying proxy headers. Forwarding headers never establish
+  trust or authorization; Host, Origin and operator authentication still apply.
+  Without remote-terminal permission, a non-loopback console still serves, but
+  its Terminal box is disabled and all terminal routes answer 404.
+  All shared-link roles are denied terminals. Plain HTTP exposes tokens and
+  shell traffic to network observers; use a trusted network or encryption.
   At most 16 shells are open at once, and they are hung up when serve stops.
   Terminal output is untrusted: the page follows OSC 8 links only for
   http(s), with `noopener`, because a `javascript:` link opened from the

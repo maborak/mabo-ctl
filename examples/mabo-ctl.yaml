@@ -39,9 +39,11 @@ ready_timeout: 30s
 # console_access_key: replace-with-at-least-4-characters
 
 # Enable the web console's Terminal tab: interactive login shells in this
-# repository's root, running as you, that survive closing the tab. Refused on
-# a non-loopback console and through --allow-origin. `serve --terminal` does
-# the same for one run. Default false.
+# repository's root, running as you, that survive closing the tab. Loopback-only
+# by default; remote shells require explicit --terminal plus
+# --i-know-allow-remote-terminal-is-dangerous (and a non-loopback bind also needs
+# --i-know-this-is-dangerous). Tunnels additionally need their public HTTPS
+# origin in --allow-origin. Default false.
 # console_terminal: true
 
 # ---------------------------------------------------------------------------

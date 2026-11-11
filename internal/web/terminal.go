@@ -55,26 +55,35 @@ func toTerminalInfo(t supervisor.TerminalInfo) terminalInfo {
 //
 // A terminal is a shell, which is strictly more than the declared commands the
 // rest of the console can run, so it is held to a stricter rule than the rest:
-// it exists only when the operator opted in, and only for a browser on THIS
-// machine talking to the loopback address directly. The Host must be the bound
-// loopback address itself — not a name an operator trusted for a tunnel — an
-// Origin, which every POST carries, must be that same address, and the request
-// must not carry the headers a relaying proxy adds. A console
-// reached through --allow-origin keeps every other tab and loses this one.
+// it exists only when the operator opted in. The constructor requires loopback
+// unless remote terminals were explicitly authorized. By default Host and Origin
+// must name the bound address and proxy headers are refused. Remote-terminal
+// permission additionally admits explicitly trusted tunnel hosts and origins,
+// with proxy headers allowed but never used to establish trust or authorization.
 func (s *Server) terminalAllowed(w http.ResponseWriter, r *http.Request) bool {
 	if s.terminals == nil {
 		writeJSON(w, http.StatusNotFound, errorResponse{Error: "the terminal is off; start the console with " +
 			"`mabo-ctl serve --terminal` or set console_terminal: true in mabo-ctl.yaml"})
 		return false
 	}
-	local := s.allowedHost(r.Host) && !proxied(r)
+	if s.opts.AllowRemoteTerminal {
+		allowed := s.allowedHost(r.Host) || s.trustedHost(r.Host)
+		if origin := r.Header.Get("Origin"); origin != "" {
+			allowed = allowed && s.allowedOrigin(origin)
+		}
+		if !allowed {
+			writeJSON(w, http.StatusForbidden, errorResponse{Error: "forbidden: remote terminals require the bound address or an explicitly trusted --allow-origin Host and Origin"})
+		}
+		return allowed
+	}
+	direct := s.allowedHost(r.Host) && !proxied(r)
 	if origin := r.Header.Get("Origin"); origin != "" {
 		canon, err := normalizeBoundOrigin(origin)
-		local = local && err == nil && s.allowedOriginImplicit(canon)
+		direct = direct && err == nil && s.allowedOriginImplicit(canon)
 	}
-	if !local {
-		writeJSON(w, http.StatusForbidden, errorResponse{Error: "forbidden: the terminal is served only to " +
-			"a browser on this machine using the console's loopback address"})
+	if !direct {
+		writeJSON(w, http.StatusForbidden, errorResponse{Error: "forbidden: the terminal requires the console's " +
+			"bound address directly, with a matching Origin and no proxy-forwarding headers"})
 		return false
 	}
 	return true

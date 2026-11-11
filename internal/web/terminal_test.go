@@ -61,17 +61,195 @@ func TestTerminalRoutesAreOffUnlessEnabled(t *testing.T) {
 	}
 }
 
-// TestTerminalRefusesANonLoopbackBind checks that --terminal cannot ride along
-// on --i-know-this-is-dangerous: a shell is never served to the network.
-func TestTerminalRefusesANonLoopbackBind(t *testing.T) {
+// TestTerminalDisablesOnNonLoopbackBind keeps the console available without
+// granting shells through the ordinary dangerous-bind permission.
+func TestTerminalDisablesOnNonLoopbackBind(t *testing.T) {
 	t.Parallel()
-	_, err := NewWith(twoServices(), Options{
-		Addr:      "0.0.0.0:0",
+	const addr = "192.168.0.27:7999"
+	s, err := NewWith(twoServices(), Options{
+		Addr:      addr,
 		Force:     true,
 		Terminals: supervisor.NewTerminals(t.TempDir()),
 	})
-	if !errors.Is(err, ErrUnsafeAddr) {
-		t.Fatalf("NewWith(0.0.0.0, Force, Terminals) = %v, want ErrUnsafeAddr", err)
+	if err != nil {
+		t.Fatalf("console should keep serving: %v", err)
+	}
+	if s.terminals != nil || s.opts.Terminals != nil {
+		t.Fatal("remote terminals remain enabled without permission")
+	}
+	if page := string(s.renderPage()); !strings.Contains(page, "Terminal is off") {
+		t.Fatal("the page does not show the disabled terminal box")
+	}
+	for _, route := range Routes() {
+		if !strings.HasPrefix(route.Path, "/api/terminals") && route.Path != "/api/services" {
+			continue
+		}
+		path := strings.ReplaceAll(route.Path, "{id}", "missing")
+		r := httptest.NewRequest(route.Method, "http://"+addr+path, strings.NewReader(`{}`))
+		r.Header.Set(tokenHeader, s.Token())
+		r.Header.Set("Origin", "http://"+addr)
+		w := httptest.NewRecorder()
+		s.h.ServeHTTP(w, r)
+		want := http.StatusNotFound
+		if route.Path == "/api/services" {
+			want = http.StatusOK
+		}
+		if w.Code != want {
+			t.Errorf("%s %s = %d, want %d: %s", route.Method, path, w.Code, want, w.Body.String())
+		}
+	}
+}
+
+func TestRemoteTerminalBindRequiresBothPermissions(t *testing.T) {
+	t.Parallel()
+	for _, force := range []bool{false, true} {
+		terms := supervisor.NewTerminals(t.TempDir())
+		t.Cleanup(terms.CloseAll)
+		_, err := NewWith(twoServices(), Options{
+			Addr: "192.168.0.29:7999", Force: force,
+			Terminals: terms, AllowRemoteTerminal: true,
+		})
+		if force && err != nil {
+			t.Fatalf("explicit remote terminal permissions: %v", err)
+		}
+		if !force && !errors.Is(err, ErrUnsafeAddr) {
+			t.Fatalf("without bind permission: %v, want ErrUnsafeAddr", err)
+		}
+	}
+}
+
+func TestRemoteTerminalKeepsHostOriginProxyAndAuthGuards(t *testing.T) {
+	const addr = "192.168.0.29:7999"
+	s := newTerminalServer(t, Options{Addr: addr, Force: true, AllowRemoteTerminal: true,
+		AllowedOrigins: []string{"https://dev.tunnel.example"}})
+	for _, c := range []struct {
+		name, host, origin, forwarded, key string
+		want                               int
+	}{
+		{"direct LAN", addr, "http://" + addr, "", s.Token(), http.StatusOK},
+		{"no origin read", addr, "", "", s.Token(), http.StatusOK},
+		{"wrong host", "192.168.0.30:7999", "", "", s.Token(), http.StatusForbidden},
+		{"wrong port", "192.168.0.29:8000", "", "", s.Token(), http.StatusForbidden},
+		{"wrong origin", addr, "http://192.168.0.30:7999", "", s.Token(), http.StatusForbidden},
+		{"trusted origin", addr, "https://dev.tunnel.example", "", s.Token(), http.StatusOK},
+		{"trusted host", "dev.tunnel.example", "https://dev.tunnel.example", "", s.Token(), http.StatusOK},
+		{"proxy", addr, "http://" + addr, "for=192.168.0.20", s.Token(), http.StatusOK},
+		{"untrusted host", "evil.example", "https://dev.tunnel.example", "", s.Token(), http.StatusForbidden},
+		{"untrusted origin", "dev.tunnel.example", "https://evil.example", "", s.Token(), http.StatusForbidden},
+		{"proxy cannot authorize", "evil.example", "https://evil.example", "host=dev.tunnel.example", s.Token(), http.StatusForbidden},
+		{"invalid key", addr, "http://" + addr, "", "invalid", http.StatusForbidden},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodGet, "http://"+c.host+"/api/terminals", nil)
+			r.Header.Set("Origin", c.origin)
+			r.Header.Set("Forwarded", c.forwarded)
+			r.Header.Set(tokenHeader, c.key)
+			w := httptest.NewRecorder()
+			s.h.ServeHTTP(w, r)
+			if w.Code != c.want {
+				t.Fatalf("status = %d, want %d: %s", w.Code, c.want, w.Body.String())
+			}
+		})
+	}
+	// A direct authenticated LAN mutation really can open and close a shell.
+	post := func(path, body string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodPost, "http://"+addr+path, strings.NewReader(body))
+		r.Header.Set(tokenHeader, s.Token())
+		r.Header.Set("Origin", "http://"+addr)
+		w := httptest.NewRecorder()
+		s.h.ServeHTTP(w, r)
+		return w
+	}
+	w := post("/api/terminals", `{"cols":80,"rows":24}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("LAN open: %d %s", w.Code, w.Body.String())
+	}
+	var info terminalInfo
+	if err := json.Unmarshal(w.Body.Bytes(), &info); err != nil {
+		t.Fatal(err)
+	}
+	if w := post("/api/terminals/"+info.ID+"/close", ""); w.Code != http.StatusNoContent {
+		t.Fatalf("LAN close: %d %s", w.Code, w.Body.String())
+	}
+	// Exercise every terminal route with the feature enabled, not merely the
+	// closed permission matrix of a console whose terminals are off.
+	for _, role := range []string{"read", "view", "write"} {
+		_, key := createRemoteTestShare(t, s, addr, role)
+		for _, route := range Routes() {
+			if !strings.HasPrefix(route.Path, "/api/terminals") {
+				continue
+			}
+			path := strings.ReplaceAll(route.Path, "{id}", "missing")
+			r := httptest.NewRequest(route.Method, "http://"+addr+path, strings.NewReader(`{}`))
+			r.Header.Set(tokenHeader, key)
+			r.Header.Set("Origin", "http://"+addr)
+			w := httptest.NewRecorder()
+			s.h.ServeHTTP(w, r)
+			if w.Code != http.StatusForbidden {
+				t.Errorf("%s %s %s = %d, want 403", role, route.Method, path, w.Code)
+			}
+		}
+	}
+}
+
+func createRemoteTestShare(t *testing.T, s *Server, addr, role string) (string, string) {
+	t.Helper()
+	r := httptest.NewRequest(http.MethodPost, "http://"+addr+"/api/access/shares",
+		strings.NewReader(`{"name":"remote guest","role":"`+role+`"}`))
+	r.Header.Set(tokenHeader, s.Token())
+	r.Header.Set("Origin", "http://"+addr)
+	w := httptest.NewRecorder()
+	s.h.ServeHTTP(w, r)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create share: %d %s", w.Code, w.Body.String())
+	}
+	var out struct {
+		Share sharedAccess `json:"share"`
+		Token string       `json:"token"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	return out.Share.ID, out.Token
+}
+
+func TestRemoteTerminalThroughTrustedTunnel(t *testing.T) {
+	s := newTerminalServer(t, Options{AllowRemoteTerminal: true,
+		AllowedOrigins: []string{"https://dev.tunnel.example"}})
+	request := func(method, path, key, body string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(method, "https://dev.tunnel.example"+path, strings.NewReader(body))
+		r.Header.Set(tokenHeader, key)
+		r.Header.Set("Origin", "https://dev.tunnel.example")
+		r.Header.Set("X-Forwarded-For", "192.168.0.20")
+		w := httptest.NewRecorder()
+		s.h.ServeHTTP(w, r)
+		return w
+	}
+	w := request(http.MethodPost, "/api/terminals", s.Token(), `{"cols":80,"rows":24}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("tunnel open: %d %s", w.Code, w.Body.String())
+	}
+	var info terminalInfo
+	if err := json.Unmarshal(w.Body.Bytes(), &info); err != nil {
+		t.Fatal(err)
+	}
+	if w := request(http.MethodGet, "/api/terminals", s.Token(), ""); w.Code != http.StatusOK {
+		t.Fatalf("tunnel list: %d %s", w.Code, w.Body.String())
+	}
+	for _, role := range []string{"read", "view", "write"} {
+		_, key := createTestShare(t, s, role)
+		for _, route := range Routes() {
+			if !strings.HasPrefix(route.Path, "/api/terminals") {
+				continue
+			}
+			path := strings.ReplaceAll(route.Path, "{id}", info.ID)
+			if w := request(route.Method, path, key, `{}`); w.Code != http.StatusForbidden {
+				t.Errorf("%s tunnel %s %s = %d, want 403", role, route.Method, path, w.Code)
+			}
+		}
+	}
+	if w := request(http.MethodPost, "/api/terminals/"+info.ID+"/close", s.Token(), ""); w.Code != http.StatusNoContent {
+		t.Fatalf("tunnel close: %d %s", w.Code, w.Body.String())
 	}
 }
 

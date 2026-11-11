@@ -94,6 +94,7 @@
       "cli:serve --addr",
       "cli:serve --allow-origin",
       "cli:serve --config",
+      "cli:serve --i-know-allow-remote-terminal-is-dangerous",
       "cli:serve --i-know-this-is-dangerous",
       "cli:serve --notify",
       "cli:serve --open",

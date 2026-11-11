@@ -76,9 +76,13 @@ guarded on four sides:
 --terminal (or console_terminal: true) adds a Terminal tab: interactive login
 shells in the repository root, running as you, that keep running while the
 tab is closed and are hung up when serve stops. A shell can run anything, so it
-is opt-in and held to a stricter rule than every other route: it is refused on a
-non-loopback bind, and served only to a browser on this machine using the
-loopback address — a console reached through --allow-origin does not get it.
+is opt-in and loopback-only by default. Remote shells require both --terminal
+and --i-know-allow-remote-terminal-is-dangerous; a non-loopback bind additionally
+requires --i-know-this-is-dangerous. console_terminal alone never enables remote
+shells. With remote-terminal permission, tunnels also require their public HTTPS
+origin in --allow-origin. Shared-link users never get terminal access.
+Without remote-terminal permission, a non-loopback console keeps serving with
+the Terminal tab disabled.
 
 --i-know-this-is-dangerous is the only way to bind a non-loopback address, and
 it means what it says: every machine that can route to that address can drive
@@ -111,7 +115,9 @@ func (a *app) serveCmd() *cobra.Command {
 		"show a desktop notification when a service dies while this console is served")
 	f.Bool("terminal", false,
 		"enable the console's Terminal tab: interactive shells in the repository root, running as you; "+
-			"loopback consoles only. console_terminal: true in mabo-ctl.yaml does the same")
+			"loopback by default. console_terminal: true in mabo-ctl.yaml does the same")
+	f.Bool("i-know-allow-remote-terminal-is-dangerous", false,
+		"permit remote operator shells with --terminal; a non-loopback bind also requires --i-know-this-is-dangerous")
 	f.StringArray("allow-origin", nil,
 		"additional browser origin to accept, e.g. https://dev.tunnel.example; repeatable. "+
 			"Needed when the console is reached through a tunnel or port forward, where the browser's "+
@@ -142,6 +148,8 @@ type serveOptions struct {
 	AccessKey string
 	// Terminal is --terminal: enable the Terminal tab for this run.
 	Terminal bool
+	// AllowRemoteTerminal explicitly permits remote shells, only with --terminal.
+	AllowRemoteTerminal bool
 }
 
 // runServe parses the flags and serves until the first SIGINT.
@@ -167,14 +175,15 @@ func (a *app) runServe(cmd *cobra.Command, _ []string) error {
 	addr, addrSet := a.consoleAddr(addr, cmd.Flags().Changed("addr"))
 
 	opt := serveOptions{
-		Addr:         addr,
-		AddrSet:      addrSet,
-		Open:         boolFlag(cmd, "open"),
-		Force:        boolFlag(cmd, "i-know-this-is-dangerous"),
-		AllowOrigins: allow,
-		Notify:       boolFlag(cmd, "notify"),
-		AccessKey:    accessKey,
-		Terminal:     boolFlag(cmd, "terminal"),
+		Addr:                addr,
+		AddrSet:             addrSet,
+		Open:                boolFlag(cmd, "open"),
+		Force:               boolFlag(cmd, "i-know-this-is-dangerous"),
+		AllowOrigins:        allow,
+		Notify:              boolFlag(cmd, "notify"),
+		AccessKey:           accessKey,
+		Terminal:            boolFlag(cmd, "terminal"),
+		AllowRemoteTerminal: boolFlag(cmd, "i-know-allow-remote-terminal-is-dangerous"),
 	}
 
 	ctx, cancel := interruptible(cmd.Context())
@@ -212,6 +221,9 @@ func (a *app) consoleAddr(flagAddr string, flagSet bool) (addr string, set bool)
 // requested port was already taken. Nothing is printed at all when the bind
 // fails, which is the only honest thing to print.
 func (a *app) serve(ctx context.Context, opt serveOptions) error {
+	if opt.AllowRemoteTerminal && !opt.Terminal {
+		return usageErrorf("--i-know-allow-remote-terminal-is-dangerous requires explicit --terminal; console_terminal alone is not sufficient")
+	}
 	if _, _, err := net.SplitHostPort(opt.Addr); err != nil {
 		return usageErrorf("--addr %q is not an address of the form host:port: %v", opt.Addr, err)
 	}
@@ -262,15 +274,16 @@ func (a *app) serve(ctx context.Context, opt serveOptions) error {
 	var srv *web.Server
 	makeConsole := func(addr string) (*web.Server, error) {
 		return web.New(sup, web.Options{
-			Addr:           addr,
-			Force:          opt.Force,
-			Open:           opt.Open,
-			Origins:        a.origins,
-			StateDir:       a.stateDir(),
-			ExplicitConfig: a.configPath != "",
-			AllowedOrigins: opt.AllowOrigins,
-			AccessKey:      opt.AccessKey,
-			Terminals:      terminals,
+			Addr:                addr,
+			Force:               opt.Force,
+			Open:                opt.Open,
+			Origins:             a.origins,
+			StateDir:            a.stateDir(),
+			ExplicitConfig:      a.configPath != "",
+			AllowedOrigins:      opt.AllowOrigins,
+			AccessKey:           opt.AccessKey,
+			Terminals:           terminals,
+			AllowRemoteTerminal: opt.AllowRemoteTerminal,
 			Reload: func(ctx context.Context, ev chan<- supervisor.Event) (*web.Reloaded, error) {
 				return a.reloadServe(ctx, ev, srv, keyFromConfig)
 			},
@@ -340,7 +353,14 @@ func (a *app) serve(ctx context.Context, opt serveOptions) error {
 	}
 
 	if terminals != nil {
-		fmt.Fprintln(a.env.Stderr, "Terminal tab on: the console can open shells in the repository root, running as you.")
+		if !opt.AllowRemoteTerminal && exposedToNetwork(srv.Addr()) {
+			fmt.Fprintln(a.env.Stderr, "Terminal tab disabled: remote shells require --terminal with --i-know-allow-remote-terminal-is-dangerous; the web console will keep running.")
+		} else {
+			fmt.Fprintln(a.env.Stderr, "Terminal tab on: the console can open shells in the repository root, running as you.")
+			if opt.AllowRemoteTerminal {
+				fmt.Fprintln(a.env.Stderr, "WARNING: remote terminal access enabled: anyone with the operator token can run arbitrary shell commands as you. HTTP does not encrypt tokens or terminal traffic; use only a trusted network or an encrypted connection.")
+			}
+		}
 	}
 	a.announceServe(srv, serveClosing)
 	if opt.Open {

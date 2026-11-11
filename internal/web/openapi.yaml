@@ -16,6 +16,10 @@ info:
       attach custom headers without triggering a CORS preflight, which this
       server never answers.
 
+    Authentication failures preserve HTTP 403 and return JSON
+    `{"error":"invalid_api_key"}`. Role denials return HTTP 403 with
+    `{"error":"forbidden"}`. No login instructions or credentials are included.
+
     ## Security
 
     Operator credentials have full access. Shared roles are server-enforced:
@@ -34,7 +38,7 @@ info:
 
     Credential-shaped values in health URLs, command arguments, and environment
     values are replaced with `[redacted]` by `internal/redact`.
-  version: "1.3.0"
+  version: "1.4.0"
   contact:
     name: mabo-ctl
     url: https://github.com/maborak/mabo-ctl
@@ -49,7 +53,7 @@ servers:
 
 security:
   - sessionCookie: []
-  - sessionHeader: []
+  - tokenHeader: []
 
 paths:
 
@@ -84,7 +88,7 @@ paths:
         form (401); an authenticated one gets the full console (200).
       security:
         - sessionCookie: []
-        - sessionHeader: []
+        - tokenHeader: []
         - queryToken: []
       responses:
         "200":
@@ -509,11 +513,18 @@ paths:
       summary: List terminals
       description: >-
         The open Terminal-tab shells, oldest first. 404 unless serve runs with
-        --terminal (or console_terminal true); 403 unless the request comes from
-        a browser on this machine at the loopback address.
+        --terminal (or console_terminal true). Loopback-only by default; remote
+        shells require explicit --terminal and
+        --i-know-allow-remote-terminal-is-dangerous, plus
+        --i-know-this-is-dangerous for a non-loopback bind. Operator-only;
+        Host and Origin must name the bound address or, with remote-terminal
+        permission, an explicitly trusted --allow-origin. Proxy headers are
+        permitted only with that permission and never establish trust.
+        Without remote-terminal permission on a non-loopback bind, the console
+        keeps serving with terminals disabled and these routes return 404.
       security:
         - sessionCookie: []
-        - sessionHeader: []
+        - tokenHeader: []
         - queryToken: []
       responses:
         "200":
@@ -567,7 +578,7 @@ paths:
         frame.
       security:
         - sessionCookie: []
-        - sessionHeader: []
+        - tokenHeader: []
         - queryToken: []
       parameters:
         - $ref: "#/components/parameters/terminalId"
@@ -674,7 +685,7 @@ paths:
       description: xterm.js 6.0.0 with its fit and web-links addons, vendored (MIT).
       security:
         - sessionCookie: []
-        - sessionHeader: []
+        - tokenHeader: []
         - queryToken: []
       responses:
         "200":
@@ -698,7 +709,7 @@ paths:
         render as data arrives.
       security:
         - sessionCookie: []
-        - sessionHeader: []
+        - tokenHeader: []
         - queryToken: []
       responses:
         "200":
@@ -718,7 +729,7 @@ paths:
         docs/openapi.yaml; the embedded copy must stay in sync.
       security:
         - sessionCookie: []
-        - sessionHeader: []
+        - tokenHeader: []
         - queryToken: []
       responses:
         "200":
@@ -740,7 +751,7 @@ paths:
         renderer.
       security:
         - sessionCookie: []
-        - sessionHeader: []
+        - tokenHeader: []
         - queryToken: []
       responses:
         "200":
@@ -781,7 +792,7 @@ paths:
       summary: Operator only — rotate the operator token and revoke all shares
       description: Runtime-only. Sets a replacement HttpOnly cookie; old credentials and streams cease working. Blank generates a random key. Previously shared tokens cannot be promoted to operator.
       security:
-        - sessionHeader: []
+        - tokenHeader: []
       requestBody:
         required: true
         content:
@@ -813,7 +824,7 @@ paths:
       summary: Operator only — create a scoped sharing capability
       description: Maximum 32 active links and 128 creations per serve run. Blank token generates a random key; previously used tokens cannot be reused. This does not publish the loopback listener or relax Host/Origin guards.
       security:
-        - sessionHeader: []
+        - tokenHeader: []
       requestBody:
         required: true
         content:
@@ -858,7 +869,7 @@ paths:
     post:
       summary: Operator only — terminate all sessions using this share
       security:
-        - sessionHeader: []
+        - tokenHeader: []
       parameters:
         - name: id
           in: path
@@ -897,7 +908,7 @@ paths:
       summary: Operator only — broadcast non-security presentation state
       description: A different active source receives 409 unless takeover is true. The server maps terminal to output and removes pointers/clicks for terminal or inactive broadcasts. Only known non-security pointer regions are allowed. Clients publish motion at most 10 times per second and idle heartbeats every 500ms. Valid service names are required unless empty. Publishing heartbeats are not audit-logged; refusals are.
       security:
-        - sessionHeader: []
+        - tokenHeader: []
       requestBody:
         required: true
         content:
@@ -925,11 +936,6 @@ components:
         embeds the bound port (mabo-ctl_console_<port>) because cookies are not
         port-scoped and two consoles on the same loopback host must not
         overwrite each other.
-    sessionHeader:
-      type: apiKey
-      in: header
-      name: X-Mabo-Ctl-Token
-      description: Session token (works for both reads and mutations)
     queryToken:
       type: apiKey
       in: query
@@ -939,7 +945,7 @@ components:
       type: apiKey
       in: header
       name: X-Mabo-Ctl-Token
-      description: Required for all POST routes (CSRF defence)
+      description: Session token for reads; required for all POST routes (CSRF defence)
 
   parameters:
     svc:
@@ -966,7 +972,7 @@ components:
           schema:
             $ref: "#/components/schemas/Error"
     TerminalNotLocal:
-      description: Not a browser on this machine at the loopback address
+      description: Terminal access denied (operator-only, bound or explicitly trusted Host and Origin required)
       content:
         application/json:
           schema:
