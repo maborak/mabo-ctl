@@ -17,7 +17,7 @@ import (
 // It is deliberately exempt from config loading — like --help and completion —
 // because its whole job is to exist where no config can be found yet.
 func (a *app) initCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "init",
 		Short: "Scaffold a commented-out mabo-ctl.yaml from what this repo looks like",
 		Long: `Init writes a mabo-ctl.yaml in the current directory, scaffolded from
@@ -28,19 +28,34 @@ EVERY guess lands as a commented-out line with the evidence that produced it,
 so nothing runs until a human uncomments it — a generated cmd that is subtly
 wrong is worse than a blank template. Init writes the file, adds .mabo-ctl/ to
 .gitignore, and exits. It never runs a build, an install step, or anything the
-detection found.`,
+detection found.
+
+--from imports another tool's process file instead of detecting: a Procfile
+(foreman, overmind, honcho) or a process-compose.yaml. Those are commands you
+already run, so they are written LIVE, each through ` + "`sh -c`" + `; a Procfile
+process that reads $PORT gets foreman's port (5000, +100 per process), and a
+process-compose http_get readiness probe becomes the health URL. Anything that
+cannot be carried over safely is written commented out with the reason, and
+the result is validated before init reports success.
+
+  mabo-ctl init                       detect, everything commented out
+  mabo-ctl init --from Procfile       import a Procfile
+  mabo-ctl init --from process-compose.yaml`,
 		Args:          cobra.NoArgs,
 		SilenceUsage:  true,
 		SilenceErrors: true,
-		RunE: func(_ *cobra.Command, _ []string) error {
-			return a.runInit()
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			from, _ := cmd.Flags().GetString("from")
+			return a.runInit(from)
 		},
 	}
+	cmd.Flags().String("from", "", "import a Procfile or process-compose.yaml instead of detecting; written live, not commented out")
+	return cmd
 }
 
 // runInit scaffolds the file: refuse to overwrite, detect, write, fix
 // .gitignore, report.
-func (a *app) runInit() error {
+func (a *app) runInit(from string) error {
 	wd := a.env.Wd
 	if wd == "" {
 		var err error
@@ -59,6 +74,10 @@ func (a *app) runInit() error {
 			config.LegacyFileName, config.FileName)
 	}
 
+	if from != "" {
+		return a.runInitImport(wd, target, from)
+	}
+
 	guesses := detectServices(wd)
 	body := renderInit(guesses)
 	if err := os.WriteFile(target, []byte(body), 0o644); err != nil {
@@ -75,6 +94,44 @@ func (a *app) runInit() error {
 	if gitignored {
 		fmt.Fprintln(a.env.Stdout, ".mabo-ctl/ added to .gitignore")
 	}
+	return nil
+}
+
+// runInitImport writes mabo-ctl.yaml from another tool's process file, then
+// loads it back through the real validator, so a file init calls good is one
+// every other command accepts.
+func (a *app) runInitImport(wd, target, from string) error {
+	if !filepath.IsAbs(from) {
+		from = filepath.Join(wd, from)
+	}
+	svcs, kind, err := importServices(from)
+	if err != nil {
+		return err
+	}
+	if len(svcs) == 0 {
+		return fmt.Errorf("mabo-ctl init --from: %s declares no processes", from)
+	}
+	// The header names the source relative to the repo: the file is meant to
+	// be committed, and an absolute path would publish the author's home.
+	shown := filepath.Base(from)
+	if rel, err := filepath.Rel(wd, from); err == nil && !strings.HasPrefix(rel, "..") {
+		shown = rel
+	}
+	if err := os.WriteFile(target, []byte(renderImported(svcs, kind, shown)), 0o644); err != nil {
+		return fmt.Errorf("mabo-ctl init: write %s: %w", target, err)
+	}
+	gitignored, gerr := ensureGitIgnore(filepath.Join(wd, ".gitignore"))
+	if gerr != nil {
+		fmt.Fprintf(a.env.Stderr, "mabo-ctl init: %v\n", gerr)
+	}
+	fmt.Fprintf(a.env.Stdout, "wrote %s from %s (%d process(es))\n", target, from, len(svcs))
+	if gitignored {
+		fmt.Fprintln(a.env.Stdout, ".mabo-ctl/ added to .gitignore")
+	}
+	if _, err := config.Load(target); err != nil {
+		return fmt.Errorf("mabo-ctl init --from: the imported file does not validate yet; edit %s and run `mabo-ctl config`:\n%w", target, err)
+	}
+	fmt.Fprintln(a.env.Stdout, "it validates — review the TODO comments, then `mabo-ctl preflight` and `mabo-ctl start`")
 	return nil
 }
 

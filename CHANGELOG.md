@@ -15,6 +15,14 @@ contract and service phase names are stable.
   previous fixed value; 0 to 100000, no unlimited). History costs about
   columns × lines × 12 bytes per shell, so a lower value bounds the page's
   memory. A config reload says to refresh the page to apply it.
+- `mabo-ctl init --from Procfile|process-compose.yaml` imports another
+  tool's processes into a live `mabo-ctl.yaml`: commands run through `sh -c`,
+  foreman's `$PORT` assignment, and process-compose dependencies, health
+  conditions, environment, working directories, `disabled` and HTTP readiness
+  probes carry over. Unsafe entries (a `{{` template opener, an invalid env
+  key) are written commented out with the reason, every value is quoted so
+  repo text cannot inject YAML, and the file is validated before init reports
+  success.
 - `--port-offset N|auto`, a global flag, moves every declared port by N for
   this checkout, so two git worktrees or clones of one repository can run side
   by side. `auto` picks the first of +100…+1000 where every declared port is

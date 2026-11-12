@@ -41,6 +41,7 @@
       "cli:health --wait",
       "cli:init",
       "cli:init --config",
+      "cli:init --from",
       "cli:init --port-offset",
       "cli:init --profile",
       "cli:init --refresh-ports",
