@@ -496,14 +496,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	// through the field next to it. Redacting one channel and not the other is
 	// how the first version of this control was got wrong.
 	sts := s.controller().Status(ctx)
-	for i := range sts {
-		raw := sts[i].Health
-		safe := redact.URL(raw)
-		sts[i].Health = safe
-		if raw != "" && raw != safe {
-			sts[i].Detail = strings.ReplaceAll(sts[i].Detail, raw, safe)
-		}
-	}
+	ui.RedactStatuses(sts)
 
 	body, err := ui.StatusJSON(sts)
 	if err != nil {

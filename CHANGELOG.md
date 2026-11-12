@@ -15,6 +15,14 @@ contract and service phase names are stable.
   previous fixed value; 0 to 100000, no unlimited). History costs about
   columns × lines × 12 bytes per shell, so a lower value bounds the page's
   memory. A config reload says to refresh the page to apply it.
+- The full-screen console (TUI) gains the web console's log and service
+  controls: merged all-services log (`m`), pause (`p`) and clear (`c`), a
+  level filter (`v`) using the same JSON level classification as the browser,
+  pretty JSON (`J`), separators between entries (`|`), a detail block for the
+  selected service (`i`), list filters by name (`f`) and phase (`1`-`7`, `0`),
+  an activity history (`e`), a configuration view with port sources and start
+  order (`C`), and restart of every running service (`R`). Health URLs are
+  redacted on screen as they are in the browser.
 - `mabo-ctl config --graph` prints the start order: one row per dependency
   level, each service with what it waits for. `config --json` and
   `GET /api/config` carry it as `levels`, and the web Config tab shows a
@@ -25,6 +33,12 @@ contract and service phase names are stable.
   cut by the display limit stay raw, the text filter still matches the
   original line, the choice is remembered per browser, and VIEW share links
   mirror it.
+
+### Changed
+
+- The TUI's `a` (start all) now starts every service by name, autostart or
+  not, like the web console's Start all; it used to start only the autostart
+  selection.
 
 ### Fixed
 
@@ -55,6 +69,8 @@ contract and service phase names are stable.
   `?tail=` request (from any console or shared link) read over a gigabyte
   into memory. Lines dropped by the byte cap are replaced by one marker
   saying how many were omitted.
+- The TUI's log buffer is capped at 4 MiB as well as 5000 lines; with 256 KiB
+  lines the line count alone allowed over a gigabyte.
 - Log streams in the web console, the TUI and `logs -f` buffer at most 16
   lines between the tailer and a slow reader (was 256, and 128 per service
   in `logs -f`), and merged all-services streams no longer buffer per

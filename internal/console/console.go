@@ -140,6 +140,17 @@ type Options struct {
 	// absent from the map, and colours the terminal cannot express, fall back
 	// to a stable colour derived from the service name.
 	Colors map[string]string
+
+	// Origins says where each resolved port came from, for the configuration
+	// view (C). They come from the caller because the precedence chain ran over
+	// flags and environment this package never sees.
+	Origins []service.Origin
+
+	// StateDir is the absolute path of .mabo-ctl, and ExplicitConfig reports
+	// that the config path came from --config; both are shown in the
+	// configuration view.
+	StateDir       string
+	ExplicitConfig bool
 }
 
 // Reloaded is what [Options.Reload] hands back when it applied a configuration.
@@ -150,6 +161,8 @@ type Reloaded struct {
 	Stopped []string
 	// Restarted names the services started under their new definition.
 	Restarted []string
+	// Origins says where each port of the new configuration came from.
+	Origins []service.Origin
 }
 
 // ErrNoSupervisor reports that the console was asked to run without anything

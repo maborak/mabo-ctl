@@ -47,13 +47,19 @@ func (m Model) View() string {
 	if m.quit {
 		return ""
 	}
-	if m.help {
+	switch {
+	case m.help:
 		return m.helpView()
+	case m.showEvents:
+		return m.eventsView()
+	case m.showConfig:
+		return m.configView()
 	}
 
 	lines := make([]string, 0, m.height)
 	lines = append(lines, m.titleView())
 	lines = append(lines, m.listView()...)
+	lines = append(lines, m.detailView()...)
 	lines = append(lines, m.logHeaderView())
 	lines = append(lines, m.logView()...)
 	lines = append(lines, m.noticeView())
@@ -108,27 +114,53 @@ func (m Model) titleView() string {
 
 // listHeight is how many service rows fit. The list keeps at least one row
 // even on a very short terminal, and never takes so much space that the log
-// pane disappears entirely.
+// pane disappears entirely. A list filter that is open or set takes one more
+// row for its own line.
 func (m Model) listHeight() int {
-	n := max(1, len(m.statuses))
+	n := max(1, len(m.listIndices())) + m.listFilterRows()
 	avail := max(1, m.height-chromeRows-1)
 	return min(n, avail)
 }
 
-// logHeight is how many log lines fit under the list.
-func (m Model) logHeight() int {
-	return max(1, m.height-chromeRows-m.listHeight())
+// listFilterRows is 1 when the list shows its filter line, else 0.
+func (m Model) listFilterRows() int {
+	if m.nameFiltering || m.nameFilter != "" || m.phaseFilter != "" {
+		return 1
+	}
+	return 0
 }
 
-// listWindow is the first service row shown, scrolled so the selection stays
-// visible when the list is taller than the space for it.
-func (m Model) listWindow() int {
-	h := m.listHeight()
-	if len(m.statuses) <= h {
+// detailRows is the number of rows the detail block takes: detailLines when
+// it is open and the terminal is tall enough to keep a useful log pane.
+func (m Model) detailRows() int {
+	if !m.showDetail || m.selectedName() == "" || m.height-chromeRows-m.listHeight()-detailLines < 3 {
 		return 0
 	}
-	start := min(max(m.sel-h/2, 0), len(m.statuses)-h)
-	return start
+	return detailLines
+}
+
+// detailLines is the fixed height of the detail block, so the log pane does
+// not jump as services with more or fewer facts are selected.
+const detailLines = 5
+
+// logHeight is how many log rows fit under the list and the detail block.
+func (m Model) logHeight() int {
+	return max(1, m.height-chromeRows-m.listHeight()-m.detailRows())
+}
+
+// listWindow is the first shown row of idx, scrolled so the selection stays
+// visible when the list is taller than the space for it.
+func (m Model) listWindow(idx []int, h int) int {
+	if len(idx) <= h {
+		return 0
+	}
+	at := 0
+	for i, n := range idx {
+		if n == m.sel {
+			at = i
+		}
+	}
+	return min(max(at-h/2, 0), len(idx)-h)
 }
 
 // listView renders the service rows, padded to exactly listHeight lines so the
@@ -153,15 +185,92 @@ func (m Model) listView() []string {
 		wPID = max(wPID, utf8.RuneCountInString(pidCell(st)))
 	}
 
-	start := m.listWindow()
 	rows := make([]string, 0, h)
-	for i := start; i < len(m.statuses) && len(rows) < h; i++ {
+	if m.listFilterRows() > 0 {
+		rows = append(rows, m.listFilterLine())
+	}
+	idx := m.listIndices()
+	if len(idx) == 0 {
+		rows = append(rows, dimStyle.Render(truncate("  no service matches the list filter · f edits it, 0 clears the phase", m.width)))
+	}
+	room := h - len(rows)
+	start := m.listWindow(idx, room)
+	for j := start; j < len(idx) && len(rows) < h; j++ {
+		i := idx[j]
 		rows = append(rows, m.serviceRow(m.statuses[i], i == m.sel, wName, wPhase, wPort, wPID))
 	}
 	for len(rows) < h {
 		rows = append(rows, "")
 	}
-	return rows
+	return rows[:h]
+}
+
+// listFilterLine shows the list filters in force, or the name being typed.
+func (m Model) listFilterLine() string {
+	var parts []string
+	switch {
+	case m.nameFiltering:
+		parts = append(parts, "name: "+m.nameDraft+"█")
+	case m.nameFilter != "":
+		parts = append(parts, "name: "+m.nameFilter)
+	}
+	if m.phaseFilter != "" {
+		_, word := ui.PhaseLabel(m.phaseFilter)
+		parts = append(parts, "phase: "+word)
+	}
+	shown := len(m.listIndices())
+	parts = append(parts, fmt.Sprintf("%d of %d shown", shown, len(m.statuses)))
+	return filterStyle.Render(truncate("  "+strings.Join(parts, " · "), m.width))
+}
+
+// detailView is the selected service's detail block (i): what the web
+// console's detail pane shows, in detailLines rows. Everything comes from the
+// redacted status snapshot and the redacted configuration view.
+func (m Model) detailView() []string {
+	n := m.detailRows()
+	if n == 0 {
+		return nil
+	}
+	st := m.statuses[m.sel]
+	var cs ui.ConfigService
+	for _, s := range m.cfgView.Services {
+		if s.Name == st.Name {
+			cs = s
+		}
+	}
+	or := func(v, alt string) string {
+		if v == "" {
+			return alt
+		}
+		return v
+	}
+	facts := []string{
+		"pid " + or(strings.TrimPrefix(pidCell(st), "pid "), "-"),
+		"port " + portCell(st),
+		"uptime " + or(ui.ShortDuration(st.Uptime), "-"),
+		"ready in " + or(ui.ShortDuration(st.Elapsed), "-"),
+		"runtime " + or(cs.Runtime, "system"),
+	}
+	health := or(st.Health, "no probe declared")
+	if st.HTTP != 0 {
+		health += fmt.Sprintf(" · HTTP %d", st.HTTP)
+	}
+	env := make([]string, 0, len(cs.Env))
+	for _, v := range cs.Env {
+		env = append(env, v.Key+"="+v.Value)
+	}
+	lines := []string{
+		strings.Join(facts, " · "),
+		"health  " + health,
+		"cmd     " + or(cs.CmdLine, "-"),
+		"dir     " + or(cs.Dir, "-") + " · log " + or(st.LogPath, "-"),
+		"deps    " + or(strings.Join(cs.DependsOn, ", "), "none") + " · env " + or(strings.Join(env, " "), "none"),
+	}
+	out := make([]string, 0, n)
+	for _, l := range lines[:n] {
+		out = append(out, dimStyle.Render(truncate("  "+sanitize(l), m.width)))
+	}
+	return out
 }
 
 // serviceRow renders one service: cursor, name in the service's colour, the
@@ -249,7 +358,10 @@ func (m Model) logHeaderView() string {
 		svc = m.selectedName()
 	}
 	label := "logs"
-	if svc != "" {
+	switch {
+	case m.all:
+		label = "logs: all services"
+	case svc != "":
 		label = "logs: " + svc
 	}
 
@@ -257,10 +369,22 @@ func (m Model) logHeaderView() string {
 	if m.focus == focusLog {
 		flags = append(flags, "focus")
 	}
-	if m.follow {
+	switch {
+	case m.paused:
+		flags = append(flags, fmt.Sprintf("PAUSED +%d", m.pausedNew))
+	case m.follow:
 		flags = append(flags, "follow")
-	} else {
-		flags = append(flags, fmt.Sprintf("line %d/%d", m.offset+1, max(len(m.visibleLines()), 1)))
+	default:
+		flags = append(flags, fmt.Sprintf("line %d/%d", m.offset+1, max(len(m.rows()), 1)))
+	}
+	if m.levelFilter != "" {
+		flags = append(flags, "level "+m.levelFilter)
+	}
+	if m.pretty {
+		flags = append(flags, "pretty")
+	}
+	if m.separators {
+		flags = append(flags, "sep")
 	}
 
 	// The pieces are measured and clipped as plain text, then styled: styling
@@ -288,25 +412,52 @@ func (m Model) logHeaderView() string {
 // padding with blanks so the notice and hint lines stay where they were.
 func (m Model) logView() []string {
 	h := m.logHeight()
-	visible := m.visibleLines()
+	visible := m.rows()
 
 	out := make([]string, 0, h)
 	if len(visible) == 0 {
 		msg := "  (no output yet)"
-		if m.filter != "" && len(m.lines) > 0 {
-			msg = fmt.Sprintf("  (no line matches %q; %d hidden)", m.filter, len(m.lines))
+		if (m.filter != "" || m.levelFilter != "") && len(m.recs) > 0 {
+			msg = fmt.Sprintf("  (no line matches the filter; %d hidden)", len(m.recs))
 		}
 		out = append(out, dimStyle.Render(truncate(msg, m.width)))
 	}
 
+	labelW := 0
+	if m.all {
+		for _, st := range m.statuses {
+			labelW = max(labelW, utf8.RuneCountInString(st.Name))
+		}
+	}
 	start := min(max(m.offset, 0), max(0, len(visible)-1))
 	for i := start; i < len(visible) && len(out) < h; i++ {
-		out = append(out, truncate(sanitize(visible[i]), m.width))
+		out = append(out, m.logRowView(visible[i], labelW))
 	}
 	for len(out) < h {
 		out = append(out, "")
 	}
 	return out[:h]
+}
+
+// logRowView draws one row: a separator rule, or the text — in merged mode
+// after the service label on an entry's first row and indented past it on
+// the rest, so a pretty-printed record reads as one block.
+func (m Model) logRowView(r logRow, labelW int) string {
+	if r.sep {
+		return dimStyle.Render(strings.Repeat("┄", max(1, m.width)))
+	}
+	text := sanitize(r.text)
+	if labelW == 0 {
+		return truncate(text, m.width)
+	}
+	room := m.width - labelW - 3
+	if room < 4 {
+		return truncate(text, m.width)
+	}
+	if !r.first {
+		return strings.Repeat(" ", labelW+3) + truncate(text, room)
+	}
+	return m.nameStyle(r.svc).Render(pad(r.svc, labelW)) + dimStyle.Render(" · ") + truncate(text, room)
 }
 
 // noticeView is the single line above the key hints: the reload question
@@ -339,9 +490,9 @@ func (m Model) noticeView() string {
 // terminal is used, so a narrow window loses hints rather than wrapping the
 // layout.
 var hints = []string{
-	"↑/↓ select · s start · x stop · r restart · a start all · S stop all · tab log · / filter · g/G top/bottom · ? help · q quit",
-	"↑/↓ select · s/x/r start/stop/restart · a/S all · tab log · / filter · ? help · q quit",
-	"↑/↓ · s/x/r · a/S · / filter · ? help · q quit",
+	"↑/↓ select · s/x/r start/stop/restart · a/R/S all · m merge · p pause · / filter · v level · J json · i detail · C config · ? help · q quit",
+	"↑/↓ select · s/x/r start/stop/restart · a/R/S all · m merge · / filter · i detail · ? help · q quit",
+	"↑/↓ · s/x/r · a/R/S · / filter · ? help · q quit",
 	"? help · q quit",
 }
 
@@ -360,30 +511,68 @@ func (m Model) hintsView() string {
 // wondering who is holding every port.
 var helpLines = []struct{ key, what string }{
 	{"↑/k, ↓/j", "select a service (scroll the log pane when it has focus)"},
-	{"s", "start the selected service"},
-	{"x", "stop the selected service"},
-	{"r", "restart the selected service"},
-	{"a", "start every service"},
-	{"S", "stop every service"},
+	{"s, x, r", "start, stop or restart the selected service"},
+	{"a, R, S", "start every service (autostart or not) · restart the running ones · stop all"},
 	{"L", "reload mabo-ctl.yaml after asking: restarts the services an edit changes, stops removed ones"},
 	{"l, tab", "focus the log pane; tab or esc returns to the list"},
-	{"/", "filter log lines (enter applies, esc cancels, empty clears)"},
-	{"g, G", "jump to the top or the bottom of the log; G resumes following"},
-	{"pgup/pgdn", "page the log pane"},
+	{"/, v", "filter log lines (enter applies, esc cancels) · cycle the level: all, error, warn, info, debug"},
+	{"m", "merge every service's log into one labelled pane; m again returns to one service"},
+	{"p, c", "pause the pane (lines keep arriving within the same cap) · clear it"},
+	{"J, |", "pretty-print JSON lines (whitespace only) · separators between entries"},
+	{"g, G, pgup/dn", "top or bottom of the log (G resumes following) · page it"},
+	{"i", "the selected service's details: uptime, health, command, dir, deps, env"},
+	{"f, 1-7, 0", "filter the list by name · show one phase (again clears) · 0 clears it"},
+	{"e, C", "activity: recent operations and errors · the configuration and start order"},
 	{"?", "toggle this help"},
 	{"q, ctrl-c", "quit the console (during a reload: once it finishes; press again to quit now)"},
 }
 
 // helpNote is printed under the key table, and is the reason the overlay
 // exists at all.
-const helpNote = `Quitting does NOT stop the supervised services.
+const helpNote = `Quitting does NOT stop the supervised services. They run detached (setsid):
+closing this console closes a window. Stop them with x, S or ` + "`mabo-ctl stop`" + `.
+Starting never blocks this console; readiness is waited for in the background.`
 
-They are started detached (setsid), so mabo-ctl is not their parent and closing
-this console is closing a window, not shutting anything down. Stop them on
-purpose with x, with S, or with ` + "`mabo-ctl stop`" + `.
+// overlayView frames body lines as a full-screen overlay under the title bar,
+// newest last when the body is taller than the screen and tail is set, with
+// footer as the last line.
+func (m Model) overlayView(body []string, offset int, footer string) string {
+	lines := []string{m.titleView()}
+	room := max(1, m.height-2)
+	offset = min(max(offset, 0), max(0, len(body)-room))
+	for i := offset; i < len(body) && len(lines) < room+1; i++ {
+		lines = append(lines, truncate(sanitize(body[i]), m.width))
+	}
+	for len(lines) < m.height-1 {
+		lines = append(lines, "")
+	}
+	lines = append(lines, dimStyle.Render(truncate(footer, m.width)))
+	return strings.Join(lines[:max(1, min(len(lines), m.height))], "\n")
+}
 
-Starting a service never blocks this console: readiness is waited for in the
-background, so the list stays live while a slow service comes up.`
+// eventsView is the activity overlay (e): the newest events that fit.
+func (m Model) eventsView() string {
+	body := []string{"  activity — the newest last"}
+	if len(m.events) == 0 {
+		body = append(body, "  nothing has happened in this console yet")
+	}
+	for _, e := range m.events {
+		body = append(body, "  "+e)
+	}
+	return m.overlayView(body, len(body), "any key returns · q quits")
+}
+
+// configView is the configuration overlay (C): the same view `mabo-ctl
+// config` prints, redacted, then the start order.
+func (m Model) configView() string {
+	r := &ui.Renderer{}
+	text := r.ConfigBlock(m.cfgView, "") + "\n\n" + r.ConfigGraph(m.cfgView)
+	if m.cfgView.Source.Path == "" {
+		text = "this console cannot describe its configuration"
+	}
+	return m.overlayView(strings.Split(text, "\n"), m.cfgOffset,
+		"↑/↓ pgup/pgdn scroll · L reloads · any other key returns · q quits")
+}
 
 // helpView renders the help overlay over the whole screen.
 func (m Model) helpView() string {

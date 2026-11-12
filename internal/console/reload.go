@@ -152,6 +152,8 @@ func (m Model) finishReload(msg reloadDoneMsg) (tea.Model, tea.Cmd) {
 		m.ctrl = msg.res.Controller
 		m.ctrlGen++
 		m.opt.Colors = serviceColors(m.ctrl)
+		m.opt.Origins = msg.res.Origins
+		m.cfgView = m.buildConfigView()
 		m.configChanged = false
 		m.live.clearTail()
 		m.tail, m.tailSvc = nil, ""

@@ -2,12 +2,22 @@ package console
 
 import (
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/maborak/mabo-ctl/internal/supervisor"
+	"github.com/maborak/mabo-ctl/internal/ui"
 )
+
+// allKey is the tail key of the merged all-services pane. It cannot collide
+// with a service, whose names the config restricts to [A-Za-z0-9_.-].
+const allKey = "*all*"
+
+// maxEvents caps the activity history the e overlay shows.
+const maxEvents = 200
 
 // focusArea is which half of the console the arrow keys drive.
 type focusArea int
@@ -58,18 +68,53 @@ type Model struct {
 	help  bool
 	quit  bool
 
-	// tail is the session feeding the log pane, and tailSvc the service it
-	// follows. They are always consistent with the selected row after Update
-	// returns.
+	// tail is the session feeding the log pane, and tailSvc what it follows:
+	// a service name, or allKey in merged mode. They are always consistent
+	// with the selection (or merged mode) after Update returns.
 	tail    *tailSession
 	tailSvc string
 
-	// lines is the retained log buffer for the selected service, capped at
-	// maxLogLines. offset is the first visible line of the filtered view, and
-	// follow pins that view to the newest line.
-	lines  []string
-	offset int
-	follow bool
+	// recs is the retained log buffer, capped at maxLogLines and maxLogBytes
+	// (recBytes is its size). offset is the first visible ROW of the filtered,
+	// expanded view, and follow pins that view to the newest row.
+	recs     []*logRecord
+	recBytes int
+	offset   int
+	follow   bool
+
+	// Log presentation, the web console's toolbar in keys: all merges every
+	// service into one pane; paused freezes the pane at pauseEnd records while
+	// lines keep arriving (pausedNew counts them); levelFilter keeps one level;
+	// pretty re-indents JSON lines; separators draws a rule between entries.
+	all         bool
+	paused      bool
+	pauseEnd    int
+	pausedNew   int
+	levelFilter string
+	pretty      bool
+	separators  bool
+
+	// showDetail opens the selected service's detail block under the list:
+	// uptime, readiness, health, command, directory, dependencies and env.
+	// cfgView is the redacted configuration it and the config view read,
+	// rebuilt when the controller changes.
+	showDetail bool
+	cfgView    ui.ConfigView
+
+	// The service list's filters: nameFilter is a substring of the name
+	// (nameFiltering while it is typed into nameDraft), phaseFilter keeps one
+	// phase. sel always indexes statuses; the filters only hide rows.
+	nameFilter    string
+	nameFiltering bool
+	nameDraft     string
+	phaseFilter   supervisor.Phase
+
+	// events is the activity history, newest last, and showEvents its
+	// overlay. showConfig is the configuration view, scrolled to cfgOffset.
+	events     []string
+	showEvents bool
+	showConfig bool
+	cfgOffset  int
 
 	// filter selects which log lines are shown. filtering reports whether the
 	// user is typing one right now, in which case filterDraft holds the
@@ -123,7 +168,7 @@ func New(ctrl Controller, opt Options) Model {
 	if opt.Colors == nil && ctrl != nil {
 		opt.Colors = serviceColors(ctrl)
 	}
-	return Model{
+	m := Model{
 		ctrl:    ctrl,
 		live:    newLive(),
 		opt:     opt,
@@ -133,6 +178,24 @@ func New(ctrl Controller, opt Options) Model {
 		follow:  true,
 		pending: make(map[string]opKind),
 	}
+	m.cfgView = m.buildConfigView()
+	return m
+}
+
+// buildConfigView assembles the redacted configuration view for the detail
+// block and the config view, from what the controller and the caller know.
+func (m Model) buildConfigView() ui.ConfigView {
+	d, ok := m.ctrl.(describer)
+	if !ok {
+		return ui.ConfigView{}
+	}
+	return ui.BuildConfigView(ui.ConfigInput{
+		Config:    configOf(m.ctrl),
+		Instances: d.Instances(),
+		Origins:   m.opt.Origins,
+		StateDir:  m.opt.StateDir,
+		Explicit:  m.opt.ExplicitConfig,
+	})
 }
 
 // Init starts the periodic status refresh and asks for the first snapshot
@@ -220,7 +283,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.sess != m.tail {
 			return m, nil
 		}
-		m.appendLine(msg.line)
+		m.appendRecord(msg.svc, msg.line)
 		return m, msg.sess.next()
 
 	case tailClosedMsg:
@@ -251,6 +314,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m Model) applyStatus(sts []supervisor.Status) (tea.Model, tea.Cmd) {
 	prev := m.selectedName()
 	m.refreshing = false
+	// The console is not the operator's private one-shot CLI: it is the screen
+	// that gets shared and recorded, so a credential in a health URL is
+	// withheld here exactly as the web console withholds it.
+	ui.RedactStatuses(sts)
 	m.statuses = sts
 
 	m.sel = 0
@@ -266,6 +333,7 @@ func (m Model) applyStatus(sts []supervisor.Status) (tea.Model, tea.Cmd) {
 	if m.root == "" {
 		m.root = deriveRoot(sts)
 	}
+	m.keepSelectionVisible()
 	return m.syncTailModel()
 }
 
@@ -273,28 +341,37 @@ func (m Model) applyStatus(sts []supervisor.Status) (tea.Model, tea.Cmd) {
 // it was following before. It returns the command that reads the new session,
 // or nil when there is nothing to follow.
 func (m Model) syncTail() (Model, tea.Cmd) {
-	svc := m.selectedName()
-	if svc == "" {
+	key, svcs, backlog := m.selectedName(), []string{m.selectedName()}, tailBacklog
+	if m.all {
+		key, svcs, backlog = allKey, nil, mergedBacklog
+		for _, st := range m.statuses {
+			svcs = append(svcs, st.Name)
+		}
+		if len(svcs) == 0 {
+			key = ""
+		}
+	}
+	if key == "" {
 		if m.tail != nil {
 			m.live.clearTail()
 			m.tail, m.tailSvc = nil, ""
-			m.lines, m.offset = nil, 0
+			m.clearLog()
 		}
 		return m, nil
 	}
-	if (m.tail != nil && m.tailSvc == svc) || m.ctrl == nil {
+	if (m.tail != nil && m.tailSvc == key) || m.ctrl == nil {
 		return m, nil
 	}
 
-	sess := newTail(m.ctrl, svc)
+	sess := newTail(m.ctrl, key, svcs, backlog)
 	if !m.live.setTail(sess) {
 		// Shutting down; the session has already been stopped for us.
 		m.tail, m.tailSvc = nil, ""
 		return m, nil
 	}
-	m.tail, m.tailSvc = sess, svc
-	m.lines, m.offset = nil, 0
-	m.follow = true
+	m.tail, m.tailSvc = sess, key
+	m.clearLog()
+	m.paused = false
 	return m, sess.next()
 }
 
@@ -326,31 +403,29 @@ func (m Model) Quitting() bool { return m.quit }
 // is set. Text still being typed is not part of it until it is committed.
 func (m Model) Filter() string { return m.filter }
 
-// appendLine adds one log line to the buffer, trimming the oldest lines past
-// maxLogLines, and keeps the viewport pinned to the bottom while following.
-func (m *Model) appendLine(line string) {
-	m.lines = append(m.lines, line)
-	if n := len(m.lines) - maxLogLines; n > 0 {
-		m.lines = append(m.lines[:0], m.lines[n:]...)
-		m.offset = max(0, m.offset-n)
-	}
-	if m.follow {
-		m.offset = m.bottomOffset()
-	} else {
-		m.clampOffset()
-	}
-}
-
-// recordEvent folds one supervisor event into the notice line and, when it
-// carries one, into the error line. An event's error is never dropped: a
-// supervisor that reported a problem the console did not show is the exact
-// silent failure this tool exists to stop.
+// recordEvent folds one supervisor event into the notice line, the activity
+// history and, when it carries one, the error line. An event's error is never
+// dropped: a supervisor that reported a problem the console did not show is
+// the exact silent failure this tool exists to stop.
 func (m *Model) recordEvent(ev supervisor.Event) {
 	if line := eventLine(ev); line != "" {
 		m.notice = line
+		m.addEvent(line)
 	}
 	if ev.Err != nil {
 		m.err = ev.Err
+	}
+}
+
+// addEvent appends one line to the activity history, stamped with the time
+// it was seen, keeping the newest maxEvents.
+func (m *Model) addEvent(line string) {
+	if i := strings.IndexByte(line, '\n'); i >= 0 {
+		line = line[:i] + " …"
+	}
+	m.events = append(m.events, time.Now().Format("15:04:05")+"  "+line)
+	if n := len(m.events) - maxEvents; n > 0 {
+		m.events = append(m.events[:0], m.events[n:]...)
 	}
 }
 
@@ -365,8 +440,12 @@ func (m Model) finishOp(msg opDoneMsg) (tea.Model, tea.Cmd) {
 	if msg.err != nil {
 		m.err = msg.err
 		m.notice = string(msg.sess.kind) + " failed"
-	} else if m.activeOps == 0 {
-		m.notice = msg.sess.label() + ": done"
+		m.addEvent(msg.sess.label() + " failed: " + errRenderer.Error(msg.err))
+	} else {
+		m.addEvent(msg.sess.label() + ": done")
+		if m.activeOps == 0 {
+			m.notice = msg.sess.label() + ": done"
+		}
 	}
 
 	if m.refreshing {
@@ -436,19 +515,84 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.confirmReload {
 		return m.answerReload(msg)
 	}
-	if m.filtering {
+	if m.filtering || m.nameFiltering {
 		return m.editFilter(msg)
 	}
-	if m.help {
+	if m.help || m.showEvents {
 		// Any key closes the overlay; a quit key still quits.
 		if k := msg.String(); k == "q" {
 			return m.requestQuit()
 		}
-		m.help = false
+		m.help, m.showEvents = false, false
 		return m, nil
 	}
+	if m.showConfig {
+		return m.configKey(msg)
+	}
 
-	switch msg.String() {
+	switch k := msg.String(); k {
+	case "R":
+		return m.restartAlive()
+
+	case "m":
+		m.all = !m.all
+		return m.syncTailModel()
+
+	case "p":
+		m.togglePause()
+		return m, nil
+
+	case "c":
+		m.clearLog()
+		return m, nil
+
+	case "v":
+		m.cycleLevel()
+		return m, nil
+
+	case "J":
+		m.pretty = !m.pretty
+		m.repin()
+		return m, nil
+
+	case "|":
+		m.separators = !m.separators
+		m.repin()
+		return m, nil
+
+	case "i":
+		m.showDetail = !m.showDetail
+		m.clampOffset()
+		return m, nil
+
+	case "e":
+		m.showEvents = true
+		return m, nil
+
+	case "C":
+		m.showConfig = true
+		m.cfgOffset = 0
+		return m, nil
+
+	case "f":
+		m.nameFiltering = true
+		m.nameDraft = m.nameFilter
+		return m, nil
+
+	case "0", "1", "2", "3", "4", "5", "6", "7":
+		n, _ := strconv.Atoi(k)
+		phases := supervisor.Phases()
+		switch {
+		case n == 0 || n > len(phases):
+			m.phaseFilter = ""
+		case m.phaseFilter == phases[n-1]:
+			m.phaseFilter = ""
+		default:
+			m.phaseFilter = phases[n-1]
+		}
+		m.keepSelectionVisible()
+		return m.syncTailModel()
+
 	case "L":
 		return m.askReload()
 
@@ -532,7 +676,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.launchSelected(opRestart)
 
 	case "a":
-		return m.launch(opStart, nil)
+		// Every service by name, not nil: nil is the autostart selection, and
+		// "start all" that starts nothing because every service opted out of
+		// autostart is a broken key. The web console's Start all does the same.
+		return m.launch(opStart, m.allNames())
 
 	case "S":
 		return m.launch(opStop, nil)
@@ -541,10 +688,27 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// editFilter handles a keypress while the filter line is open. Enter applies
-// the draft, escape abandons it, and an applied empty filter clears filtering
-// altogether.
+// editFilter handles a keypress while a filter line is open — the log filter
+// or the service-name filter. Enter applies the draft, escape abandons it, and
+// an applied empty filter clears filtering altogether.
 func (m Model) editFilter(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.nameFiltering {
+		switch msg.Type {
+		case tea.KeyEnter:
+			m.nameFilter, m.nameFiltering, m.nameDraft = m.nameDraft, false, ""
+			m.keepSelectionVisible()
+			return m.syncTailModel()
+		case tea.KeyEsc:
+			m.nameFiltering, m.nameDraft = false, ""
+		case tea.KeyBackspace:
+			if r := []rune(m.nameDraft); len(r) > 0 {
+				m.nameDraft = string(r[:len(r)-1])
+			}
+		case tea.KeyRunes, tea.KeySpace:
+			m.nameDraft += string(msg.Runes)
+		}
+		return m, nil
+	}
 	switch msg.Type {
 	case tea.KeyEnter:
 		m.filter = m.filterDraft
@@ -582,13 +746,20 @@ func (m Model) quitNow() (tea.Model, tea.Cmd) {
 	return m, tea.Quit
 }
 
-// move steps the selection by delta, clamped to the list, and re-points the
-// log tail when the selection actually changed.
+// move steps the selection by delta among the rows the list filters show,
+// clamped to them, and re-points the log tail when the selection changed.
 func (m Model) move(delta int) (tea.Model, tea.Cmd) {
-	if len(m.statuses) == 0 {
+	idx := m.listIndices()
+	if len(idx) == 0 {
 		return m, nil
 	}
-	sel := min(max(m.sel+delta, 0), len(m.statuses)-1)
+	at := 0
+	for i, n := range idx {
+		if n == m.sel {
+			at = i
+		}
+	}
+	sel := idx[min(max(at+delta, 0), len(idx)-1)]
 	if sel == m.sel {
 		return m, nil
 	}
@@ -611,26 +782,105 @@ func (m *Model) scroll(delta int) {
 	m.follow = m.offset >= m.bottomOffset()
 }
 
-// visibleLines is the log buffer after the filter, which is a case-insensitive
-// substring match — the filter exists to find "error" in a wall of output, not
-// to be a regexp engine that can fail to compile mid-keystroke.
-func (m Model) visibleLines() []string {
-	if m.filter == "" {
-		return m.lines
+// bottomOffset is the offset that shows the last screenful of log.
+func (m Model) bottomOffset() int {
+	return max(0, len(m.rows())-m.logHeight())
+}
+
+// repin keeps a following pane at the bottom after a change to how records
+// expand into rows (pretty JSON, separators), and clamps one that is not.
+func (m *Model) repin() {
+	if m.follow {
+		m.offset = m.bottomOffset()
+		return
 	}
-	needle := strings.ToLower(m.filter)
-	out := make([]string, 0, len(m.lines))
-	for _, l := range m.lines {
-		if strings.Contains(strings.ToLower(l), needle) {
-			out = append(out, l)
+	m.clampOffset()
+}
+
+// listIndices is the indices into statuses the list shows: every service, or
+// those the name and phase filters keep.
+func (m Model) listIndices() []int {
+	needle := strings.ToLower(m.nameFilter)
+	out := make([]int, 0, len(m.statuses))
+	for i, st := range m.statuses {
+		if m.phaseFilter != "" && st.Phase != m.phaseFilter {
+			continue
 		}
+		if needle != "" && !strings.Contains(strings.ToLower(st.Name), needle) {
+			continue
+		}
+		out = append(out, i)
 	}
 	return out
 }
 
-// bottomOffset is the offset that shows the last screenful of log.
-func (m Model) bottomOffset() int {
-	return max(0, len(m.visibleLines())-m.logHeight())
+// keepSelectionVisible moves the selection to the first shown row when the
+// list filters hide the selected one. With nothing shown it stays put, and
+// the list says that nothing matches.
+func (m *Model) keepSelectionVisible() {
+	idx := m.listIndices()
+	for _, i := range idx {
+		if i == m.sel {
+			return
+		}
+	}
+	if len(idx) > 0 {
+		m.sel = idx[0]
+		m.filter = ""
+	}
+}
+
+// allNames is every service, by name, in declaration order.
+func (m Model) allNames() []string {
+	names := make([]string, 0, len(m.statuses))
+	for _, st := range m.statuses {
+		names = append(names, st.Name)
+	}
+	return names
+}
+
+// restartAlive restarts every service that is running now, like the web
+// console's Restart all. It names them rather than passing nil: a nil restart
+// stops everything and starts the autostart selection, which would stop a
+// running autostart:false service for good and start one deliberately left
+// stopped.
+func (m Model) restartAlive() (tea.Model, tea.Cmd) {
+	var names []string
+	for _, st := range m.statuses {
+		if st.Phase.Alive() {
+			names = append(names, st.Name)
+		}
+	}
+	if len(names) == 0 {
+		m.notice = "nothing is running, so there is nothing to restart"
+		return m, nil
+	}
+	return m.launch(opRestart, names)
+}
+
+// configKey handles a keypress while the configuration view is open: the
+// scroll keys scroll it, q quits, anything else closes it.
+func (m Model) configKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "up", "k":
+		m.cfgOffset = max(0, m.cfgOffset-1)
+	case "down", "j":
+		m.cfgOffset++
+	case "pgup":
+		m.cfgOffset = max(0, m.cfgOffset-max(1, m.height-2))
+	case "pgdown", " ":
+		m.cfgOffset += max(1, m.height-2)
+	case "g":
+		m.cfgOffset = 0
+	case "q":
+		return m.requestQuit()
+	case "L":
+		m.showConfig = false
+		return m.askReload()
+	default:
+		m.showConfig = false
+	}
+	return m, nil
 }
 
 // clampOffset keeps the viewport inside the buffer.

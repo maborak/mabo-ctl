@@ -2,6 +2,7 @@ package console
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -30,6 +31,10 @@ const (
 	// scrolling back after selecting is useful rather than empty.
 	tailBacklog = 500
 
+	// mergedBacklog is the per-service backlog of the merged all-services
+	// pane, the same as the web console's merged stream asks for.
+	mergedBacklog = 200
+
 	// tailBuffer is the channel depth between the supervisor's tail and the
 	// event loop. A line may be 256 KiB, so depth is memory: 16 lines is at
 	// most 4 MiB. Blocking the tail loses nothing — it reads a file.
@@ -42,6 +47,10 @@ const (
 	// maxLogLines caps the retained log buffer. A dev server can emit
 	// megabytes an hour; the console keeps the tail of that, not all of it.
 	maxLogLines = 5000
+
+	// maxLogBytes caps the same buffer by size. A line can be 256 KiB, so a
+	// line count alone allowed over a gigabyte; this keeps the newest 4 MiB.
+	maxLogBytes = 4 << 20
 )
 
 // Messages the console's own commands deliver to [Model.Update]. Every one of
@@ -59,9 +68,11 @@ type (
 	}
 
 	// tailLineMsg is one log line, tagged with the session that produced it so
-	// a line from a cancelled tail can be recognised and dropped.
+	// a line from a cancelled tail can be recognised and dropped, and with the
+	// service it came from for the merged pane's labels.
 	tailLineMsg struct {
 		sess *tailSession
+		svc  string
 		line string
 	}
 
@@ -107,45 +118,78 @@ func refresh(ctrl Controller, gen int) tea.Cmd {
 	}
 }
 
-// tailSession is one following tail of one service's log.
+// tailLine is one line of a tail session, labelled with its service.
+type tailLine struct {
+	svc, text string
+}
+
+// tailSession is one following tail of one service's log, or of several
+// services' logs merged into one pane.
 //
-// The session owns a goroutine running supervisor.Supervisor.Tail, which does
-// not return until its context is cancelled. Exactly one session is live at a
-// time; [tailSession.stop] is what makes that true, and skipping it is the
-// leak this type exists to prevent.
+// The session owns one goroutine per service running supervisor.Supervisor.Tail,
+// which does not return until its context is cancelled. Exactly one session is
+// live at a time; [tailSession.stop] is what makes that true, and skipping it
+// is the leak this type exists to prevent.
 type tailSession struct {
-	svc    string
-	lines  chan string
+	key    string // the pane it feeds: a service name, or allKey
+	lines  chan tailLine
 	done   chan error
 	cancel context.CancelFunc
 	once   sync.Once
 }
 
-// newTail starts following svc's log and returns the session.
+// newTail starts following svcs and returns the session. key names what the
+// pane shows; backlog is how many existing lines each service replays.
 //
-// It spawns one goroutine, which lives until [tailSession.stop] is called or
-// the tail fails. The goroutine does NOT close the line channel: Tail closes it
-// as it returns, and closing it twice panics. A panic inside the supervisor's
-// tail is recovered and reported as an error on the session rather than taking
-// the process down with the terminal still in raw mode.
-//
-// Exactly one value is always published on done — the tail's error, or the
-// recovered panic — which is what lets [tailSession.next] wait for it.
-func newTail(ctrl Controller, svc string) *tailSession {
+// Per service it runs Tail on its own unbuffered channel plus a forwarder that
+// labels lines into the session's channel. Tail closes its channel as it
+// returns, including during a panic (its close is deferred), so every
+// forwarder ends. When the last one does, the session publishes the joined
+// error on done and closes lines, in that order, which is what lets
+// [tailSession.next] report a failure rather than a silent, empty pane. A
+// panic inside the supervisor's tail is recovered and reported the same way,
+// not allowed to take the process down with the terminal in raw mode.
+func newTail(ctrl Controller, key string, svcs []string, backlog int) *tailSession {
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &tailSession{
-		svc:    svc,
-		lines:  make(chan string, tailBuffer),
+		key:    key,
+		lines:  make(chan tailLine, tailBuffer),
 		done:   make(chan error, 1),
 		cancel: cancel,
 	}
-	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				s.done <- fmt.Errorf("console: tailing %s panicked: %v", svc, r)
+	errs := make([]error, len(svcs))
+	var wg sync.WaitGroup
+	for i, svc := range svcs {
+		// Unbuffered: the tailer blocked on a send already holds one line,
+		// and the forwarder one more. A line may be 256 KiB.
+		in := make(chan string)
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			defer func() {
+				if r := recover(); r != nil {
+					errs[i] = fmt.Errorf("console: tailing %s panicked: %v", svc, r)
+				}
+			}()
+			errs[i] = ctrl.Tail(ctx, svc, backlog, true, in)
+		}()
+		go func() {
+			defer wg.Done()
+			for line := range in {
+				select {
+				case s.lines <- tailLine{svc: svc, text: ui.Sanitize(line)}:
+				case <-ctx.Done():
+					for range in { //nolint:revive // draining so Tail can return
+					}
+					return
+				}
 			}
 		}()
-		s.done <- ctrl.Tail(ctx, svc, tailBacklog, true, s.lines)
+	}
+	go func() {
+		wg.Wait()
+		s.done <- errors.Join(errs...)
+		close(s.lines)
 	}()
 	return s
 }
@@ -157,25 +201,23 @@ func newTail(ctrl Controller, svc string) *tailSession {
 // re-arms it for as long as the session stays current.
 func (s *tailSession) next() tea.Cmd {
 	return func() tea.Msg {
-		line, ok := <-s.lines
+		l, ok := <-s.lines
 		if !ok {
-			// Tail closes the channel on its way out and the session goroutine
-			// publishes the outcome immediately afterwards, so this receive
-			// completes at once. Waiting for it rather than polling is what
-			// keeps a tail failure — "no such log file" — from being reported
-			// as a silent, empty pane.
+			// done is published before lines is closed, so this receive never
+			// waits — and a tail that failed ("no such log file") is reported
+			// rather than shown as a silent, empty pane.
 			return tailClosedMsg{sess: s, err: <-s.done}
 		}
-		return tailLineMsg{sess: s, line: ui.Sanitize(line)}
+		return tailLineMsg{sess: s, svc: l.svc, line: l.text}
 	}
 }
 
 // stop cancels the tail and drains what it has already produced.
 //
 // The drain matters as much as the cancel. Once a session stops being current
-// the event loop stops re-arming its reader, so a producer mid-send on a full
-// channel would block forever and its goroutine would never see the
-// cancellation. The drain goroutine ends when the producer closes the channel.
+// the event loop stops re-arming its reader, so a forwarder mid-send on a full
+// channel would block forever. The forwarders also select on the context, and
+// the drain goroutine ends when the session closes the channel.
 //
 // stop is idempotent and safe to call from outside the event loop, which is
 // what lets [Model.Shutdown] run from a deferred call during a panic.

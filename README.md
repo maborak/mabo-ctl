@@ -535,11 +535,24 @@ the selected service's log below, key hints on the last line. `mabo-ctl start -a
 opens the same console with the stack already coming up in it.
 
 ```
-↑/↓ or j/k  select      s  start     x  stop      r  restart
-a  start all            S  stop all  l or tab  focus the log pane
-/  filter logs          g/G  top/bottom          ?  help      q  quit
-L  reload mabo-ctl.yaml (asks first)
+↑/↓ or j/k  select         s/x/r  start/stop/restart the selected service
+a  start all (autostart or not)   R  restart the running ones   S  stop all
+l or tab  focus the log pane      g/G  top/bottom   pgup/pgdn  page
+/  filter log lines        v  level: all/error/warn/info/debug
+m  merge every service's log into one labelled pane
+p  pause   c  clear   J  pretty JSON   |  separators between entries
+i  details of the selected service (uptime, health, cmd, dir, deps, env)
+f  filter the list by name   1-7  show one phase   0  clear the phase
+e  activity history          C  configuration, port sources, start order
+L  reload mabo-ctl.yaml (asks first)          ?  help      q  quit
 ```
+
+These are the web console's log toolbar and detail pane, by key: the level
+classification, the pretty-JSON indentation (whitespace only) and the merged
+pane behave the same in both. The log buffer keeps the newest 5000 lines and
+4 MiB, and a paused pane keeps receiving within that same cap. Health URLs are
+redacted on this screen as in the browser, because a terminal gets shared and
+recorded. Terminals, API docs and sharing stay browser-only.
 
 Quitting does **not** stop the supervised services. They were spawned with
 `setsid` and mabo-ctl is not their parent.
