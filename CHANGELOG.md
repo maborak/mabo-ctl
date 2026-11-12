@@ -15,6 +15,12 @@ contract and service phase names are stable.
   previous fixed value; 0 to 100000, no unlimited). History costs about
   columns × lines × 12 bytes per shell, so a lower value bounds the page's
   memory. A config reload says to refresh the page to apply it.
+- `mabo-ctl mcp` serves this repository's services to an AI assistant (Claude
+  Code, Claude Desktop, any MCP client) over the Model Context Protocol on
+  stdio: `status`, `health`, `logs` and `config` tools, plus `start`, `stop`
+  and `restart` only with `--allow-mutate`. Standard library only, no network
+  listener, health-URL credentials redacted as on the web console, strict
+  argument checking.
 - `mabo-ctl activate zsh|bash|fish` prints a shell hook that prints one line
   when you `cd` into a repository with a `mabo-ctl.yaml` — what runs and what
   stopped. It reads only the pid records (identity-checked), never starts

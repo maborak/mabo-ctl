@@ -275,6 +275,7 @@ Leave the key out to inherit the global.
 | `mabo-ctl init [--from FILE]` | Scaffold a fully commented-out `mabo-ctl.yaml` from what the repo looks like (`package.json` + `.nvmrc`, `manage.py`, `pyproject.toml`, `Cargo.toml`). Refuses to overwrite; adds `.mabo-ctl/` to `.gitignore`; runs nothing it finds. `--from Procfile` or `--from process-compose.yaml` imports those processes instead, written live (each through `sh -c`): a Procfile process that reads `$PORT` gets foreman's port (5000, +100 per process); process-compose `depends_on`, `process_healthy`, environment, `working_dir`, `disabled` and an `http_get` readiness probe carry over. Anything unsafe to import is written commented out with the reason, and the result is validated before init reports success. |
 | `mabo-ctl --version` | The full build report: commit, dirty flag, when it was linked, toolchain, platform and dependencies. Paste it whole into bug reports — [SECURITY.md](SECURITY.md) asks for exactly this output. |
 | `mabo-ctl completion <bash\|zsh\|fish\|powershell>` | Print a completion script. |
+| `mabo-ctl mcp [--allow-mutate]` | Serve status, health, logs and config — and with `--allow-mutate`, start/stop/restart — to an AI assistant over MCP on stdio — see [AI assistants (MCP)](#ai-assistants-mcp). |
 | `mabo-ctl activate <zsh\|bash\|fish>` | Print a shell hook that says what runs when you `cd` into a repo: `eval "$(mabo-ctl activate zsh)"` in `~/.zshrc` (`activate bash` in `~/.bashrc`; `mabo-ctl activate fish \| source` in fish). One line per repository change, e.g. `mabo-ctl: api, web running · worker stopped`. Display only: it reads the pid records (with the same identity check `doctor` uses) and never starts anything, never creates `.mabo-ctl/`, and runs no probe or port lookup. |
 | `mabo-ctl upgrade [--force]` | Replace this binary with the latest GitHub release — see [Upgrading](#upgrading). |
 
@@ -639,6 +640,35 @@ would be drawn once and be wrong the moment one died — the exact failure this
 tool exists to remove — so `status` answers that on demand and the crash line
 volunteers the only change worth interrupting for.
 
+## AI assistants (MCP)
+
+`mabo-ctl mcp` is a [Model Context Protocol](https://modelcontextprotocol.io)
+server on stdin/stdout, so an assistant such as Claude Code can see this repo's
+stack without screen-scraping the CLI:
+
+```sh
+claude mcp add mabo-ctl -- mabo-ctl mcp                  # read-only
+claude mcp add mabo-ctl -- mabo-ctl mcp --allow-mutate   # may also start/stop
+```
+
+Any MCP client that spawns a stdio server works the same way. Run it from the
+repository, or pass `--config path/to/mabo-ctl.yaml`.
+
+| Tool | What it returns |
+|---|---|
+| `status` | The `status --json` records (all, or the named `services`) |
+| `health` | Which declared probes are not answering, then the records |
+| `logs` | The last `tail` lines (≤5000) of one `service`, or `"all"`, optionally `grep`-filtered |
+| `config` | The resolved configuration, port sources and start order |
+| `start`, `stop`, `restart` | Only with `--allow-mutate`: the operation's events, then the final records |
+
+It is not a network listener: the client owns both pipes and the server exits
+when they close. Health-URL credentials are redacted as on the web console,
+arguments are checked strictly (a misspelled argument or an undeclared service
+is an error the assistant sees), and without `--allow-mutate` there is no tool
+that changes anything. The configuration is read when the server starts;
+restart it after editing `mabo-ctl.yaml`.
+
 ## Web console
 
 `mabo-ctl serve` shows the same stack in a browser, with the two things a terminal
@@ -948,6 +978,7 @@ internal/ui/          colour, fixed-width labels, status and config rendering, J
 internal/console/     the full-screen TUI (bubbletea)
 internal/repl/        the interactive prompt and its session
 internal/web/         the web console: embedded page, JSON + SSE API, its guards
+internal/mcp/         the MCP stdio server: JSON-RPC protocol only, tools come from cmd
 internal/selfupdate/  self-upgrade: latest release, version compare, verified binary swap
 internal/surface/     generated surface inventories (cli, config, json) and the drift gate
 tools/surfacemap/     generator whose output must be byte-identical to surfaces.json

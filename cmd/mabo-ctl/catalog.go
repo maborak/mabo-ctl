@@ -114,6 +114,14 @@ var commandMetas = map[string]catalogMeta{
 	"completion": {
 		Args: "[bash|zsh|fish]",
 	},
+	"mcp": {
+		Mutates: true,
+		SideEffects: []string{
+			"serves MCP JSON-RPC on stdin/stdout until stdin closes; not a network listener",
+			"runs readiness probes (status, health tools)",
+			"with --allow-mutate: starts and stops services and rewrites .mabo-ctl/run.env",
+		},
+	},
 	"activate": {
 		Args:        "zsh|bash|fish",
 		SideEffects: []string{"prints a shell hook; the hook reads pid records on cd and never starts, stops or writes anything"},

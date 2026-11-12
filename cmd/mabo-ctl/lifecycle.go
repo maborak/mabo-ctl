@@ -163,6 +163,7 @@ func (a *app) rootCmd() *cobra.Command {
 		a.replCmd(),
 		a.completionCmd(),
 		a.activateCmd(),
+		a.mcpCmd(),
 		a.hookStatusCmd(),
 		a.upgradeCmd(),
 		a.schemaCmd(),

@@ -53,6 +53,7 @@ written it into their own `mabo-ctl.yaml`:
 | Signal blast radius | mabo-ctl signalling a process it did not start |
 | Secret handling | credentials reaching a log, `--json`, or an HTTP response that a reader would not expect |
 | **The `mabo-ctl serve` web console** | any bypass of its token, `Host`/`Origin`, or method checks |
+| **`mabo-ctl mcp`** | a mutating tool reachable without `--allow-mutate`, a credential in a tool result the web console would redact, or protocol input that reaches anything but the declared tools |
 | **The console's Terminal tab** | a shell reachable when disabled, remotely without explicit permission, by a shared-link user, or from an origin other than the bound address |
 
 ### `mabo-ctl serve` deserves particular attention
