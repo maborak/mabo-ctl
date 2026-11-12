@@ -173,7 +173,7 @@ Operator or `view` only. Returns the current presentation state (below).
 `active` is false if no publishing tab has updated it within five seconds.
 VIEW polls every 100ms, following the selected service, tab, merged mode, text
 and severity filters, pause/follow state, proportional log scroll, separators,
-font size and metadata disclosure. Logs themselves use the ordinary scoped SSE
+pretty JSON, font size and metadata disclosure. Logs themselves use the ordinary scoped SSE
 streams: this is synchronized presentation, **not screen/video sharing**, and
 buffer history and line wrapping can differ between browsers. Terminal content,
 security forms, credentials and clipboard contents are never mirrored.
@@ -196,7 +196,7 @@ only), `updated_at` (server set), `service`, `tab` (`output`, `config`, `api`),
 `config_section` (`overview` or `services` on reads; private `sharing`/`security`
 publish values are normalized to `overview`, with pointer/click state suppressed
 while that private section is open), `all`, `filter` (max 512 bytes, redacted), `level` (`""`, `error`, `warn`, `info`,
-`debug`), `paused`, `follow`, `scroll` (0–1), `separators`, `font_size` (10–18),
+`debug`), `paused`, `follow`, `scroll` (0–1), `separators`, `pretty`, `font_size` (10–18),
 `details`, optional `pointer: {region,x,y}`, and optional
 `click: {point:{region,x,y},sequence}`. Coordinates are 0–1 relative to a
 known region: `sidebar`, `tabs`, `output`, `cfg-source`, `cfg-ports`, or

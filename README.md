@@ -637,7 +637,11 @@ accent-colored text. Log scrolling, filters and Pause do not hide command
 progress; clearing the command history leaves the section visible.
 Severity filters show the selected level with a solid accent and checkmark.
 Enable **Separators** for extra spacing and dashed borders between log entries;
-wrapped text stays within its entry.
+wrapped text stays within its entry. **Pretty JSON** indents log lines that are
+complete JSON objects or arrays, for display only: it changes whitespace and
+nothing else (no key reordering, no number rounding), the text filter still
+matches the original compact line, and a line cut by the display limit stays
+as it was. The choice is remembered in this browser.
 The adjacent **A− / A+** slider adjusts log text from 10–18px (12px by default).
 Health sits beside Ready in; log file, command and arguments live in an
 expandable section that starts closed. System Commands uses a translucent

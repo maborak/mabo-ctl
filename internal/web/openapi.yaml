@@ -1410,6 +1410,9 @@ components:
           maximum: 1
         separators:
           type: boolean
+        pretty:
+          type: boolean
+          description: Pretty-print JSON log lines.
         font_size:
           type: integer
           minimum: 10

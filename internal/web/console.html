@@ -1075,11 +1075,11 @@ ol.argv-list li code { color: var(--text); }
 .view-mirror .svc-list, .view-mirror .log-body, .view-mirror .detail-scroll,
 .view-mirror .cfg-body, .view-mirror .activity { overflow: hidden !important; }
 .view-mirror #api-frame { pointer-events: none; }
-.log-separators {
+.log-separators, .log-pretty {
   display: inline-flex; align-items: center; gap: var(--sp-1);
   font-size: var(--fs-xs); color: var(--text-dim); cursor: pointer;
 }
-.log-separators input { margin: 0; accent-color: var(--accent); }
+.log-separators input, .log-pretty input { margin: 0; accent-color: var(--accent); }
 .log-font {
   display: inline-flex; align-items: center; gap: var(--sp-1);
   font-family: var(--mono); font-size: var(--fs-xs); color: var(--text-dim);
@@ -2048,6 +2048,50 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
   };
   var LEVEL_TINTS = { success: "ok", ok: "ok", succeeded: "ok" };
 
+  var PRETTY_KEY = "mabo-ctl.log-pretty";
+
+  // prettyJSON re-indents JSON text by changing whitespace only. It never
+  // parses and re-serializes: JSON.stringify(JSON.parse(x)) would round
+  // integers past 2^53, collapse duplicate keys and reorder integer-like keys,
+  // so the pretty view would show values the service never wrote. Returns
+  // null when the brackets do not balance (for example a line cut by the
+  // display limit), so the caller shows the raw text instead.
+  function prettyJSON(text) {
+    var out = [], stack = [], inStr = false, esc = false, done = false;
+    var pad = function (n) { return "\n" + new Array(n + 1).join("  "); };
+    for (var i = 0; i < text.length; i++) {
+      var c = text.charAt(i);
+      if (inStr) {
+        out.push(c);
+        if (esc) { esc = false; } else if (c === "\\") { esc = true; } else if (c === "\"") { inStr = false; }
+        continue;
+      }
+      if (c === " " || c === "\t" || c === "\n" || c === "\r") { continue; }
+      // Only one top-level object or array, and nothing outside it.
+      if (done || (!stack.length && c !== "{" && c !== "[")) { return null; }
+      if (c === "\"") { inStr = true; out.push(c); continue; }
+      if (c === "{" || c === "[") {
+        var close = c === "{" ? "}" : "]", j = i + 1;
+        while (j < text.length && /\s/.test(text.charAt(j))) { j++; }
+        if (text.charAt(j) === close) { out.push(c + close); i = j; done = !stack.length; continue; }
+        stack.push(close);
+        out.push(c + pad(stack.length));
+        continue;
+      }
+      if (c === "}" || c === "]") {
+        if (stack.pop() !== c) { return null; }
+        out.push(pad(stack.length) + c);
+        done = !stack.length;
+        continue;
+      }
+      if (c === ",") { out.push("," + pad(stack.length)); continue; }
+      if (c === ":") { out.push(": "); continue; }
+      out.push(c);
+    }
+    if (inStr || stack.length) { return null; }
+    return out.join("");
+  }
+
   function detectLevel(text) {
     var s = text;
     if (s.charAt(0) !== "{") {
@@ -2086,6 +2130,8 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     this.follow = true;
     this.filter = "";
     this.levelFilter = "";    // "" = All; otherwise one of detectLevel's buckets
+    this.pretty = false;      // indent JSON lines at render time (prettyJSON)
+    try { this.pretty = window.localStorage.getItem(PRETTY_KEY) === "1"; } catch (e) { /* no storage */ }
     this.chipButtons = null;  // level -> button, built below
     this.es = null;
     this.openedAt = 0;
@@ -2211,6 +2257,18 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     separators.appendChild(txt("Separators"));
     separators.title = "Separate log entries; indented continuations and Python tracebacks stay together (best effort for plain text)";
     bar.appendChild(separators);
+
+    var pretty = el("label", "log-pretty");
+    this.prettyBox = document.createElement("input");
+    this.prettyBox.type = "checkbox";
+    this.prettyBox.checked = this.pretty;
+    this.prettyBox.addEventListener("change", function () {
+      self.setPretty(self.prettyBox.checked, true);
+    });
+    pretty.appendChild(this.prettyBox);
+    pretty.appendChild(txt("Pretty JSON"));
+    pretty.title = "Indent lines that are complete JSON (display only; the filter still matches the original line)";
+    bar.appendChild(pretty);
 
     var fontControl = el("label", "log-font");
     fontControl.appendChild(txt("A−"));
@@ -2468,8 +2526,24 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
   // rec.text only, so searching "api" finds api's lines without also finding
   // every line that merely mentions api in its label.
   LogPane.prototype.lineText = function (rec) {
-    if (this.all && rec.svc) { return rec.svc + " · " + rec.text; }
-    return rec.text;
+    var text = rec.text;
+    if (this.pretty && rec.entry.structured) { text = prettyJSON(text) || text; }
+    if (this.all && rec.svc) { return rec.svc + " · " + text; }
+    return text;
+  };
+
+  // setPretty switches JSON indentation and redraws the retained history.
+  // persist is false when VIEW mirroring applies the operator's choice, so a
+  // viewer's own preference is not overwritten by someone else's broadcast.
+  LogPane.prototype.setPretty = function (on, persist) {
+    on = !!on;
+    if (this.prettyBox) { this.prettyBox.checked = on; }
+    if (persist) {
+      try { window.localStorage.setItem(PRETTY_KEY, on ? "1" : "0"); } catch (e) { /* no storage */ }
+    }
+    if (this.pretty === on) { return; }
+    this.pretty = on;
+    this.rebuild();
   };
 
   LogPane.prototype.appendRecord = function (fragment, rec) {
@@ -4352,7 +4426,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
       tab: currentTab || "output", config_section: configSection, all: pane.all, filter: pane.filter.slice(0, 512), level: pane.levelFilter,
       paused: pane.paused, follow: pane.follow,
       scroll: Math.max(0, Math.min(1, pane.body.scrollTop / Math.max(1, pane.body.scrollHeight - pane.body.clientHeight))),
-      separators: pane.separatorBox.checked, font_size: Number(font.value), details: !!(metadata && metadata.open),
+      separators: pane.separatorBox.checked, pretty: pane.pretty, font_size: Number(font.value), details: !!(metadata && metadata.open),
       pointer: safePointer, click: safeClick
     }).then(function () { setMirrorStatus(broadcasting ? "Following this tab." : ""); }).catch(function (err) {
       if (err.status === 400 || err.status === 403 || err.status === 409) {
@@ -4386,6 +4460,9 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
         pane.setFollow(m.follow);
         pane.separatorBox.checked = m.separators;
         pane.body.classList.toggle("separated", m.separators);
+        // Only on change: a pretty redraw re-indents the whole retained
+        // history, and this runs ten times a second.
+        if (pane.pretty !== !!m.pretty) { pane.setPretty(m.pretty, false); }
         var font = pane.root.querySelector(".log-font input"); font.value = String(m.font_size);
         font.dispatchEvent(new Event("input"));
         var metadata = detailEl.querySelector(".service-config"); if (metadata) { metadata.open = m.details; }
