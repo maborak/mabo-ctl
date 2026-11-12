@@ -420,6 +420,21 @@ curl -s -H 'X-Mabo-Ctl-Token: YOUR_TOKEN' \
 |--------|------|------|
 | `404` | `{"error": "unknown service", "valid": [...]}` | `{svc}` not in the declared set |
 
+**Bounded output.** Every log route (this one and both streams below) bounds
+what it reads at the source; the log file on disk is never shortened. Two
+marker forms can appear as ordinary line text:
+
+- A line longer than 256 KiB keeps its first 256 KiB (cut on a UTF-8 boundary)
+  followed by
+  `… [mabo-ctl: line truncated to <kept> of <total> bytes; the log file has all of it]`.
+- When the requested history exceeds 8 MiB, the oldest lines are dropped and
+  replaced by one leading line:
+  `[mabo-ctl: <N> earlier lines omitted; history is capped at 8 MiB per request; the log file has all of them]`.
+  In `/api/logs/{svc}` that marker is one of the `lines` and counts toward `count`.
+
+Markers are plain text inside `line`/`lines`, not a separate field, so a
+service that prints the same text is indistinguishable from them.
+
 ---
 
 ### `GET /api/stream/{svc}`

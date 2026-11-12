@@ -25,8 +25,8 @@ Three front ends over ONE supervisor:
 
 1. **One-shot CLI** — `start`, `stop`, `restart`, `status [--json]`, `health`,
    `config`, `logs`/`tailf`, `open`, `reset`, `preflight`, `doctor`, `init`,
-   `attach`,
-   `exec`, `shell`, `serve`, `completion`, `schema [--commands]`, `upgrade`.
+   `attach`, `exec`, `shell`, `repl`, `serve`, `completion`,
+   `schema [--commands]`, `upgrade`.
    `ui.StatusJSON` is the stable machine contract, `--version` prints the full
    build report, and `schema --commands` is the machine-readable catalogue of
    the binary itself.
@@ -170,7 +170,7 @@ name and is a complete sentence.
 
 ## Docs map
 
-- `docs/SPEC.md` — spec of record.
+- `docs/SPEC.md` — the original spec, kept for history; not maintained.
 - `docs/ARCHITECTURE.md` — how the packages fit and why.
 - `docs/EXTENSIONS.md` — the shipped extension contracts (hooks,
   `depends_ready_on`, profiles, `--wait`, log filters, phase history) and

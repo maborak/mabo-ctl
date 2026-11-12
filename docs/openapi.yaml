@@ -160,7 +160,12 @@ paths:
           schema:
             type: integer
             default: 200
-          description: Number of lines to return (clamped to max).
+            maximum: 5000
+          description: >-
+            Number of lines to return. Clamped to 5000, and to 8 MiB of history:
+            older lines past the byte budget become one leading
+            "[mabo-ctl: N earlier lines omitted; ...]" line, which counts toward
+            `count`.
       responses:
         "200":
           description: Log lines
@@ -188,7 +193,10 @@ paths:
           schema:
             type: integer
             default: 200
-          description: Initial replay count (clamped to max).
+            maximum: 5000
+          description: >-
+            Initial replay count. Clamped to 5000 and to 8 MiB of history (older
+            lines become one omission marker line).
       responses:
         "200":
           description: SSE event stream
@@ -213,7 +221,10 @@ paths:
           schema:
             type: integer
             default: 200
-          description: Initial replay count per service (clamped to max).
+            maximum: 5000
+          description: >-
+            Initial replay count per service. Clamped to 5000 and to 8 MiB of
+            history per service.
       responses:
         "200":
           description: SSE event stream
@@ -1121,6 +1132,9 @@ components:
           type: string
         line:
           type: string
+          description: >-
+            One log line. A line over 256 KiB is cut and ends with
+            "… [mabo-ctl: line truncated to <kept> of <total> bytes; the log file has all of it]".
 
     StreamEnd:
       type: object
@@ -1159,6 +1173,9 @@ components:
           type: string
         lines:
           type: array
+          description: >-
+            Log lines, oldest first. May start with an omission marker line and
+            contain 256 KiB truncation suffixes; see the log routes in docs/API.md.
           items:
             type: string
         count:

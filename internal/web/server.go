@@ -109,9 +109,10 @@ const (
 	// never idle — they heartbeat — so this does not affect them.
 	idleTimeout = 2 * time.Minute
 
-	// defaultLogTail and maxLogTail bound ?tail=N. The cap exists so one
-	// request cannot ask the supervisor to read an unbounded number of lines
-	// into memory.
+	// defaultLogTail and maxLogTail bound ?tail=N by line count. Memory is
+	// bounded by the supervisor's byte budget (maxBacklogBytes, 8 MiB, plus
+	// maxLineBytes per line), not by this count alone: 5000 lines of 256 KiB
+	// would otherwise be over a gigabyte.
 	defaultLogTail = 200
 	maxLogTail     = 5000
 

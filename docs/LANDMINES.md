@@ -285,7 +285,7 @@ dependency closure), and a verb that needed "exactly the named things" reused
 the answer without noticing it was a different question.
 
 **Where it bit us.** `internal/supervisor/supervisor.go`, diagnosed 2026-08-24
-against the tiktok-bot stack. `mabo-ctl stop listener` went through
+against a real three-service stack. `mabo-ctl stop listener` went through
 `service.Select`, whose DFS appends every transitive `depends_on` — so the
 selection came back `[backend, listener]`, and Stop's reverse walk SIGTERM'd
 the listener's own backend seconds after the listener died. The operator saw
@@ -588,8 +588,8 @@ its abort timer when headers arrived, so a body that stalled after the headers
 was unbounded.
 
 **Where it bit us.** `internal/web/console.html` (`request`, `pollNow`), reported
-2026-10-25 after the `mabo-ctl serve` consoles in tiktok-bot, legal-ai and
-amazon-watcher-backend went unresponsive across a laptop sleep while a fresh
+2026-10-25 after the `mabo-ctl serve` consoles of three separate
+projects went unresponsive across a laptop sleep while a fresh
 `curl` to the same server answered in milliseconds. EventSource connections
 stuck in CONNECTING had the same shape: the page only reopened them from
 `onerror`, which a stalled connection never fires.

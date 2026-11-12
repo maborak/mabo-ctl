@@ -260,9 +260,9 @@ Leave the key out to inherit the global.
 | `mabo-ctl stop [svc...]` | SIGTERM the process **group**, wait `stop_grace`, then SIGKILL. On a terminal, offers to kill each selected service's foreign port holder individually; every answer defaults to no and scripts are never prompted. |
 | `mabo-ctl restart [svc...] [-f]` | Stop, then start. |
 | `mabo-ctl status [--json]` | One line per service. `--json` is the stable machine contract. Always exits 0: a service being down is information. |
-| `mabo-ctl health` | The same phases `status` reports, with an exit code: 4 when any declared probe (http, tcp or exec) did not answer. |
+| `mabo-ctl health [--wait [--timeout=D]]` | The same phases `status` reports, with an exit code: 4 when any declared probe (http, tcp or exec) did not answer. `--wait` polls until every probe answers, or gives up after `--timeout` and names who was still down. |
 | `mabo-ctl config [svc] [--json] [--raw]` | Where `mabo-ctl.yaml` was loaded from and what it resolved to: the port **and which of the five precedence levels produced it**, the absolute command, the runtime, the expanded health URL, the declared env. `--raw` prints the file verbatim. |
-| `mabo-ctl logs [svc\|all] [--tail=N] [-f] [--timestamps]` | Tail a log, or interleave every log with per-service labels. `tailf` is an alias. With `-f --timestamps` each line carries an HH:MM:SS.mmm READ-time stamp — follow-only by design; historical tails refuse it rather than lie about write times. |
+| `mabo-ctl logs [svc\|all] [--tail=N] [-f] [--timestamps] [--grep=S] [--since=D]` | Tail a log, or interleave every log with per-service labels. `tailf` is an alias. `--grep` keeps lines containing a substring; `--since` (historical tails only) skips services whose log has not changed within that window. With `-f --timestamps` each line carries an HH:MM:SS.mmm READ-time stamp — follow-only by design; historical tails refuse it rather than lie about write times. |
 | `mabo-ctl reset [--force]` | Stop everything and delete `.mabo-ctl/`. `--force` also kills whatever still holds a declared port. |
 | `mabo-ctl preflight` | Two blocks: MACHINE (can this machine run what mabo-ctl.yaml declares? runtimes resolve, cmd[0] executable, node_modules present under node:, .nvmrc agreement — detect-and-hint, never fix) then the declared `checks:` block in parallel. `tcp:` takes `expect: free` to require a port be open before start; a failure names its holder. Either block failing exits 1. |
 | `mabo-ctl doctor` | Read-only stack exam: unresolvable runtimes, stale or recycled pids, foreign port holders, unsurfaced crashes, loose `.mabo-ctl/` permissions. Warn → 0, FAIL → 1. |
@@ -271,13 +271,13 @@ Leave the key out to inherit the global.
 | `mabo-ctl shell <name>` | Run a declared `shells:` entry, or open `$SHELL` in a service's environment. |
 | `mabo-ctl attach <svc>` | Connect your terminal to a service declared `tty: true`, through the broker beside it. Ctrl-Q detaches; one session at a time, and detaching never stops the service. |
 | `mabo-ctl open` | Hand each running service's URL — its `open:` target when declared, else the derived origin — to `open` (macOS) or `xdg-open` (Linux). |
-| `mabo-ctl serve [--addr] [--access-key] [--open] [--notify] [--terminal] [--i-know-this-is-dangerous]` | Serve the web console on `127.0.0.1:7999` — or the `console_addr` in `mabo-ctl.yaml` — until interrupted; if that port is already taken by another server, it falls back to a kernel-chosen free port and prints the real address. `--access-key` overrides `console_access_key`; absent keys are generated randomly. `--notify` announces dying services on the desktop. `--terminal` enables the Terminal tab. It can start and stop services — see [Web console](#web-console). |
+| `mabo-ctl serve [--addr] [--access-key] [--allow-origin=O]... [--open] [--notify] [--terminal] [--i-know-this-is-dangerous] [--i-know-allow-remote-terminal-is-dangerous]` | Serve the web console on `127.0.0.1:7999` — or the `console_addr` in `mabo-ctl.yaml` — until interrupted; if that port is already taken by another server, it falls back to a kernel-chosen free port and prints the real address. `--access-key` overrides `console_access_key`; absent keys are generated randomly. `--notify` announces dying services on the desktop. `--terminal` enables the Terminal tab (loopback only unless `--i-know-allow-remote-terminal-is-dangerous` is also given). `--allow-origin` trusts an extra browser origin, e.g. a tunnel's HTTPS URL. It can start and stop services — see [Web console](#web-console). |
 | `mabo-ctl init` | Scaffold a fully commented-out `mabo-ctl.yaml` from what the repo looks like (`package.json` + `.nvmrc`, `manage.py`, `pyproject.toml`, `Cargo.toml`). Refuses to overwrite; adds `.mabo-ctl/` to `.gitignore`; runs nothing it finds. |
 | `mabo-ctl --version` | The full build report: commit, dirty flag, when it was linked, toolchain, platform and dependencies. Paste it whole into bug reports — [SECURITY.md](SECURITY.md) asks for exactly this output. |
 | `mabo-ctl completion <bash\|zsh\|fish\|powershell>` | Print a completion script. |
 | `mabo-ctl upgrade [--force]` | Replace this binary with the latest GitHub release — see [Upgrading](#upgrading). |
 
-Global `--config <path>` overrides discovery on every command.
+Global flags on every command: `--config <path>` overrides discovery, `--profile a,b` activates profiles (overrides `MABO_PROFILE`), and `--refresh-ports` re-resolves ports from the declared defaults, ignoring `.mabo-ctl/run.env`.
 
 ### Exit codes
 
@@ -327,7 +327,7 @@ declared service. Treat it as a password.
 http://127.0.0.1:59104/?token=6f1c…
 Leaving the prompt — "quit", "exit" or Ctrl-D — stops the console, and so does
 typing "unserve". The services keep running either way.
-mabo-ctl(amazon-watcher)> logs backend -f
+mabo-ctl(my-app)> logs backend -f
 ```
 
 **Without a terminal, none of them happens.** In a script, a Makefile or CI the
@@ -563,10 +563,10 @@ produced two diverging copies of the shell script mabo-ctl replaces.
 
 ```
 $ mabo-ctl repl
-mabo-ctl(amazon-watcher)> start backend
-mabo-ctl(amazon-watcher)> logs website -f
-mabo-ctl(amazon-watcher)> exec backend pytest -k "not slow"
-mabo-ctl(amazon-watcher)> status
+mabo-ctl(my-app)> start backend
+mabo-ctl(my-app)> logs website -f
+mabo-ctl(my-app)> exec backend pytest -k "not slow"
+mabo-ctl(my-app)> status
 ```
 
 Anything that works as `mabo-ctl <line>` works as `<line>` here, flags included.
@@ -888,18 +888,21 @@ outbound traffic is the HTTP readiness probes to the URLs your config declares.
 | vulnerabilities | `govulncheck ./...` |
 
 ```
-cmd/mabo-ctl/           flag wiring, exit codes, the console-vs-status decision
+cmd/mabo-ctl/         flag wiring, exit codes, the console-vs-status decision
 internal/config/      mabo-ctl.yaml: load and validate. Pure.
 internal/service/     port resolution, template expansion, runtime resolution
 internal/state/       .mabo-ctl/: logs, pid records, exit records, run.env. The only writer.
 internal/health/      readiness probes: http URL, tcp dial, exec argv
 internal/redact/      what is withheld from anything shown a reader. Pure, and the
-                      ONLY copy of those rules: both front ends import it.
+                      ONLY copy of those rules: every front end imports it.
 internal/supervisor/  spawn, signal process groups, pid files. Returns data.
 internal/ui/          colour, fixed-width labels, status and config rendering, JSON
 internal/console/     the full-screen TUI (bubbletea)
 internal/repl/        the interactive prompt and its session
 internal/web/         the web console: embedded page, JSON + SSE API, its guards
+internal/selfupdate/  self-upgrade: latest release, version compare, verified binary swap
+internal/surface/     generated surface inventories (cli, config, json) and the drift gate
+tools/surfacemap/     generator whose output must be byte-identical to surfaces.json
 ```
 
 Dependencies point inward. `ui`, `console`, `repl` and `web` never call `os/exec` or `syscall`;
@@ -943,7 +946,6 @@ that proves it stays fixed, are in [`docs/LANDMINES.md`](docs/LANDMINES.md).
 | [`docs/openapi.yaml`](docs/openapi.yaml) | OpenAPI 3.0 spec for the web console API (for tooling integration) |
 | [`examples/mabo-ctl.yaml`](examples/mabo-ctl.yaml) | Every `mabo-ctl.yaml` field, annotated — the configuration reference, and a test asserts it stays valid |
 | [`docs/LANDMINES.md`](docs/LANDMINES.md) | Bugs mabo-ctl has actually shipped, and a runnable detector for each |
-| [`docs/ROADMAP.md`](docs/ROADMAP.md) | What is being considered, and what was rejected and why |
 | [`AGENTS.md`](AGENTS.md) | The full project brief — the source of truth for behaviour |
 | [`SECURITY.md`](SECURITY.md) | Trust boundary, the console's controls, accepted risks |
 | [`CHANGELOG.md`](CHANGELOG.md) | What changed, per release |

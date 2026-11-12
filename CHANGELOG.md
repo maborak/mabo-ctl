@@ -45,12 +45,16 @@ contract and service phase names are stable.
   `?tail=` request (from any console or shared link) read over a gigabyte
   into memory. Lines dropped by the byte cap are replaced by one marker
   saying how many were omitted.
-- Log streams buffer at most 16 lines between the tailer and a slow reader
-  (was 256), and the merged all-services stream no longer buffers per
-  service. With 256 KiB lines, one slow browser could pin 64 MiB per stream,
-  and the merged stream that much per service; now about 4 MiB per stream
-  plus two lines per service. Nothing is dropped: the tailer reads a file
-  and simply waits.
+- Log streams in the web console, the TUI and `logs -f` buffer at most 16
+  lines between the tailer and a slow reader (was 256, and 128 per service
+  in `logs -f`), and merged all-services streams no longer buffer per
+  service. With 256 KiB lines, one slow reader could pin 64 MiB per stream,
+  and a merged stream that much again per service; now about 4 MiB per
+  stream plus, per service, about three lines and a 64 KiB read buffer.
+  Nothing is dropped: the tailer reads a file and simply waits.
+- Removed private project names from public docs and examples; links to an
+  unpublished roadmap are gone, and `docs/SPEC.md` is marked as the
+  historical original spec.
 
 ## [1.4.0] - 2026-11-11
 
