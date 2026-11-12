@@ -114,6 +114,10 @@ var commandMetas = map[string]catalogMeta{
 	"completion": {
 		Args: "[bash|zsh|fish]",
 	},
+	"activate": {
+		Args:        "zsh|bash|fish",
+		SideEffects: []string{"prints a shell hook; the hook reads pid records on cd and never starts, stops or writes anything"},
+	},
 	"upgrade": {
 		Mutates:     true,
 		SideEffects: []string{"fetches the latest published release over the network", "replaces this binary on disk after verification"},

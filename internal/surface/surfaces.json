@@ -2,6 +2,11 @@
   "generator": "go run ./tools/surfacemap",
   "sections": {
     "cli": [
+      "cli:activate",
+      "cli:activate --config",
+      "cli:activate --port-offset",
+      "cli:activate --profile",
+      "cli:activate --refresh-ports",
       "cli:attach",
       "cli:attach --config",
       "cli:attach --port-offset",

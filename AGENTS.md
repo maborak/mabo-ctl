@@ -25,7 +25,7 @@ Three front ends over ONE supervisor:
 
 1. **One-shot CLI** — `start`, `stop`, `restart`, `status [--json]`, `health`,
    `config`, `logs`/`tailf`, `open`, `reset`, `preflight`, `doctor`, `init`,
-   `attach`, `exec`, `shell`, `repl`, `serve`, `completion`,
+   `attach`, `exec`, `shell`, `repl`, `serve`, `completion`, `activate`,
    `schema [--commands]`, `upgrade`.
    `ui.StatusJSON` is the stable machine contract, `--version` prints the full
    build report, and `schema --commands` is the machine-readable catalogue of

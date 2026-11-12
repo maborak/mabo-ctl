@@ -15,6 +15,10 @@ contract and service phase names are stable.
   previous fixed value; 0 to 100000, no unlimited). History costs about
   columns × lines × 12 bytes per shell, so a lower value bounds the page's
   memory. A config reload says to refresh the page to apply it.
+- `mabo-ctl activate zsh|bash|fish` prints a shell hook that prints one line
+  when you `cd` into a repository with a `mabo-ctl.yaml` — what runs and what
+  stopped. It reads only the pid records (identity-checked), never starts
+  anything, never creates `.mabo-ctl/`, and runs no probe or port lookup.
 - CPU and memory per service: `status` gains CPU and MEM columns, the web
   console's detail pane and the TUI detail block show them, and
   `status --json` appends `cpu_percent` and `rss_bytes` to every record (an
