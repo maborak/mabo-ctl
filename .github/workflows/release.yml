@@ -66,22 +66,37 @@ jobs:
 
       # Homebrew: regenerate Formula/mabo-ctl.rb in the tap from this release's
       # checksums and push it, so `brew install maborak/tap/mabo-ctl` follows
-      # every release. Skipped, with a notice, until the TAP_TOKEN secret (a
-      # fine-grained token with contents:write on maborak/homebrew-tap) exists.
-      - name: homebrew tap
+      # every release. The push uses TAP_DEPLOY_KEY, the private half of a
+      # write deploy key on maborak/homebrew-tap alone — narrower than any
+      # token. Skipped, with a notice, while that secret is unset; a secret
+      # cannot be tested in `if:`, so this step turns it into an output.
+      - name: homebrew tap key
+        id: tapkey
         env:
-          TAP_TOKEN: ${{ secrets.TAP_TOKEN }}
+          TAP_DEPLOY_KEY: ${{ secrets.TAP_DEPLOY_KEY }}
+        run: |
+          if [ -n "$TAP_DEPLOY_KEY" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::TAP_DEPLOY_KEY is not set; skipping the Homebrew tap update"
+          fi
+
+      - name: homebrew tap checkout
+        if: steps.tapkey.outputs.enabled == 'true'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: maborak/homebrew-tap
+          ssh-key: ${{ secrets.TAP_DEPLOY_KEY }}
+          path: tap
+
+      - name: homebrew tap
+        if: steps.tapkey.outputs.enabled == 'true'
+        env:
           TAG: ${{ inputs.tag || github.ref_name }}
         run: |
-          if [ -z "$TAP_TOKEN" ]; then
-            echo "::notice::TAP_TOKEN is not set; skipping the Homebrew tap update"
-            exit 0
-          fi
-          sh packaging/homebrew/formula.sh "$TAG" dist/SHA256SUMS > /tmp/mabo-ctl.rb
-          git clone --depth 1 "https://x-access-token:${TAP_TOKEN}@github.com/maborak/homebrew-tap.git" /tmp/tap
-          mkdir -p /tmp/tap/Formula
-          cp /tmp/mabo-ctl.rb /tmp/tap/Formula/mabo-ctl.rb
-          cd /tmp/tap
+          mkdir -p tap/Formula
+          sh packaging/homebrew/formula.sh "$TAG" dist/SHA256SUMS > tap/Formula/mabo-ctl.rb
+          cd tap
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add Formula/mabo-ctl.rb
