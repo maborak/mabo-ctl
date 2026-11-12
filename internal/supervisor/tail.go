@@ -2,13 +2,13 @@ package supervisor
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"fmt"
 	"io"
 	"os"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 const (
@@ -35,9 +35,14 @@ const (
 	// notification to subscribe to.
 	followPollInterval = 200 * time.Millisecond
 
-	// maxLineBytes bounds a single log line so a service emitting a
-	// megabyte-long line cannot exhaust memory through the tailer.
+	// maxLineBytes bounds what any tailer keeps of a single log line, so a
+	// service emitting a megabyte-long line — or a progress bar that never
+	// writes a newline — cannot exhaust memory in mabo-ctl or in a console
+	// that streams the line. The log file itself is never shortened.
 	maxLineBytes = 256 * 1024
+
+	// tailReadBuffer is the read buffer behind every log line reader.
+	tailReadBuffer = 64 * 1024
 )
 
 // logTail returns the last n lines of svc's log, or "" when the log is absent
@@ -55,13 +60,26 @@ func (s *Supervisor) logTail(svc string, n int) string {
 	defer func() { _ = f.Close() }()
 
 	ring := make([]string, 0, n)
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 0, 64*1024), maxLineBytes)
-	for sc.Scan() {
+	keep := func(line string) {
+		if n <= 0 {
+			return
+		}
 		if len(ring) == n {
 			ring = ring[1:]
 		}
-		ring = append(ring, sc.Text())
+		ring = append(ring, line)
+	}
+	lr := newLineReader(f, 0)
+	for {
+		line, err := lr.next()
+		if err != nil {
+			break
+		}
+		keep(line)
+	}
+	// A dying service's last words often lack a newline; quote them anyway.
+	if line, ok := lr.rest(); ok {
+		keep(line)
 	}
 	return strings.Join(ring, "\n")
 }
@@ -133,33 +151,24 @@ func (s *Supervisor) Tail(ctx context.Context, svc string, n int, follow bool, o
 		}
 	}
 
-	reader := bufio.NewReaderSize(f, 64*1024)
+	// The live reader continues from the backlog's offset and keeps a partial
+	// final line across polls instead of re-reading it: a line that never ends
+	// costs one bounded prefix, not a fresh copy of itself every poll.
+	lr := newLineReader(f, offset)
 	tick := time.NewTicker(followPollInterval)
 	defer tick.Stop()
 
 	for {
 		for {
-			line, err := reader.ReadString('\n')
-			if len(line) > 0 && err == nil {
-				offset += int64(len(line))
-				if !send(ctx, out, strings.TrimRight(line, "\n")) {
-					return ctx.Err()
-				}
-				continue
-			}
+			line, err := lr.next()
 			if err == io.EOF {
-				// A partial final line stays buffered until its newline
-				// arrives; rewinding keeps it from being emitted twice.
-				if len(line) > 0 {
-					if _, serr := f.Seek(offset, io.SeekStart); serr != nil {
-						return fmt.Errorf("rewind %s: %w", path, serr)
-					}
-					reader.Reset(f)
-				}
 				break
 			}
 			if err != nil {
 				return fmt.Errorf("read %s: %w", path, err)
+			}
+			if !send(ctx, out, line) {
+				return ctx.Err()
 			}
 		}
 
@@ -177,7 +186,8 @@ func (s *Supervisor) Tail(ctx context.Context, svc string, n int, follow bool, o
 		// see. Identity is compared against the PATH — a different inode there,
 		// or the old shrink, means reopen and read from the top. Nothing can be
 		// duplicated by rewinding to zero here: the replacement's contents were
-		// never read under the old handle.
+		// never read under the old handle. A partial line of the old contents is
+		// dropped with its reader.
 		if fi, err := f.Stat(); err == nil {
 			cur, serr := os.Stat(path)
 			switch {
@@ -191,14 +201,12 @@ func (s *Supervisor) Tail(ctx context.Context, svc string, n int, follow bool, o
 				if _, serr2 := f.Seek(0, io.SeekStart); serr2 != nil {
 					return fmt.Errorf("rewind %s after rotation: %w", path, serr2)
 				}
-				offset = 0
-				reader.Reset(f)
-			case serr == nil && cur.Size() < offset:
+				lr = newLineReader(f, 0)
+			case serr == nil && cur.Size() < lr.consumed:
 				if _, err := f.Seek(0, io.SeekStart); err != nil {
 					return fmt.Errorf("rewind %s after truncation: %w", path, err)
 				}
-				offset = 0
-				reader.Reset(f)
+				lr = newLineReader(f, 0)
 			}
 		}
 	}
@@ -207,32 +215,118 @@ func (s *Supervisor) Tail(ctx context.Context, svc string, n int, follow bool, o
 // followBacklog reads a fixed snapshot of complete lines from f and reports the
 // offset immediately after them. A partial final line stays for the live reader
 // to deliver once its newline arrives, instead of being split across updates.
+// An oversized line is truncated like every other tailed line, never an error:
+// one long line must not make the whole log unreadable.
 func followBacklog(f *os.File, n int) ([]string, int64, error) {
 	info, err := f.Stat()
 	if err != nil {
 		return nil, 0, err
 	}
 	var ring []string
-	var offset int64
-	sc := bufio.NewScanner(io.NewSectionReader(f, 0, info.Size()))
-	sc.Buffer(make([]byte, 0, 64*1024), maxLineBytes)
-	sc.Split(func(data []byte, atEOF bool) (int, []byte, error) {
-		if atEOF && bytes.IndexByte(data, '\n') < 0 {
-			return 0, nil, nil
+	lr := newLineReader(io.NewSectionReader(f, 0, info.Size()), 0)
+	for {
+		line, err := lr.next()
+		if err == io.EOF {
+			return ring, lr.complete, nil
 		}
-		advance, token, err := bufio.ScanLines(data, atEOF)
-		offset += int64(advance)
-		return advance, token, err
-	})
-	for sc.Scan() {
+		if err != nil {
+			return nil, 0, err
+		}
 		if n > 0 {
 			if len(ring) == n {
 				ring = ring[1:]
 			}
-			ring = append(ring, sc.Text())
+			ring = append(ring, line)
 		}
 	}
-	return ring, offset, sc.Err()
+}
+
+// lineReader splits a log into lines the way bufio.ScanLines does — "\n"
+// separated, one trailing "\r" dropped — while retaining at most maxLineBytes
+// of any line. Bytes past that are counted and discarded, and the delivered
+// line says so. At the end of the available input next returns io.EOF and
+// keeps the partial line, so a later call continues it once more is written.
+type lineReader struct {
+	r        *bufio.Reader
+	kept     []byte // retained prefix of the line being read, ≤ maxLineBytes
+	size     int    // bytes of that line read so far, its newline excluded
+	cr       bool   // the last byte read of that line was '\r'
+	consumed int64  // file offset just past everything read
+	complete int64  // file offset just past the last complete line
+}
+
+func newLineReader(r io.Reader, offset int64) *lineReader {
+	return &lineReader{r: bufio.NewReaderSize(r, tailReadBuffer), consumed: offset, complete: offset}
+}
+
+// next returns the next complete line, or io.EOF (keeping any partial line)
+// when no complete line is available yet, or the underlying read error.
+func (lr *lineReader) next() (string, error) {
+	for {
+		frag, err := lr.r.ReadSlice('\n')
+		lr.consumed += int64(len(frag))
+		body := frag
+		if err == nil {
+			body = frag[:len(frag)-1]
+		}
+		if len(body) > 0 {
+			lr.size += len(body)
+			lr.cr = body[len(body)-1] == '\r'
+			if room := maxLineBytes - len(lr.kept); room > 0 {
+				lr.kept = append(lr.kept, body[:min(room, len(body))]...)
+			}
+		}
+		switch err {
+		case nil:
+			lr.complete = lr.consumed
+			return lr.take(), nil
+		case bufio.ErrBufferFull:
+			continue
+		default:
+			return "", err
+		}
+	}
+}
+
+// rest returns the partial final line, if any, consuming it.
+func (lr *lineReader) rest() (string, bool) {
+	if lr.consumed == lr.complete {
+		return "", false
+	}
+	lr.complete = lr.consumed
+	return lr.take(), true
+}
+
+// take returns the line read so far and resets for the next one.
+func (lr *lineReader) take() string {
+	n := lr.size
+	if lr.cr {
+		n--
+	}
+	var line string
+	if n <= maxLineBytes {
+		line = string(lr.kept[:n])
+	} else {
+		keep := lr.kept[:validPrefix(lr.kept)]
+		line = fmt.Sprintf("%s … [mabo-ctl: line truncated to %d of %d bytes; the log file has all of it]",
+			keep, len(keep), n)
+	}
+	lr.kept, lr.size, lr.cr = lr.kept[:0], 0, false
+	return line
+}
+
+// validPrefix is the length of b without a trailing UTF-8 sequence that the
+// truncation cut short. Invalid bytes elsewhere are left exactly as written.
+func validPrefix(b []byte) int {
+	for i := 1; i <= utf8.UTFMax && i <= len(b); i++ {
+		if utf8.RuneStart(b[len(b)-i]) {
+			if !utf8.FullRune(b[len(b)-i:]) {
+				return len(b) - i
+			}
+			break
+		}
+	}
+	return len(b)
 }
 
 // send delivers line unless ctx is cancelled first, reporting whether it went.

@@ -4964,6 +4964,9 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
       var self = this;
       this.loadLib(function () {
         if (!self.synced) { self.sync(true); } else { self.sync(false); self.fitActive(); self.focusActive(); }
+        // A display that paused while another console tab was open resumes
+        // here; nothing else fires when the operator merely switches back.
+        self.recoverOutput();
       });
     },
 
@@ -5156,7 +5159,8 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
         s.es.close(); s.es = null;
       }
       s.outputPaused = true;
-      this.note.textContent = "Terminal display paused: output exceeded the browser buffer. When visible, it resumes from recent scrollback; older output may be omitted. The shell keeps running.";
+      // One note line serves every shell, so each message names its shell.
+      this.note.textContent = "shell " + s.id + ": display paused, output exceeded the browser buffer. When visible, it resumes from recent scrollback; older output may be omitted. The shell keeps running.";
     },
 
     writeOutput: function (s, data, replay) {
@@ -5178,7 +5182,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     resumeOutput: function (s) {
       if (s.dead || !s.outputPaused || s.pendingOutput || document.visibilityState !== "visible" ||
           currentTab !== "terminal" || this.active !== s.id) { return; }
-      this.note.textContent = "Terminal display recovered from recent scrollback; older output may have been omitted.";
+      this.note.textContent = "shell " + s.id + ": display recovered from recent scrollback; older output may have been omitted.";
       this.stream(s);
     },
 
@@ -5293,7 +5297,6 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
       new ResizeObserver(function () { terminals.fitActive(); }).observe(terminals.body);
     }
     terminals.refreshCount();
-    terminals.recoverOutput();
   }
 
   // The open tab survives a reload — the one moment a terminal user most needs
@@ -5635,6 +5638,9 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     // recover; loadServices owns its own retry and will open both on success.
     if (!booted) { return; }
     terminals.refreshCount();
+    // Returning to a hidden page fires this, not a terminal write: a display
+    // that paused and drained while hidden must resume without a click.
+    terminals.recoverOutput();
     if (eventsES === null || eventsES.readyState === 2 ||
         (eventsES.readyState === 0 && Date.now() - eventsOpenedAt > RECONNECT_MAX)) {
       openEvents();

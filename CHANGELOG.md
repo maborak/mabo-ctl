@@ -22,6 +22,16 @@ contract and service phase names are stable.
   detaches and, when visible and drained, reloads recent server scrollback.
   Recovery explicitly warns that older terminal output may be omitted; the
   shell itself keeps running and replay cannot generate shell input.
+- A paused terminal display now recovers when the page becomes visible again
+  or the Terminal tab is reopened, not only after a click on that shell's tab.
+  Pause and recovery notes name the shell they refer to.
+- Log tailing bounds every line at 256 KiB at the source: backlog, live
+  follow and failure excerpts alike. A newline-less progress bar or dump no
+  longer grows `serve` (or the TUI, or `logs -f`) by re-reading the partial
+  line every poll. One oversized line no longer makes a service's stream fail
+  with `bufio.Scanner: token too long` and reconnect forever. Truncated lines
+  carry an explicit marker; the log file is unchanged. A trailing `\r` is now
+  stripped from live lines as it already was from backlog lines.
 
 ## [1.4.0] - 2026-11-11
 

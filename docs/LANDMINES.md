@@ -902,7 +902,55 @@ cannot retain the original allocation. Rebuilds cancel obsolete paints. Bound
 unparsed terminal output and recover visibly from recent server scrollback once
 the parser drains; preserve replay suppression and leave shells/log files alone.
 
+**Second bite (same branch, before release).** Recovery only ran from the write
+callback, a shell-tab click, and a boot-time `recoverOutput()` that ran before
+any shell existed. A display that drained while the page was hidden, or while
+another console tab was open, stayed frozen on "paused" until the operator
+clicked that shell's tab. The original detector only asserted that the string
+`terminals.recoverOutput();` existed somewhere, so it passed. Reproduced in
+Chrome with 40× CPU throttling and a spoofed hidden page: paused, drained,
+still paused after 15 s. With the fix, it recovered within 3 s of
+`visibilitychange`. `recoverStreams` (visibility, pageshow, online, interval)
+and `terminals.show` now resume it. Recovery notes name their shell, because
+all shells share one note line.
+
+**Detector.** The terminal test checks WHERE recovery is called: inside
+`recoverStreams`, inside `terminals.show`, and the visible branch of
+`visibilitychange` reaching `recoverStreams`.
+```bash
+go test ./internal/web -run 'TestConsoleLogRetentionBoundsEveryQueue|TestConsoleTerminalOutputHasBackpressure|TestConsoleTerminalOutputRecoversWithoutAClick'
+```
+
+## 34. The log tailer's line bound covered only one of its three readers
+
+**Shape.** `maxLineBytes` (256 KiB) claimed to bound a single log line, but only
+the backlog `bufio.Scanner` enforced it, and there it was fatal. The live
+follower used `bufio.Reader.ReadString('\n')`, which has no limit. On EOF with a
+partial line it seeked back and re-read the whole partial on every 200 ms poll,
+separately for each subscriber. A `\r` progress bar or a newline-less dump grew
+mabo-ctl without bound. When the newline finally arrived, the whole line went
+through the channel and SSE to the browser, which parsed all of it before its
+16 Ki display preview applied. Meanwhile, one line over 256 KiB already in the
+log made `followBacklog` return `bufio.Scanner: token too long`. Every web, TUI
+and `logs -f` stream of that service then ended at once and retried forever
+until the next start truncated the log. `logTail` silently stopped at the long
+line and lost everything after it.
+
+**Evidence.** In a throwaway repo, `serve` RSS went from 20 MB to 128 MB in 40 s
+with one `/api/stream` attached while a service wrote 64 KiB/100 ms with no
+newline. A service printing one 300 KiB line got
+`"error":"backlog …: bufio.Scanner: token too long"`. After the fix, the same
+runs held RSS at 21–22 MB. They delivered
+`… [mabo-ctl: line truncated to 262144 of 307200 bytes; the log file has all of it]`.
+
+**Fix.** A single `lineReader` serves backlog, live follow and `logTail`. It keeps
+at most `maxLineBytes` of a line, counts and discards the rest, and marks the
+truncation without splitting a UTF-8 sequence. It keeps a partial line across
+EOFs instead of re-reading it. It strips a trailing `\r` on both paths, where
+the live path used to keep it. The bound applies at the source, so every
+consumer (web, TUI, CLI) gets bounded lines. Log files are unchanged.
+
 **Detector.**
 ```bash
-go test ./internal/web -run 'TestConsoleLogRetentionBoundsEveryQueue|TestConsoleTerminalOutputHasBackpressure'
+go test ./internal/supervisor -race -run 'TestLineReader|TestFollowBacklogSurvivesAnOversizedLine|TestLogTailKeepsLinesAfterAnOversizedOne|TestTailFollowTruncatesAnEndlessLineAtTheSource'
 ```

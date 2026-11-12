@@ -50,11 +50,48 @@ func TestConsoleTerminalOutputHasBackpressure(t *testing.T) {
 		`s.outputPaused = true;`,
 		`document.visibilityState !== "visible"`,
 		`currentTab !== "terminal" || this.active !== s.id`,
-		`terminals.recoverOutput();`,
+		`"shell " + s.id + ": display paused`,
+		`"shell " + s.id + ": display recovered`,
 		`older output may be omitted. The shell keeps running.`,
 	} {
 		if !strings.Contains(consoleHTML, want) {
 			t.Errorf("terminal output backpressure lost %q", want)
 		}
 	}
+}
+
+// TestConsoleTerminalOutputRecoversWithoutAClick guards WHERE recovery runs,
+// not merely that the call exists: resumeOutput refuses while the page is
+// hidden or another console tab is open, so a display that drained then must
+// be resumed by the events that end those states. A call made only at boot,
+// before any shell exists, recovers nothing.
+func TestConsoleTerminalOutputRecoversWithoutAClick(t *testing.T) {
+	t.Parallel()
+	for _, site := range []struct{ name, start, end string }{
+		{"returning to a hidden page (recoverStreams)", "function recoverStreams() {", "\n  }\n"},
+		{"switching to the Terminal tab (terminals.show)", "    show: function () {", "\n    },\n"},
+	} {
+		body := jsBlock(t, site.start, site.end)
+		if !strings.Contains(body, "recoverOutput()") {
+			t.Errorf("%s no longer resumes a paused terminal display:\n%s", site.name, body)
+		}
+	}
+	vis := jsBlock(t, "document.addEventListener(\"visibilitychange\", function () {\n    if (document.visibilityState === \"visible\") {", "\n  });\n")
+	if !strings.Contains(vis, "recoverStreams()") {
+		t.Errorf("visibilitychange no longer reaches recoverStreams:\n%s", vis)
+	}
+}
+
+// jsBlock returns the console source from start through the first end after it.
+func jsBlock(t *testing.T, start, end string) string {
+	t.Helper()
+	i := strings.Index(consoleHTML, start)
+	if i < 0 {
+		t.Fatalf("console no longer contains %q", start)
+	}
+	j := strings.Index(consoleHTML[i:], end)
+	if j < 0 {
+		t.Fatalf("no %q after %q", end, start)
+	}
+	return consoleHTML[i : i+j+len(end)]
 }

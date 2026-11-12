@@ -740,13 +740,17 @@ Browser log history and its pending render queue are bounded to 2,000 lines and
 2 Mi UTF-16 code units. Individual lines over 16 Ki code units display a marked
 preview; severity is still determined from the complete line. Display filters
 search that preview, and the full output remains in the service's log file.
+Before that, every tailer (console, TUI and `logs -f`) caps a single line at
+256 KiB at the source, with an explicit truncation marker, so a line that never
+ends cannot grow mabo-ctl or the browser.
 Older entries are automatically discarded from the display, including in
 background tabs; Clear affects the display only, never the file.
 
 Terminal scrollback limits alone do not bound output waiting for the emulator.
 If a terminal's unparsed browser queue would exceed 2 MiB, its display detaches
-while the shell continues running. When that terminal is visible and its queue drains,
-it reconnects from the server's recent scrollback. The console warns when older
+while the shell continues running. Once its queue drains and it is the visible
+shell, it reconnects from the server's recent scrollback, including when you
+return to a hidden browser tab or reopen the Terminal tab. The console warns when older
 terminal output may have been omitted. This protects the display without
 silently stopping a shell or deleting service logs.
 
