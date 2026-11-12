@@ -131,6 +131,17 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  levels:
+                    type: array
+                    description: >-
+                      Start order: dependency levels, each started in parallel
+                      once the previous level is up. Omitted when the view does
+                      not hold a complete graph.
+                    items:
+                      type: array
+                      items:
+                        type: string
 
   /api/status:
     get:

@@ -4005,7 +4005,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     var nav = el("nav", "cfg-nav"); nav.setAttribute("role", "tablist"); nav.setAttribute("aria-label", "Configuration sections");
     configBody.appendChild(nav);
     var sections = [
-      {key: "overview", label: "Overview", description: "Read-only repository settings and resolved ports. Paths identify this stack; they are not access settings.", nodes: [configSource(cfg.source || {}), configPorts(list)]},
+      {key: "overview", label: "Overview", description: "Read-only repository settings and resolved ports. Paths identify this stack; they are not access settings.", nodes: [configSource(cfg.source || {}), configPorts(list), configLevels(cfg.levels || [], list)]},
       {key: "services", label: "Services", description: "Read-only resolved commands, directories, environments and dependencies for each service.", nodes: [configServices(list)]}
     ];
     if (IS_OWNER) {
@@ -4660,6 +4660,43 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
     var s = Math.floor(ms / 1000);
     if (ms < 3600000) { return Math.floor(s / 60) + "m" + pad2(s % 60) + "s"; }
     return Math.floor(s / 3600) + "h" + pad2(Math.floor((s % 3600) / 60)) + "m";
+  }
+
+  // configLevels draws the start order the server computed (ui.ConfigView
+  // Levels, the same levelling start uses): one row per dependency level,
+  // each service with what it waits for.
+  function configLevels(levels, list) {
+    var sec = el("section", "cfg-sec");
+    sec.id = "cfg-levels";
+    sec.appendChild(el("h3", null, "start order"));
+    sec.appendChild(el("p", "why",
+      "Dependencies first. Services on one level start in parallel once every " +
+      "earlier level is up. mabo-ctl config --graph prints the same order."));
+    if (!levels.length) {
+      sec.appendChild(el("p", "why", "No start order: no services are declared."));
+      return sec;
+    }
+    var deps = Object.create(null);
+    for (var i = 0; i < list.length; i++) { deps[list[i].name] = list[i].depends_on || []; }
+    var wrap = el("div", "tbl-wrap");
+    var tbl = el("table", "cfg-tbl");
+    var thead = el("thead"), hrow = el("tr");
+    ["level", "service", "waits for"].forEach(function (label, c) {
+      var th = el("th", c === 0 ? "num" : null, label); th.scope = "col"; hrow.appendChild(th);
+    });
+    thead.appendChild(hrow); tbl.appendChild(thead);
+    var tbody = el("tbody");
+    for (var l = 0; l < levels.length; l++) {
+      for (var j = 0; j < levels[l].length; j++) {
+        var name = levels[l][j], tr = el("tr");
+        tr.appendChild(el("td", "num", j === 0 ? String(l + 1) : ""));
+        tr.appendChild(el("td", "svc", name));
+        tr.appendChild(el("td", null, (deps[name] || []).join(", ") || "—"));
+        tbody.appendChild(tr);
+      }
+    }
+    tbl.appendChild(tbody); wrap.appendChild(tbl); sec.appendChild(wrap);
+    return sec;
   }
 
   function configPorts(list) {

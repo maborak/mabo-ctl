@@ -33,6 +33,12 @@ type ConfigView struct {
 	Source ConfigSource `json:"source"`
 	// Services holds one entry per declared service, in declaration order.
 	Services []ConfigService `json:"services"`
+	// Levels is the start order: each inner list is one dependency level,
+	// started in parallel once every earlier level is up, in declaration
+	// order within a level. Omitted when the shown services do not form a
+	// complete graph on their own (a view narrowed to a service whose
+	// dependencies are not shown).
+	Levels [][]string `json:"levels,omitempty"`
 }
 
 // ConfigSource is where the configuration came from.
@@ -195,7 +201,63 @@ func BuildConfigView(in ConfigInput) ConfigView {
 		}
 		view.Services = append(view.Services, svc)
 	}
+	view.Levels = startLevels(in.Instances)
 	return view
+}
+
+// startLevels names the dependency levels service.SelectLevels starts insts in,
+// or nil when insts are empty or not a closed graph (a dependency missing from
+// the set). It reuses the one levelling implementation rather than re-deriving
+// the order, so what this prints is what start does.
+func startLevels(insts []service.Instance) [][]string {
+	if len(insts) == 0 {
+		return nil
+	}
+	levels, err := service.SelectLevels(insts, nil)
+	if err != nil {
+		return nil
+	}
+	names := make([][]string, len(levels))
+	for i, level := range levels {
+		for _, in := range level {
+			names[i] = append(names[i], in.Name)
+		}
+	}
+	return names
+}
+
+// ConfigGraph renders the start order: one row per dependency level, each
+// service followed by what it waits for. Services on one level start in
+// parallel. The result has no trailing newline.
+func (r *Renderer) ConfigGraph(v ConfigView) string {
+	if len(v.Levels) == 0 {
+		return r.paint(style{"2"}, "no start order: no services, or a dependency is not declared")
+	}
+	deps := make(map[string][]string, len(v.Services))
+	width := 0
+	for _, s := range v.Services {
+		deps[s.Name] = s.DependsOn
+		width = max(width, len(s.Name))
+	}
+	var b strings.Builder
+	b.WriteString(r.paint(style{"2"}, "start order: dependencies first; services on one level start in parallel"))
+	for i, level := range v.Levels {
+		for j, name := range level {
+			b.WriteString("\n")
+			num := "  "
+			if j == 0 {
+				num = fmt.Sprintf("%2d", i+1)
+			}
+			b.WriteString(r.paint(style{"2"}, num) + "  ")
+			if d := deps[name]; len(d) > 0 {
+				b.WriteString(r.paint(r.serviceStyle(name), pad(name, width)))
+				b.WriteString("  " + r.paint(style{"2"}, "← "+strings.Join(d, ", ")))
+			} else {
+				b.WriteString(r.paint(r.serviceStyle(name), name))
+			}
+		}
+	}
+	return b.String()
 }
 
 // ConfigJSON renders v as the body of `mabo-ctl config --json`.

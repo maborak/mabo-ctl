@@ -2825,3 +2825,19 @@ func TestConsolePageHasAMergedLogMode(t *testing.T) {
 		}
 	}
 }
+
+// TestConfigTabShowsTheServerStartOrder pins that the Config tab draws the
+// start order the server computed (ui.ConfigView Levels) instead of deriving
+// its own from depends_on, which could disagree with what start does.
+func TestConfigTabShowsTheServerStartOrder(t *testing.T) {
+	t.Parallel()
+	for _, want := range []string{
+		`configLevels(cfg.levels || [], list)`,
+		`function configLevels(levels, list) {`,
+		`mabo-ctl config --graph prints the same order.`,
+	} {
+		if !strings.Contains(consoleHTML, want) {
+			t.Errorf("config tab lost %q", want)
+		}
+	}
+}

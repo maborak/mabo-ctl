@@ -15,6 +15,10 @@ contract and service phase names are stable.
   previous fixed value; 0 to 100000, no unlimited). History costs about
   columns × lines × 12 bytes per shell, so a lower value bounds the page's
   memory. A config reload says to refresh the page to apply it.
+- `mabo-ctl config --graph` prints the start order: one row per dependency
+  level, each service with what it waits for. `config --json` and
+  `GET /api/config` carry it as `levels`, and the web Config tab shows a
+  "start order" table. All three come from the same levelling `start` uses.
 - **Pretty JSON** checkbox in the web console's log toolbar. It indents log
   lines that are complete JSON objects or arrays by changing whitespace only,
   so big integers, duplicate keys and key order show exactly as written. Lines

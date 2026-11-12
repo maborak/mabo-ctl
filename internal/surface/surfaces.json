@@ -12,6 +12,7 @@
       "cli:completion --refresh-ports",
       "cli:config",
       "cli:config --config",
+      "cli:config --graph",
       "cli:config --json",
       "cli:config --port",
       "cli:config --ports",
