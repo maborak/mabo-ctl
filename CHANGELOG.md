@@ -32,6 +32,11 @@ contract and service phase names are stable.
   with `bufio.Scanner: token too long` and reconnect forever. Truncated lines
   carry an explicit marker; the log file is unchanged. A trailing `\r` is now
   stripped from live lines as it already was from backlog lines.
+- The history a log tail replays is capped at 8 MiB per request, on top of
+  its line count. 5000 lines of up to 256 KiB each could previously make one
+  `?tail=` request (from any console or shared link) read over a gigabyte
+  into memory. Lines dropped by the byte cap are replaced by one marker
+  saying how many were omitted.
 
 ## [1.4.0] - 2026-11-11
 

@@ -4,6 +4,7 @@ package supervisor
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -124,6 +125,49 @@ func TestFollowBacklogSurvivesAnOversizedLine(t *testing.T) {
 	}
 	if want := int64(len(text) - len("partial")); offset != want {
 		t.Fatalf("offset = %d, want %d", offset, want)
+	}
+}
+
+// TestBacklogStaysWithinItsByteBudget: a count of lines is not a memory bound
+// when each line may be maxLineBytes long. The newest lines are kept, the
+// omission is said, and the total stays inside maxBacklogBytes.
+func TestBacklogStaysWithinItsByteBudget(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "svc.log")
+	long := strings.Repeat("x", maxLineBytes)
+	const total = 3 * maxBacklogBytes / maxLineBytes // three budgets' worth
+	var b strings.Builder
+	for i := 0; i < total; i++ {
+		b.WriteString(long)
+		b.WriteString("\n")
+	}
+	b.WriteString("newest\n")
+	if err := os.WriteFile(path, []byte(b.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	got, _, err := followBacklog(f, 5000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	size := 0
+	for _, l := range got[1:] {
+		size += len(l)
+	}
+	kept := len(got) - 1
+	want := fmt.Sprintf("[mabo-ctl: %d earlier lines omitted;", total+1-kept)
+	if !strings.HasPrefix(got[0], want) || got[len(got)-1] != "newest" || size > maxBacklogBytes || kept < total/4 {
+		t.Fatalf("backlog: %d lines, %d bytes, first %.90q, last %.20q; want marker %q", len(got), size, got[0], got[len(got)-1], want)
+	}
+
+	// A count limit alone drops lines silently, as asked: no marker.
+	if got, _, err := followBacklog(f, 2); err != nil || len(got) != 2 || got[1] != "newest" || got[0] != long {
+		t.Fatalf("followBacklog(n=2) = %d lines, %v", len(got), err)
 	}
 }
 

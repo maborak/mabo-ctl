@@ -399,7 +399,7 @@ curl -s -H 'X-Mabo-Ctl-Token: YOUR_TOKEN' \
 
 | Param | Default | Notes |
 |-------|---------|-------|
-| `tail` | 200 | Number of lines; clamped to max |
+| `tail` | 200 | Number of lines; clamped to 5000 and to 8 MiB (older lines become one omission marker line) |
 
 **Response** `200 OK` — `application/json`:
 
@@ -441,7 +441,7 @@ curl -N -H 'X-Mabo-Ctl-Token: YOUR_TOKEN' \
 
 | Param | Default | Notes |
 |-------|---------|-------|
-| `tail` | 200 | Initial replay count; clamped to max |
+| `tail` | 200 | Initial replay count; clamped to 5000 and to 8 MiB (older lines become one omission marker line) |
 
 **Response** `200 OK` — `text/event-stream`:
 
@@ -486,7 +486,7 @@ curl -N -H 'X-Mabo-Ctl-Token: YOUR_TOKEN' \
 
 | Param | Default | Notes |
 |-------|---------|-------|
-| `tail` | 200 | Initial replay count per service; clamped to max |
+| `tail` | 200 | Initial replay count per service; clamped to 5000 and to 8 MiB per service |
 
 **Response** `200 OK` — `text/event-stream`:
 

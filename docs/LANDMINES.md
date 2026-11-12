@@ -950,7 +950,13 @@ EOFs instead of re-reading it. It strips a trailing `\r` on both paths, where
 the live path used to keep it. The bound applies at the source, so every
 consumer (web, TUI, CLI) gets bounded lines. Log files are unchanged.
 
+Bounding each line still left the history unbounded in practice: `?tail=` is
+clamped to 5000 lines, and 5000 lines of 256 KiB is 1.25 GiB read into memory
+for every request any console or shared link makes. `backlogRing` now also
+caps the history at `maxBacklogBytes` (8 MiB). When the byte cap drops lines
+the count would have kept, one leading marker line says how many.
+
 **Detector.**
 ```bash
-go test ./internal/supervisor -race -run 'TestLineReader|TestFollowBacklogSurvivesAnOversizedLine|TestLogTailKeepsLinesAfterAnOversizedOne|TestTailFollowTruncatesAnEndlessLineAtTheSource'
+go test ./internal/supervisor -race -run 'TestLineReader|TestFollowBacklogSurvivesAnOversizedLine|TestLogTailKeepsLinesAfterAnOversizedOne|TestTailFollowTruncatesAnEndlessLineAtTheSource|TestBacklogStaysWithinItsByteBudget'
 ```

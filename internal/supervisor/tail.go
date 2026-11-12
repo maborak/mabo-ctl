@@ -43,6 +43,13 @@ const (
 
 	// tailReadBuffer is the read buffer behind every log line reader.
 	tailReadBuffer = 64 * 1024
+
+	// maxBacklogBytes bounds the history one tail request holds in memory and
+	// sends. A line count alone does not: the web console allows 5000 lines,
+	// and 5000 lines at maxLineBytes is over a gigabyte, re-read for every
+	// request any console or shared link makes. Older lines past the budget
+	// are replaced by one marker line saying how many were omitted.
+	maxBacklogBytes = 8 << 20
 )
 
 // logTail returns the last n lines of svc's log, or "" when the log is absent
@@ -59,29 +66,20 @@ func (s *Supervisor) logTail(svc string, n int) string {
 	}
 	defer func() { _ = f.Close() }()
 
-	ring := make([]string, 0, n)
-	keep := func(line string) {
-		if n <= 0 {
-			return
-		}
-		if len(ring) == n {
-			ring = ring[1:]
-		}
-		ring = append(ring, line)
-	}
+	ring := backlogRing{n: n}
 	lr := newLineReader(f, 0)
 	for {
 		line, err := lr.next()
 		if err != nil {
 			break
 		}
-		keep(line)
+		ring.add(line)
 	}
 	// A dying service's last words often lack a newline; quote them anyway.
 	if line, ok := lr.rest(); ok {
-		keep(line)
+		ring.add(line)
 	}
-	return strings.Join(ring, "\n")
+	return strings.Join(ring.result(), "\n")
 }
 
 // Tail streams svc's log to out.
@@ -222,23 +220,52 @@ func followBacklog(f *os.File, n int) ([]string, int64, error) {
 	if err != nil {
 		return nil, 0, err
 	}
-	var ring []string
+	ring := backlogRing{n: n}
 	lr := newLineReader(io.NewSectionReader(f, 0, info.Size()), 0)
 	for {
 		line, err := lr.next()
 		if err == io.EOF {
-			return ring, lr.complete, nil
+			return ring.result(), lr.complete, nil
 		}
 		if err != nil {
 			return nil, 0, err
 		}
-		if n > 0 {
-			if len(ring) == n {
-				ring = ring[1:]
-			}
-			ring = append(ring, line)
-		}
+		ring.add(line)
 	}
+}
+
+// backlogRing keeps the last n lines added, within maxBacklogBytes. The newest
+// line is always kept: it is at most maxLineBytes, well inside the budget.
+type backlogRing struct {
+	n     int
+	lines []string
+	bytes int // total length of lines
+	seen  int // lines added, kept or not
+}
+
+func (b *backlogRing) add(line string) {
+	if b.n <= 0 {
+		return
+	}
+	b.seen++
+	b.lines = append(b.lines, line)
+	b.bytes += len(line)
+	for len(b.lines) > b.n || (b.bytes > maxBacklogBytes && len(b.lines) > 1) {
+		b.bytes -= len(b.lines[0])
+		b.lines[0] = "" // release it now, not when append next reallocates
+		b.lines = b.lines[1:]
+	}
+}
+
+// result returns the kept lines, led by a marker when the byte budget, not the
+// line count, dropped any of the last n.
+func (b *backlogRing) result() []string {
+	if omitted := min(b.seen, b.n) - len(b.lines); omitted > 0 {
+		marker := fmt.Sprintf("[mabo-ctl: %d earlier lines omitted; history is capped at %d MiB per request; the log file has all of them]",
+			omitted, maxBacklogBytes>>20)
+		return append([]string{marker}, b.lines...)
+	}
+	return b.lines
 }
 
 // lineReader splits a log into lines the way bufio.ScanLines does — "\n"

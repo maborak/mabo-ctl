@@ -742,7 +742,9 @@ preview; severity is still determined from the complete line. Display filters
 search that preview, and the full output remains in the service's log file.
 Before that, every tailer (console, TUI and `logs -f`) caps a single line at
 256 KiB at the source, with an explicit truncation marker, so a line that never
-ends cannot grow mabo-ctl or the browser.
+ends cannot grow mabo-ctl or the browser. The history a tail replays is also
+capped at 8 MiB per request; when that, not the line count, cuts it short, one
+marker line says how many earlier lines were omitted.
 Older entries are automatically discarded from the display, including in
 background tabs; Clear affects the display only, never the file.
 
