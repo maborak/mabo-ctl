@@ -1793,6 +1793,20 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
 
   function txt(s) { return document.createTextNode(s === undefined || s === null ? "" : String(s)); }
 
+  // fmtCPU and fmtBytes match ui.FormatCPU and ui.FormatBytes, the CLI's
+  // status columns, so the two consoles print the same figures.
+  function fmtCPU(pct) {
+    pct = Number(pct) || 0;
+    return (pct < 10 ? pct.toFixed(1) : pct.toFixed(0)) + "%";
+  }
+  function fmtBytes(n) {
+    n = Number(n) || 0;
+    if (n >= 1073741824) { return (n / 1073741824).toFixed(1) + "G"; }
+    if (n >= 1048576) { return Math.floor(n / 1048576) + "M"; }
+    if (n >= 1024) { return Math.floor(n / 1024) + "K"; }
+    return n + "B";
+  }
+
   function fact(dl, label, valueNode, dim, wide) {
     var wrap = el("div", "fact" + (wide ? " wide" : ""));
     wrap.appendChild(el("dt", null, label));
@@ -3102,6 +3116,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
       this.portEl    = fact(dl, "port", txt(svc.port ? String(svc.port) : "–"), !svc.port);
       this.uptimeEl  = fact(dl, "uptime", txt("–"), true);
       this.readyEl   = fact(dl, "ready in", txt("–"), true);
+      this.usageEl   = fact(dl, "cpu · mem", txt("–"), true);
       this.healthEl  = fact(dl, "health", txt("–"), true);
       this.healthEl.parentNode.classList.add("health");
       this.runtimeEl = fact(dl, "runtime", txt(svc.runtime || "system"), !svc.runtime);
@@ -3221,6 +3236,12 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
 
       setText(this.readyEl, st.elapsed_ms ? fmtDuration(st.elapsed_ms) : "–", !st.elapsed_ms);
       this.readyEl.title = "how long the last readiness wait took";
+
+      // Observation only: the process group's summed %CPU (100 = one core) and
+      // resident memory, as ps reported them on this status read.
+      var live = st.pid > 0 && st.rss_bytes > 0;
+      setText(this.usageEl, live ? fmtCPU(st.cpu_percent) + " · " + fmtBytes(st.rss_bytes) : "–", !live);
+      this.usageEl.title = "the service's whole process group: %CPU as ps reports it (100% = one core) and resident memory";
 
       clear(this.logPathEl);
       this.logPathEl.classList.toggle("dim", !st.log_path);

@@ -1095,6 +1095,8 @@ components:
         exit_code: -1
         exit_signal: ""
         exited_at: ""
+        cpu_percent: 3.2
+        rss_bytes: 157286400
       properties:
         service:
           type: string
@@ -1117,7 +1119,7 @@ components:
           type: string
         elapsed_ms:
           type: integer
-          description: Milliseconds since spawn
+          description: How long the last readiness probe took (probe latency, not uptime)
         started_at:
           type: string
           format: date-time
@@ -1135,6 +1137,14 @@ components:
           type: string
           format: date-time
           description: RFC 3339, or "" when not seen die
+        cpu_percent:
+          type: number
+          description: >-
+            The live process group's summed %CPU as ps reports it (100 = one
+            core); 0 when nothing runs.
+        rss_bytes:
+          type: integer
+          description: The live process group's resident memory in bytes; 0 when nothing runs.
 
     LogLine:
       type: object

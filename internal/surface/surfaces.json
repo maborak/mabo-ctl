@@ -235,6 +235,7 @@
       "http:POST /api/{svc}/stop (mutate)"
     ],
     "json": [
+      "json[].cpu_percent",
       "json[].detail",
       "json[].elapsed_ms",
       "json[].exit_code",
@@ -246,6 +247,7 @@
       "json[].phase",
       "json[].pid",
       "json[].port",
+      "json[].rss_bytes",
       "json[].service",
       "json[].started_at",
       "json[].uptime_ms"

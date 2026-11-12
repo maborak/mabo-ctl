@@ -1118,7 +1118,9 @@ version bump.
     "uptime_ms": 2000,
     "exit_code": -1,
     "exit_signal": "",
-    "exited_at": ""
+    "exited_at": "",
+    "cpu_percent": 3.2,
+    "rss_bytes": 157286400
   }
 ]
 ```
@@ -1135,12 +1137,14 @@ version bump.
 | `http_status` | int | Last HTTP probe status code; 0 when no probe or no response |
 | `detail` | string | Human-readable detail (e.g. "HTTP 200", "dial tcp …: refused") |
 | `log_path` | string | Path to the service's log file under `.mabo-ctl/` |
-| `elapsed_ms` | int | Milliseconds since spawn; 0 when not started |
+| `elapsed_ms` | int | How long the last readiness probe took, in milliseconds (probe latency, not uptime); 0 when not probed |
 | `started_at` | string | RFC 3339 timestamp, or `""` when unknown |
 | `uptime_ms` | int | Milliseconds the live process has been up; 0 when nothing running |
 | `exit_code` | int | Last observed exit status; `-1` when signalled or never seen |
 | `exit_signal` | string | Signal name (e.g. `"SIGKILL"`), `""` when none |
 | `exited_at` | string | RFC 3339 timestamp of last death, or `""` when not seen die |
+| `cpu_percent` | number | The live process group's summed %CPU as `ps` reports it (100 = one core; a lifetime average on Linux, a recent one on macOS); 0 when nothing runs |
+| `rss_bytes` | int | The live process group's resident memory in bytes; 0 when nothing runs or `ps` could not be read |
 
 ### Reading the contract
 

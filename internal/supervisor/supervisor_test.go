@@ -2545,3 +2545,44 @@ func TestRecordsClaimReadsTheOtherCheckoutsPidRecords(t *testing.T) {
 		t.Error("a directory with no .mabo-ctl claimed a pid")
 	}
 }
+
+func TestParseGroupUsageSumsPerProcessGroup(t *testing.T) {
+	t.Parallel()
+	got := parseGroupUsage("  100  1.5  2048\n  100 10.0  1024\n  200  0.0   512\njunk line here x\n   0  9.9  9999\n")
+	if u := got[100]; u.CPU != 11.5 || u.RSS != 3072*1024 {
+		t.Errorf("group 100 = %+v, want 11.5%% and 3 MiB", u)
+	}
+	if u := got[200]; u.RSS != 512*1024 {
+		t.Errorf("group 200 = %+v, want 512 KiB", u)
+	}
+	if _, ok := got[0]; ok {
+		t.Error("pgid 0 was counted")
+	}
+}
+
+// TestStatusCarriesTheGroupUsageOfLiveServices: a running service reports its
+// process group's CPU and memory, read once per status.
+func TestStatusCarriesTheGroupUsageOfLiveServices(t *testing.T) {
+	inst := service.Instance{Name: "svc", Cmd: helperCmd(), Env: helperEnvFor("sleep")}
+	sup, _ := fixture(t, inst)
+	defer func() { _ = sup.Stop(context.Background(), nil, nil); sup.Wait() }()
+	if err := sup.Start(context.Background(), nil, nil); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	var calls atomic.Int32
+	sup.usageLookup = func() map[int]Usage {
+		calls.Add(1)
+		out := map[int]Usage{}
+		for _, st := range sup.status(context.Background(), false) {
+			out[st.PID] = Usage{CPU: 3, RSS: 42 << 20}
+		}
+		return out
+	}
+	st := sup.Status(context.Background())[0]
+	if st.PID == 0 || st.Usage.RSS != 42<<20 || st.Usage.CPU != 3 {
+		t.Errorf("status = pid %d usage %+v, want the group's usage", st.PID, st.Usage)
+	}
+	if calls.Load() != 1 {
+		t.Errorf("usage was read %d times for one status, want 1", calls.Load())
+	}
+}

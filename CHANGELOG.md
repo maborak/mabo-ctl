@@ -15,6 +15,11 @@ contract and service phase names are stable.
   previous fixed value; 0 to 100000, no unlimited). History costs about
   columns × lines × 12 bytes per shell, so a lower value bounds the page's
   memory. A config reload says to refresh the page to apply it.
+- CPU and memory per service: `status` gains CPU and MEM columns, the web
+  console's detail pane and the TUI detail block show them, and
+  `status --json` appends `cpu_percent` and `rss_bytes` to every record (an
+  additive contract change). Each figure is the service's whole process group,
+  summed from one `ps` per status read; observation only, no limits.
 - `mabo-ctl init --from Procfile|process-compose.yaml` imports another
   tool's processes into a live `mabo-ctl.yaml`: commands run through `sh -c`,
   foreman's `$PORT` assignment, and process-compose dependencies, health
@@ -55,6 +60,9 @@ contract and service phase names are stable.
   selection.
 
 ### Fixed
+
+- `docs/API.md` and the OpenAPI spec described `elapsed_ms` as time since
+  spawn; it is how long the last readiness probe took (`uptime_ms` is uptime).
 
 - `reset --force` killed the other checkout's service. Two worktrees or clones
   of one repository declare the same ports, so the "foreign" listener `reset

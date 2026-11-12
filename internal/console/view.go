@@ -251,6 +251,9 @@ func (m Model) detailView() []string {
 		"ready in " + or(ui.ShortDuration(st.Elapsed), "-"),
 		"runtime " + or(cs.Runtime, "system"),
 	}
+	if st.PID > 0 && st.Usage.RSS > 0 {
+		facts = append(facts, "cpu "+ui.FormatCPU(st.Usage.CPU)+" · mem "+ui.FormatBytes(st.Usage.RSS))
+	}
 	health := or(st.Health, "no probe declared")
 	if st.HTTP != 0 {
 		health += fmt.Sprintf(" · HTTP %d", st.HTTP)

@@ -332,8 +332,9 @@ func TestStatusBlockRendersPortPIDAndUptime(t *testing.T) {
 	if strings.Contains(got[2], "0") {
 		t.Errorf("stopped row %q printed a zero instead of %q", got[2], missing)
 	}
-	if n := strings.Count(got[2], missing); n != 3 {
-		t.Errorf("stopped row %q has %d %q cells, want 3", got[2], n, missing)
+	// Port, pid, CPU, memory and probe time.
+	if n := strings.Count(got[2], missing); n != 5 {
+		t.Errorf("stopped row %q has %d %q cells, want 5", got[2], n, missing)
 	}
 }
 
@@ -622,7 +623,9 @@ const goldenStatusJSON = `[
     "uptime_ms": 3600000,
     "exit_code": 0,
     "exit_signal": "",
-    "exited_at": ""
+    "exited_at": "",
+    "cpu_percent": 12.5,
+    "rss_bytes": 157286400
   },
   {
     "service": "worker",
@@ -638,7 +641,9 @@ const goldenStatusJSON = `[
     "uptime_ms": 0,
     "exit_code": 0,
     "exit_signal": "",
-    "exited_at": ""
+    "exited_at": "",
+    "cpu_percent": 0,
+    "rss_bytes": 0
   },
   {
     "service": "backend",
@@ -654,7 +659,9 @@ const goldenStatusJSON = `[
     "uptime_ms": 0,
     "exit_code": -1,
     "exit_signal": "SIGKILL",
-    "exited_at": "2024-03-01T10:12:00Z"
+    "exited_at": "2024-03-01T10:12:00Z",
+    "cpu_percent": 0,
+    "rss_bytes": 0
   }
 ]`
 
@@ -679,6 +686,7 @@ func goldenStatuses() []supervisor.Status {
 			Elapsed:   1200 * time.Millisecond,
 			StartedAt: goldenSpawn,
 			Uptime:    time.Hour,
+			Usage:     supervisor.Usage{CPU: 12.5, RSS: 150 << 20},
 		},
 		{
 			Name:    "worker",
@@ -723,6 +731,7 @@ func TestStatusJSONFieldNamesAndOrder(t *testing.T) {
 		"service", "phase", "pid", "port", "health", "http_status", "detail",
 		"log_path", "elapsed_ms",
 		"started_at", "uptime_ms", "exit_code", "exit_signal", "exited_at",
+		"cpu_percent", "rss_bytes",
 	}
 
 	raw, err := StatusJSON(goldenStatuses())

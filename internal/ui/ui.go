@@ -248,6 +248,8 @@ const (
 	hdrStatus  = "STATUS"
 	hdrPort    = "PORT"
 	hdrPID     = "PID"
+	hdrCPU     = "CPU"
+	hdrMem     = "MEM"
 	hdrProbe   = "PROBE"
 	hdrDetail  = "DETAIL"
 )
@@ -277,6 +279,8 @@ type row struct {
 	word    string
 	port    string
 	pid     string
+	cpu     string
+	mem     string
 	probe   string
 	detail  []string // detail split on newlines; empty when there is none
 	logPath string
@@ -310,37 +314,48 @@ func (r *Renderer) StatusBlock(sts []supervisor.Status) string {
 	wName := width(hdrService)
 	wStatus := max(width(hdrStatus), phaseCellWidth)
 	wPort := width(hdrPort)
-	wPID := width(hdrPID)
-	wProbe := width(hdrProbe)
+	w := colWidths{
+		pid: width(hdrPID), cpu: width(hdrCPU), mem: width(hdrMem), probe: width(hdrProbe),
+	}
 	for _, rw := range rows {
 		wName = max(wName, width(rw.name))
 		wStatus = max(wStatus, width(rw.glyph)+1+width(rw.word))
 		wPort = max(wPort, width(rw.port))
-		wPID = max(wPID, width(rw.pid))
-		wProbe = max(wProbe, width(rw.probe))
+		w.pid = max(w.pid, width(rw.pid))
+		w.cpu = max(w.cpu, width(rw.cpu))
+		w.mem = max(w.mem, width(rw.mem))
+		w.probe = max(w.probe, width(rw.probe))
 	}
+	w.name, w.status, w.port = wName, wStatus, wPort
 
 	// Every column before the detail is fixed width, so the detail always starts
 	// at the same offset and truncating it is the only width arithmetic needed.
-	prefix := wName + wStatus + wPort + wPID + wProbe + 5*len(colGap)
+	prefix := w.name + w.status + w.port + w.pid + w.cpu + w.mem + w.probe + 7*len(colGap)
 
 	var b strings.Builder
-	b.WriteString(r.header(wName, wStatus, wPort, wPID, wProbe))
+	b.WriteString(r.header(w))
 	for _, rw := range rows {
 		b.WriteString("\n")
-		b.WriteString(r.line(rw, wName, wStatus, wPort, wPID, wProbe, prefix))
+		b.WriteString(r.line(rw, w, prefix))
 	}
 	return b.String()
 }
 
+// colWidths is the width of every fixed column of the status block.
+type colWidths struct {
+	name, status, port, pid, cpu, mem, probe int
+}
+
 // header renders the column headings, dimmed when colour is on.
-func (r *Renderer) header(wName, wStatus, wPort, wPID, wProbe int) string {
+func (r *Renderer) header(w colWidths) string {
 	cells := []string{
-		pad(hdrService, wName),
-		pad(hdrStatus, wStatus),
-		pad(hdrPort, wPort),
-		pad(hdrPID, wPID),
-		pad(hdrProbe, wProbe),
+		pad(hdrService, w.name),
+		pad(hdrStatus, w.status),
+		pad(hdrPort, w.port),
+		pad(hdrPID, w.pid),
+		pad(hdrCPU, w.cpu),
+		pad(hdrMem, w.mem),
+		pad(hdrProbe, w.probe),
 		hdrDetail,
 	}
 	return r.paint(style{"2"}, strings.Join(cells, colGap))
@@ -349,14 +364,16 @@ func (r *Renderer) header(wName, wStatus, wPort, wPID, wProbe int) string {
 // line renders one row plus any continuation lines its detail needs. prefix is
 // the display width of everything before the detail column, used to decide how
 // much of the detail fits in Width.
-func (r *Renderer) line(rw row, wName, wStatus, wPort, wPID, wProbe, prefix int) string {
+func (r *Renderer) line(rw row, w colWidths, prefix int) string {
 	status := r.paint(phaseStyle(rw.phase), rw.glyph+" "+rw.word)
 	cells := []string{
-		pad(r.paint(r.serviceStyle(rw.name), rw.name), wName),
-		pad(status, wStatus),
-		pad(rw.port, wPort),
-		pad(rw.pid, wPID),
-		pad(rw.probe, wProbe),
+		pad(r.paint(r.serviceStyle(rw.name), rw.name), w.name),
+		pad(status, w.status),
+		pad(rw.port, w.port),
+		pad(rw.pid, w.pid),
+		pad(rw.cpu, w.cpu),
+		pad(rw.mem, w.mem),
+		pad(rw.probe, w.probe),
 	}
 	line := strings.Join(cells, colGap)
 
@@ -411,11 +428,16 @@ func newRow(st supervisor.Status) row {
 		word:    word,
 		port:    missing,
 		pid:     missing,
+		cpu:     missing,
+		mem:     missing,
 		probe:   formatDuration(st.Elapsed),
 		logPath: st.LogPath,
 	}
 	if st.Port > 0 {
 		rw.port = strconv.Itoa(st.Port)
+	}
+	if st.PID > 0 && st.Usage.RSS > 0 {
+		rw.cpu, rw.mem = FormatCPU(st.Usage.CPU), FormatBytes(st.Usage.RSS)
 	}
 	if st.PID > 0 {
 		rw.pid = strconv.Itoa(st.PID)
@@ -635,6 +657,11 @@ type statusRecord struct {
 	// ExitedAt is RFC 3339, or "" when mabo-ctl has not seen this service die.
 	// It is the field to test before trusting ExitCode or ExitSignal.
 	ExitedAt string `json:"exited_at"`
+	// CPUPercent is the live process group's summed %CPU as ps reports it (100
+	// is one core), and RSSBytes its resident memory; both 0 when nothing runs
+	// or ps could not be read. Appended last, as the contract requires.
+	CPUPercent float64 `json:"cpu_percent"`
+	RSSBytes   int64   `json:"rss_bytes"`
 }
 
 // timestamp renders t for the wire, and the zero time as "".
@@ -682,6 +709,8 @@ func StatusJSON(sts []supervisor.Status) ([]byte, error) {
 			ExitCode:   st.ExitCode,
 			ExitSignal: st.ExitSignal,
 			ExitedAt:   timestamp(st.ExitedAt),
+			CPUPercent: st.Usage.CPU,
+			RSSBytes:   st.Usage.RSS,
 		})
 	}
 
@@ -865,6 +894,29 @@ func formatDuration(d time.Duration) string {
 		return fmt.Sprintf("%dm%02ds", int(d/time.Minute), int(d%time.Minute/time.Second))
 	default:
 		return fmt.Sprintf("%dh%02dm", int(d/time.Hour), int(d%time.Hour/time.Minute))
+	}
+}
+
+// FormatCPU renders a %CPU figure for a fixed column: "0.4%", "12%", "230%".
+func FormatCPU(pct float64) string {
+	if pct < 10 {
+		return strconv.FormatFloat(pct, 'f', 1, 64) + "%"
+	}
+	return strconv.FormatFloat(pct, 'f', 0, 64) + "%"
+}
+
+// FormatBytes renders a memory size compactly: "812K", "143M", "1.2G".
+func FormatBytes(n int64) string {
+	const k, m, g = 1 << 10, 1 << 20, 1 << 30
+	switch {
+	case n >= g:
+		return strconv.FormatFloat(float64(n)/g, 'f', 1, 64) + "G"
+	case n >= m:
+		return strconv.FormatInt(n/m, 10) + "M"
+	case n >= k:
+		return strconv.FormatInt(n/k, 10) + "K"
+	default:
+		return strconv.FormatInt(n, 10) + "B"
 	}
 }
 

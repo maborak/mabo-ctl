@@ -12,14 +12,14 @@ enough state on disk that a second terminal knows what the first one started.
 
 ```
 $ mabo-ctl status
-SERVICE   STATUS      PORT  PID    PROBE  DETAIL
-website   ● ready     7100  41823  1.4s   HTTP 200
-frontend  ● ready     7101  41824  2.1s   HTTP 200
-backend   ⚠ degraded  7102  41825  2.0s   dial tcp 127.0.0.1:7102: connection refused
-browser   ◐ slow      7103  41826  30.0s  waiting for http://localhost:7103/health
-worker    ⊘ exited    -     -      -      exit code 1, 4m ago
-                                          Traceback (most recent call last):
-                                            ImportError: no module named app
+SERVICE   STATUS      PORT  PID    CPU   MEM   PROBE  DETAIL
+website   ● ready     7100  41823  0.4%  143M  1.4s   HTTP 200
+frontend  ● ready     7101  41824  12%   381M  2.1s   HTTP 200
+backend   ⚠ degraded  7102  41825  0.0%  96M   2.0s   dial tcp 127.0.0.1:7102: connection refused
+browser   ◐ slow      7103  41826  98%   1.2G  30.0s  waiting for http://localhost:7103/health
+worker    ⊘ exited    -     -      -     -     -      exit code 1, 4m ago
+    Traceback (most recent call last):
+      ImportError: no module named app
 ```
 
 `mabo-ctl` starts, stops, restarts, health-checks, tails and inspects N services,
@@ -398,6 +398,13 @@ time. When the death happens later, with no mabo-ctl anywhere, what is left is a
 pid file naming a process that no longer exists; that is still `exited`, with
 the log tail and without an exit status, because "it crashed and I cannot tell
 you how" is a different answer from "you never started it".
+
+CPU and MEM are the service's whole process group — `npm run dev` and the node
+child doing the work — summed from one `ps` per status read. They are
+observation only; mabo-ctl sets no limits. CPU is `ps`'s %CPU (100% is one
+core): a lifetime average on Linux, a recent one on macOS. `status --json`
+carries them as `cpu_percent` and `rss_bytes`, appended to each record; the web
+console and the TUI detail block (`i`) show them too.
 
 > **`--json` contract change.** `degraded` and `exited` are new phase values,
 > `failed` is newly reachable in `status` output rather than only in the live
