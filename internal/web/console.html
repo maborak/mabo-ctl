@@ -2088,6 +2088,9 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
         var close = c === "{" ? "}" : "]", j = i + 1;
         while (j < text.length && /\s/.test(text.charAt(j))) { j++; }
         if (text.charAt(j) === close) { out.push(c + close); i = j; done = !stack.length; continue; }
+        // Indentation grows with depth: a few KB of nested brackets would
+        // otherwise expand quadratically. ui.MaxPrettyDepth is the same bound.
+        if (stack.length >= 64) { return null; }
         stack.push(close);
         out.push(c + pad(stack.length));
         continue;

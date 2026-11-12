@@ -23,6 +23,10 @@ var logLevelMap = map[string]string{
 	"success": "info", "ok": "info", "succeeded": "info",
 }
 
+// MaxPrettyDepth is the deepest nesting PrettyJSON re-indents. Real log
+// records nest a handful of levels; the bound exists for the hostile line.
+const MaxPrettyDepth = 64
+
 // LogLevels is the closed set LogLevel returns, most severe first.
 var LogLevels = []string{"error", "warn", "info", "debug"}
 
@@ -67,6 +71,10 @@ func IsJSONLine(text string) bool {
 // duplicate keys and reorder keys, showing values the service never wrote. It
 // reports false, and the caller shows the raw text, when text is not exactly
 // one balanced object or array — a line cut by a display limit, for one.
+//
+// It also reports false past MaxPrettyDepth levels of nesting: indentation
+// grows with depth, so a few kilobytes of nested brackets would otherwise
+// expand quadratically into hundreds of megabytes.
 //
 // It is the Go twin of prettyJSON in internal/web/console.html.
 func PrettyJSON(text string) (string, bool) {
@@ -122,6 +130,9 @@ func PrettyJSON(text string) (string, bool) {
 				done = len(stack) == 0
 				continue
 			}
+			if len(stack) >= MaxPrettyDepth {
+				return "", false
+			}
 			stack = append(stack, closer)
 			b.WriteByte(c)
 			pad(len(stack))
@@ -149,9 +160,10 @@ func PrettyJSON(text string) (string, bool) {
 }
 
 // RedactStatuses replaces each status's health URL with its redacted form, in
-// place, and the same URL wherever Detail quotes it: a probe failure quotes the
-// URL it dialled verbatim, so redacting Health alone would hand the credential
-// out through the field next to it. Every reader that is not the operator's
+// place, and every credential in it wherever Detail quotes it: a probe failure
+// quotes the URL it dialled — verbatim, or re-rendered by net/http with the
+// password starred but the query intact — so redacting Health alone would hand
+// the credential out through the field next to it. Every reader that is not the operator's
 // own one-shot CLI — the web console, the full-screen console, the MCP server —
 // goes through this one function.
 func RedactStatuses(sts []supervisor.Status) {
@@ -161,6 +173,9 @@ func RedactStatuses(sts []supervisor.Status) {
 		sts[i].Health = safe
 		if raw != "" && raw != safe {
 			sts[i].Detail = strings.ReplaceAll(sts[i].Detail, raw, safe)
+			for _, secret := range redact.URLSecrets(raw) {
+				sts[i].Detail = strings.ReplaceAll(sts[i].Detail, secret, redact.Mark)
+			}
 		}
 	}
 }

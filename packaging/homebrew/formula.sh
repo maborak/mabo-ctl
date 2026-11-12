@@ -13,6 +13,14 @@ set -eu
 version=${1:?usage: formula.sh VERSION SHA256SUMS}
 sums=${2:?usage: formula.sh VERSION SHA256SUMS}
 version=${version#v}
+# The version is interpolated into Ruby: refuse anything but a plain version, so
+# a tag such as v1#{system("id")} cannot become code every `brew install` runs.
+case $version in
+'' | *[!0-9A-Za-z.+-]* | [!0-9]*)
+	echo "formula.sh: refusing version \"$version\"; want digits, letters, . + -" >&2
+	exit 1
+	;;
+esac
 base="https://github.com/maborak/mabo-ctl/releases/download/v${version}"
 
 sum() {

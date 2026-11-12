@@ -97,15 +97,20 @@ func (r *RunEnv) Unknown() map[string]string {
 	return out
 }
 
+// MaxPortOffset is the largest port offset accepted, from the flag or the file.
+const MaxPortOffset = 60000
+
 // PortOffset returns the checkout's persisted port offset, or 0 when none is
-// recorded or the value is not a whole number.
+// recorded or the value is not a whole number from 0 to MaxPortOffset — a
+// value the --port-offset flag itself would refuse is not honoured from the
+// file either.
 func (r *RunEnv) PortOffset() int {
 	if r == nil {
 		return 0
 	}
 	for _, e := range r.unknown {
 		if e.key == PortOffsetKey {
-			if n, err := strconv.Atoi(e.value); err == nil {
+			if n, err := strconv.Atoi(e.value); err == nil && n >= 0 && n <= MaxPortOffset {
 				return n
 			}
 		}

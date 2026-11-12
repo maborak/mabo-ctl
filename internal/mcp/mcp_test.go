@@ -5,8 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
 // session runs lines through a server and returns the responses by id.
@@ -101,4 +104,81 @@ func TestServeRefusesAnOversizedMessage(t *testing.T) {
 	if err == nil {
 		t.Error("a message past the limit did not end the session")
 	}
+}
+
+// TestServeReturnsOnCancelWhenTheClientStopsReading: a blocked write must not
+// hold the server open past a signal.
+func TestServeReturnsOnCancelWhenTheClientStopsReading(t *testing.T) {
+	t.Parallel()
+	pr, pw := io.Pipe() // nobody reads pr: every write blocks
+	defer func() { _ = pr.Close() }()
+	in, inw := io.Pipe()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- testServer().Serve(ctx, in, pw) }()
+	_, _ = io.WriteString(inw, `{"jsonrpc":"2.0","id":1,"method":"ping"}`+"\n")
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+	select {
+	case err := <-done:
+		_ = err // Serve returns nil on cancel and on end of input
+	case <-time.After(2 * time.Second):
+		t.Fatal("Serve did not return after cancel while a write was blocked")
+	}
+	_ = inw.Close()
+}
+
+func TestServeRecoversAToolPanic(t *testing.T) {
+	t.Parallel()
+	s := &Server{Tools: []Tool{{Name: "boom", InputSchema: map[string]any{},
+		Call: func(context.Context, json.RawMessage) (string, error) { panic("kaboom") }}}}
+	got := session(t, s,
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"boom"}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"ping"}`)
+	if e, ok := got["1"]["error"].(map[string]any); !ok || e["code"] != float64(-32603) {
+		t.Errorf("panicking call = %v, want an internal error", got["1"])
+	}
+	if _, ok := got["2"]["result"]; !ok {
+		t.Error("the server did not survive a tool panic")
+	}
+}
+
+func TestCancelledNotificationCancelsTheCall(t *testing.T) {
+	t.Parallel()
+	started := make(chan struct{})
+	s := &Server{Tools: []Tool{{Name: "wait", InputSchema: map[string]any{},
+		Call: func(ctx context.Context, _ json.RawMessage) (string, error) {
+			close(started)
+			<-ctx.Done()
+			return "", ctx.Err()
+		}}}}
+	in, inw := io.Pipe()
+	var out bytes.Buffer
+	done := make(chan error, 1)
+	go func() { done <- s.Serve(context.Background(), in, &lockedWriter{w: &out}) }()
+	_, _ = io.WriteString(inw, `{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"wait"}}`+"\n")
+	<-started
+	_, _ = io.WriteString(inw, `{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":7}}`+"\n")
+	_ = inw.Close()
+	select {
+	case err := <-done:
+		_ = err // Serve returns nil on cancel and on end of input
+	case <-time.After(2 * time.Second):
+		t.Fatal("the cancelled call kept running")
+	}
+	if !strings.Contains(out.String(), "context canceled") {
+		t.Errorf("the call did not report its cancellation: %s", out.String())
+	}
+}
+
+// lockedWriter serialises writes so the test can read the buffer afterwards.
+type lockedWriter struct {
+	mu sync.Mutex
+	w  io.Writer
+}
+
+func (l *lockedWriter) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.w.Write(p)
 }

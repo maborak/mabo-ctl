@@ -74,6 +74,9 @@ type Controller interface {
 	Status(ctx context.Context) []supervisor.Status
 	// Tail sends svc's log lines to out until ctx is done. With follow set it
 	// does not return on its own; cancelling ctx is the only way to stop it.
+	// It must close out when it returns, on every path including a panic
+	// (supervisor.Supervisor.Tail closes it in a defer): the console waits for
+	// that close to know a tail ended.
 	Tail(ctx context.Context, svc string, n int, follow bool, out chan<- string) error
 }
 

@@ -112,3 +112,29 @@ func TestInitFromRefusesAnUnknownFile(t *testing.T) {
 		t.Errorf("exit %d, want %d for a file that is neither format", code, exitUsage)
 	}
 }
+
+func TestInitFromBlocksTemplatesAndOddSchemesInTheProbe(t *testing.T) {
+	dir, code, h := importInto(t, "process-compose.yaml", `
+processes:
+  tmplpath:
+    command: "web"
+    readiness_probe:
+      http_get: {port: 8080, path: '/p{{printf "%s" "x"}}'}
+  ftp:
+    command: "web"
+    readiness_probe:
+      http_get: {port: 8081, scheme: ftp}
+  ok:
+    command: "web"
+`)
+	if code != exitOK {
+		t.Fatalf("exit %d: %s", code, h.stderr)
+	}
+	cfg, err := config.Load(filepath.Join(dir, config.FileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Services) != 1 || cfg.Services[0].Name != "ok" {
+		t.Errorf("live services = %d, want only ok", len(cfg.Services))
+	}
+}

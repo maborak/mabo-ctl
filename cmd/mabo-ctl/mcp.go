@@ -65,6 +65,12 @@ func (a *app) runMCP(cmd *cobra.Command, _ []string) error {
 	}
 	ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	// A client that closes its end of stdout must not kill this process with
+	// SIGPIPE mid-start: asking for the signal turns the write into an EPIPE
+	// error, which Serve treats as the client being gone.
+	sigpipe := make(chan os.Signal, 1)
+	signal.Notify(sigpipe, syscall.SIGPIPE)
+	defer signal.Stop(sigpipe)
 
 	srv := &mcp.Server{
 		Name:    "mabo-ctl",
@@ -220,8 +226,10 @@ func (a *app) mcpTools(sup lifecycle, insts []service.Instance, mutate bool) []m
 						log.WriteString(r.Event(e) + "\n")
 					}
 				}()
-				err := run(ctx, args.Services, ev)
-				close(ev)
+				err := func() error {
+					defer close(ev) // even if run panics, so the collector ends
+					return run(ctx, args.Services, ev)
+				}()
 				<-done
 				final, serr := statusJSON(context.WithoutCancel(ctx), args.Services)
 				if serr != nil {

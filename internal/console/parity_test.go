@@ -1,6 +1,7 @@
 package console
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -24,7 +25,7 @@ func TestPrettyJSONExpandsRecordsIntoRows(t *testing.T) {
 	if got != want {
 		t.Errorf("pretty rows =\n%s\nwant\n%s", got, want)
 	}
-	if !m.follow || m.offset != m.bottomOffset() {
+	if !m.follow || m.viewOffset(len(m.rows())) != m.bottomOffset() {
 		t.Error("toggling pretty JSON unpinned a following pane")
 	}
 	if !strings.Contains(m.logHeaderView(), "pretty") {
@@ -221,5 +222,62 @@ func TestOverlaysOpenAndClose(t *testing.T) {
 	m, _ = send(t, m, key("esc"))
 	if m.showConfig {
 		t.Error("esc did not close the configuration view")
+	}
+}
+
+// TestPausedPaneSurvivesEviction: a paused pane is a snapshot. Output that
+// keeps arriving at the buffer cap evicts records from the buffer, never from
+// what the paused pane shows.
+func TestPausedPaneSurvivesEviction(t *testing.T) {
+	t.Parallel()
+	m := booted(t, &fakeCtrl{})
+	for range maxLogLines {
+		m.appendLine("before")
+	}
+	m, _ = send(t, m, key("p"))
+	for range maxLogLines + 500 {
+		m.appendLine("after")
+	}
+	if got := len(m.rows()); got != maxLogLines {
+		t.Errorf("paused pane shows %d rows after the buffer turned over, want %d", got, maxLogLines)
+	}
+	if len(m.recs) != maxLogLines {
+		t.Errorf("buffer holds %d, want the cap %d", len(m.recs), maxLogLines)
+	}
+}
+
+// BenchmarkAppendWhileFollowing guards ingest cost: a following pane must not
+// rebuild its rows for every arriving line.
+func BenchmarkAppendWhileFollowing(b *testing.B) {
+	m := New(&fakeCtrl{}, Options{})
+	for range maxLogLines {
+		m.appendRecord("svc", "warm")
+	}
+	b.ResetTimer()
+	for range b.N {
+		m.appendRecord("svc", `{"level":"info","msg":"line"}`)
+	}
+}
+
+// TestAFailedTailIsNotRetriedEveryTick: a tail that ended in an error stays
+// ended until the selection changes, instead of being rebuilt — and the pane
+// wiped — on every status refresh.
+func TestAFailedTailIsNotRetriedEveryTick(t *testing.T) {
+	t.Parallel()
+	f := &fakeCtrl{tailErr: errors.New("permission denied")}
+	m := booted(t, f)
+	m, _ = send(t, m, runCmd(t, m.tail.next()))
+	if m.tail != nil || m.tailFailed != "website" {
+		t.Fatalf("after the failure: tail %v, failed %q", m.tail != nil, m.tailFailed)
+	}
+	for range 3 {
+		m, _ = send(t, m, statusMsg{statuses: threeServices()})
+	}
+	if m.tail != nil {
+		t.Error("a status refresh restarted the failed tail")
+	}
+	m, _ = send(t, m, key("j"))
+	if m.tail == nil {
+		t.Error("selecting another service did not start its tail")
 	}
 }

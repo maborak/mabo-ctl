@@ -253,10 +253,16 @@ func importBlocker(s imported) string {
 	for k, v := range s.env {
 		texts = append(texts, k, v)
 	}
+	// The health URL is built with one template action of our own; anything
+	// else in it came from the file.
+	texts = append(texts, strings.Replace(s.health, "{{.Port}}", "", 1))
 	for _, t := range texts {
-		if strings.Contains(t, "{{") {
-			return "its text contains {{, which mabo-ctl.yaml expands as a template"
+		if strings.Contains(t, "{{") || strings.Contains(t, "}}") {
+			return "its text contains {{ or }}, which mabo-ctl.yaml expands as a template"
 		}
+	}
+	if s.health != "" && !strings.HasPrefix(s.health, "http://") && !strings.HasPrefix(s.health, "https://") {
+		return "its readiness probe scheme is not http or https"
 	}
 	for k := range s.env {
 		if !envKey.MatchString(k) {

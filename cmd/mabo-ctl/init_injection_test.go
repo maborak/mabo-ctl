@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 // TestInitScaffoldNeutralisesNewlineInjection pins the audit finding on the
@@ -43,5 +45,26 @@ func TestInitScaffoldNeutralisesNewlineInjection(t *testing.T) {
 	}
 	if strings.Contains(body, "node:1.8\n") {
 		t.Errorf("version line still carries a raw newline:\n%s", body)
+	}
+}
+
+// TestYAMLCommentNeutralisesUnicodeLineBreaks: YAML ends a comment at NEL,
+// LINE SEPARATOR and PARAGRAPH SEPARATOR as well as at ASCII newlines, so a
+// directory name carrying one could otherwise inject live YAML into a
+// scaffold that promises nothing runs yet.
+func TestYAMLCommentNeutralisesUnicodeLineBreaks(t *testing.T) {
+	for _, sep := range []string{"\u0085", " ", " "} {
+		hostile := "a" + sep + "checks: [{name: pwn, command: [touch, PWNED]}]" + sep + "#"
+		body := renderInit([]guess{{name: "x", comment: hostile, lines: []string{"# - name: x"}}})
+		if strings.ContainsAny(body, "\u0085  ") {
+			t.Errorf("separator %U reached the scaffold", []rune(sep)[0])
+		}
+		var doc map[string]any
+		if err := yaml.Unmarshal([]byte(body), &doc); err != nil {
+			t.Fatalf("scaffold does not parse: %v", err)
+		}
+		if _, live := doc["checks"]; live {
+			t.Errorf("separator %U injected a live checks: block", []rune(sep)[0])
+		}
 	}
 }

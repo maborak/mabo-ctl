@@ -19,7 +19,7 @@ import (
 const (
 	autoOffsetStep = 100
 	autoOffsetMax  = 1000
-	maxPortOffset  = 60000
+	maxPortOffset  = state.MaxPortOffset
 )
 
 // applyPortOffset handles --port-offset: it validates the value, picks one for

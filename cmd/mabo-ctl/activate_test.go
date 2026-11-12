@@ -51,3 +51,26 @@ func TestHookStatusIsReadOnlyAndSpeaksOnlyOnChange(t *testing.T) {
 		t.Errorf("outside a repo: exit %d, output %q; want an empty root line", code, outside.stdout.String())
 	}
 }
+
+// TestHookStatusPrintsNothingForAnUnprintableRoot: the root line is captured
+// by the hook, so a path with a line break or escape must not reach it.
+func TestHookStatusPrintsNothingForAnUnprintableRoot(t *testing.T) {
+	parent := t.TempDir()
+	root := filepath.Join(parent, "evil\n\x1b]0;OWNED\x07")
+	if err := os.Mkdir(root, 0o755); err != nil {
+		t.Skipf("filesystem refuses the name: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "mabo-ctl.yaml"), []byte("services: []\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	h := newHarnessAt(t, root, "hook-status")
+	if code := h.run(); code != exitOK {
+		t.Fatalf("exit %d", code)
+	}
+	if out := h.stdout.String(); out != "\n" {
+		t.Errorf("hook-status printed %q for an unprintable root", out)
+	}
+}

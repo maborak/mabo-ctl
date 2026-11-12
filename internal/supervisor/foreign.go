@@ -23,6 +23,11 @@ import (
 // records pointing at nothing. The holder's working directory leads to the
 // nearest .mabo-ctl above it, and only a pid record there counts as a claim:
 // a directory that merely sits inside some repository proves nothing.
+//
+// Known limit: a service whose dir: lies outside its own checkout, or that
+// changes directory after starting, has no .mabo-ctl above its cwd and is not
+// recognised. The guard can only ever spare a process, never cause a kill, so
+// a missed match is the old behaviour, not a new risk.
 func (s *Supervisor) otherCheckout(pid int) string {
 	cwd := processCwd(pid)
 	if cwd == "" {

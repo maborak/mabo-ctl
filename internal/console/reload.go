@@ -156,7 +156,7 @@ func (m Model) finishReload(msg reloadDoneMsg) (tea.Model, tea.Cmd) {
 		m.cfgView = m.buildConfigView()
 		m.configChanged = false
 		m.live.clearTail()
-		m.tail, m.tailSvc = nil, ""
+		m.tail, m.tailSvc, m.tailFailed = nil, "", ""
 		m.notice = reloadSummary(msg.res)
 		m.reloadErr = nil
 		if msg.err != nil {

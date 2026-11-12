@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -120,12 +121,34 @@ func (a *app) runHookStatus(last string) error {
 		return nil
 	}
 	root := filepath.Dir(path)
+	if !printable(root) {
+		// The root line is a protocol field the hook captures; a path with a
+		// line break or an escape sequence would split it or reach the
+		// terminal. Such a checkout gets no hook output at all.
+		fmt.Fprintln(a.env.Stdout)
+		return nil
+	}
 	fmt.Fprintln(a.env.Stdout, root)
 	if root == last {
 		return nil
 	}
 	fmt.Fprintln(a.env.Stdout, "mabo-ctl: "+hookSummary(root))
 	return nil
+}
+
+// hookName is the shape of a service name mabo-ctl itself writes a pid record
+// for; anything else in pids/ is not echoed.
+var hookName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]*$`)
+
+// printable reports whether s holds no control character, C1 control or
+// Unicode line break — nothing that could split a line or drive a terminal.
+func printable(s string) bool {
+	for _, r := range s {
+		if r < 0x20 || (r >= 0x7f && r <= 0x9f) || r == 0x2028 || r == 0x2029 {
+			return false
+		}
+	}
+	return true
 }
 
 // hookSummary describes what runs in the checkout at root from its pid records
@@ -140,7 +163,8 @@ func hookSummary(root string) string {
 	var running, stopped []string
 	for _, e := range entries {
 		svc, ok := strings.CutSuffix(e.Name(), ".pid")
-		if !ok || e.IsDir() {
+		if !ok || e.IsDir() || !hookName.MatchString(svc) {
+			// Not a name mabo-ctl writes: never echo it to the terminal.
 			continue
 		}
 		rec, err := d.ReadPIDRecord(svc)

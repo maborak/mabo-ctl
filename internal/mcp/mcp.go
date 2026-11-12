@@ -34,6 +34,7 @@ const (
 	codeInvalidRequest = -32600
 	codeMethodNotFound = -32601
 	codeInvalidParams  = -32602
+	codeInternal       = -32603
 )
 
 // Tool is one callable tool.
@@ -80,33 +81,89 @@ type rpcError struct {
 	Message string `json:"message"`
 }
 
+// maxInFlight bounds the calls running at once. A client that pipelines more
+// waits for a slot, so a burst cannot become a goroutine and a log buffer per
+// request.
+const maxInFlight = 16
+
 // Serve reads requests from r and writes responses to w until r ends or ctx
-// is done. Requests run concurrently — a start that waits for readiness does
-// not hold up a ping — and their responses are written whole, one per line.
+// is done. Requests run concurrently, at most maxInFlight at a time — a start
+// that waits for readiness does not hold up a ping — and their responses are
+// written whole, one per line.
+//
 // When the input ends — which is how an MCP client asks a stdio server to
-// exit — calls already in flight finish and are answered; cancelling ctx (a
-// signal) is what abandons them.
+// exit — calls already in flight finish and are answered. When ctx is done (a
+// signal) Serve returns at once, abandoning them: a client that stopped
+// reading must not be able to hold the server open on a blocked write. A
+// failed write means the client is gone and cancels everything the same way.
+// A notifications/cancelled for a request cancels that call's context.
 func (s *Server) Serve(ctx context.Context, r io.Reader, w io.Writer) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	var mu sync.Mutex
+	broken := false
 	enc := json.NewEncoder(w)
 	enc.SetEscapeHTML(false)
 	send := func(resp response) {
 		mu.Lock()
 		defer mu.Unlock()
+		if broken {
+			return
+		}
 		resp.JSONRPC = "2.0"
 		if resp.ID == nil {
 			resp.ID = json.RawMessage("null")
 		}
-		_ = enc.Encode(resp) // a broken stdout ends the session at the next read
+		if err := enc.Encode(resp); err != nil {
+			broken = true
+			cancel()
+		}
 	}
 
-	var wg sync.WaitGroup
-	defer wg.Wait()
+	var calls sync.Map // request id (raw JSON) -> context.CancelFunc
+	lines := make(chan []byte)
+	readErr := make(chan error, 1)
+	go func() {
+		defer close(lines)
+		sc := bufio.NewScanner(r)
+		sc.Buffer(make([]byte, 0, 64<<10), maxMessage)
+		for sc.Scan() {
+			select {
+			case lines <- append([]byte(nil), sc.Bytes()...):
+			case <-ctx.Done():
+				return
+			}
+		}
+		readErr <- sc.Err()
+	}()
 
-	sc := bufio.NewScanner(r)
-	sc.Buffer(make([]byte, 0, 64<<10), maxMessage)
-	for sc.Scan() {
-		line := sc.Bytes()
+	var wg sync.WaitGroup
+	slots := make(chan struct{}, maxInFlight)
+	for {
+		var line []byte
+		var ok bool
+		select {
+		case <-ctx.Done():
+			return nil
+		case line, ok = <-lines:
+		}
+		if !ok {
+			done := make(chan struct{})
+			go func() { wg.Wait(); close(done) }()
+			select {
+			case <-done:
+			case <-ctx.Done():
+			}
+			select {
+			case err := <-readErr:
+				if err != nil {
+					return fmt.Errorf("mcp: read: %w", err)
+				}
+			default:
+			}
+			return nil
+		}
 		if len(line) == 0 {
 			continue
 		}
@@ -122,13 +179,41 @@ func (s *Server) Serve(ctx context.Context, r io.Reader, w io.Writer) error {
 			continue
 		}
 		if req.ID == nil {
-			// A notification: initialized, cancelled. Nothing to answer.
+			// A notification. Only a cancellation needs acting on.
+			if req.Method == "notifications/cancelled" {
+				var p struct {
+					RequestID json.RawMessage `json:"requestId"`
+				}
+				if json.Unmarshal(req.Params, &p) == nil {
+					if c, ok := calls.Load(string(p.RequestID)); ok {
+						c.(context.CancelFunc)()
+					}
+				}
+			}
 			continue
 		}
+		select {
+		case slots <- struct{}{}:
+		case <-ctx.Done():
+			return nil
+		}
+		callCtx, callCancel := context.WithCancel(ctx)
+		key := string(req.ID)
+		calls.Store(key, callCancel)
 		wg.Add(1)
 		go func(req request) {
 			defer wg.Done()
-			result, rerr := s.handle(ctx, req)
+			defer func() { <-slots }()
+			defer calls.Delete(key)
+			defer callCancel()
+			defer func() {
+				// One misbehaving tool must not take every other in-flight
+				// call — a start waiting for readiness — down with it.
+				if v := recover(); v != nil {
+					send(response{ID: req.ID, Error: &rpcError{Code: codeInternal, Message: fmt.Sprintf("internal error: %v", v)}})
+				}
+			}()
+			result, rerr := s.handle(callCtx, req)
 			if rerr != nil {
 				send(response{ID: req.ID, Error: rerr})
 				return
@@ -136,10 +221,6 @@ func (s *Server) Serve(ctx context.Context, r io.Reader, w io.Writer) error {
 			send(response{ID: req.ID, Result: result})
 		}(req)
 	}
-	if err := sc.Err(); err != nil {
-		return fmt.Errorf("mcp: read: %w", err)
-	}
-	return nil
 }
 
 // handle answers one request.

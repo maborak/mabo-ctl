@@ -989,3 +989,49 @@ its own ports.
 ```bash
 go test ./internal/supervisor -race -run 'TestResetWithForceSparesAnotherCheckoutsService|TestRecordsClaimReadsTheOtherCheckoutsPidRecords'
 ```
+
+## 36. A Unicode line break turned `init`'s comments into live YAML
+
+**Shape.** `init` writes every guess as a `#` comment and promises that
+nothing runs yet. The fix for row-less finding 8cd2b5a replaced C0 control
+characters in repo-derived comment text, but YAML also ends a line at NEL
+(U+0085), LINE SEPARATOR (U+2028) and PARAGRAPH SEPARATOR (U+2029). A cloned
+repository with a subdirectory named `a<U+2028>checks: [{name: pwn, command:
+[touch, PWNED]}]<U+2028>#` and a `manage.py` produced a scaffold with a LIVE
+top-level `checks:` entry. It ran on `preflight`, the step the scaffold tells
+the operator to run next. `init --from` had the same hole for the commented-out
+form of a blocked process.
+
+**Evidence.** The security review of the feature branch reproduced both with
+yaml.v3: the injected `checks:` and an injected live service.
+
+**Fix.** `yamlComment` also replaces C1 controls (U+0080–U+009F), U+2028 and
+U+2029 with a space.
+
+**Detector.**
+```bash
+go test ./cmd/mabo-ctl -run 'TestYAMLCommentNeutralisesUnicodeLineBreaks|TestInitScaffoldNeutralisesNewlineInjection'
+```
+
+## 37. A health-URL token survived redaction in the probe failure detail
+
+**Shape.** The web console redacts the health URL and replaces the raw URL
+wherever `detail` quotes it. But a failed probe's detail embeds net/http's own
+rendering of the URL, `Head "http://user:***@host/?token=…"`: password starred,
+query intact. That string never equals the raw URL, so the replace missed it,
+and the `?token=` value went out in `/api/status`. The TUI and the MCP tools,
+which share the same redaction, inherited the leak.
+
+**Evidence.** The security review reproduced it with
+`health: http://h:{{.Port}}/?token=T` against a running service that did not
+answer: `T` appeared in `detail`.
+
+**Fix.** `redact.URLSecrets` lists the credential values `redact.URL` withholds
+(the userinfo password or token, and every secret-looking query value, also
+percent-decoded). `ui.RedactStatuses` replaces each of them wherever `detail`
+contains it.
+
+**Detector.**
+```bash
+go test ./internal/ui -run 'TestRedactStatusesCoversNetHTTPsRendering|TestRedactStatusesCoversDetailToo'
+```

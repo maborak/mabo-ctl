@@ -37,10 +37,17 @@ func newRecord(svc, text string, prev *logRecord) *logRecord {
 	return r
 }
 
-// prettyRows returns the record's re-indented rows, or nil when it is not JSON
-// or does not balance.
+// maxPrettyBytes is the longest line pretty JSON re-indents. Indentation
+// grows with nesting depth, so a long line is where the expansion is large;
+// past this the line is shown as written.
+const maxPrettyBytes = 64 << 10
+
+// prettyRows returns the record's re-indented rows, or nil when it is not JSON,
+// does not balance, nests too deeply, or is too long to expand safely. The
+// cache is outside maxLogBytes, which is why both bounds exist: one line of
+// 9000 nested brackets would otherwise expand to hundreds of megabytes.
 func (r *logRecord) prettyRows() []string {
-	if !r.structured {
+	if !r.structured || len(r.text) > maxPrettyBytes {
 		return nil
 	}
 	if !r.prettyDone {
@@ -76,11 +83,13 @@ func (m Model) matches(r *logRecord, needle string) bool {
 	return needle == "" || strings.Contains(strings.ToLower(r.text), needle)
 }
 
-// shownRecords is the slice of the buffer the pane draws from: all of it, or
-// while paused only what had arrived when pause was pressed.
+// shownRecords is what the pane draws from: the buffer, or while paused the
+// snapshot taken when pause was pressed. The snapshot is its own slice, so
+// lines evicted from the buffer while paused stay visible until resume: a
+// paused pane that drained itself as output kept arriving would not be paused.
 func (m Model) shownRecords() []*logRecord {
 	if m.paused {
-		return m.recs[:min(m.pauseEnd, len(m.recs))]
+		return m.frozen
 	}
 	return m.recs
 }
@@ -134,28 +143,24 @@ func (m *Model) appendRecord(svc, text string) {
 	}
 	if evict > 0 {
 		m.recs = append(m.recs[:0], m.recs[evict:]...)
-		m.pauseEnd = max(0, m.pauseEnd-evict)
-		if !m.follow {
-			// Keep the reader roughly where they were. Rows are not records, so
-			// this is an approximation; the clamp below keeps it in range.
+		if !m.follow && !m.paused {
+			// Keep the reader roughly where they were. Rows are not records,
+			// so this is an approximation; drawing clamps it.
 			m.offset = max(0, m.offset-evict)
 		}
 	}
 	if m.paused {
 		m.pausedNew++
-		return
 	}
-	if m.follow {
-		m.offset = m.bottomOffset()
-	} else {
-		m.clampOffset()
-	}
+	// Nothing else: a following pane is drawn from the bottom (viewOffset),
+	// so an arriving line costs no pass over the buffer. Recomputing the
+	// offset here made ingest O(buffer) per line.
 }
 
 // clearLog empties the buffer, like the web console's Clear.
 func (m *Model) clearLog() {
 	m.recs, m.recBytes = nil, 0
-	m.pauseEnd, m.pausedNew = 0, 0
+	m.frozen, m.pausedNew = nil, 0
 	m.offset = 0
 	m.follow = true
 }
@@ -165,17 +170,13 @@ func (m *Model) clearLog() {
 // never grows memory; the header says how many arrived.
 func (m *Model) togglePause() {
 	m.paused = !m.paused
+	m.pausedNew = 0
 	if m.paused {
-		m.pauseEnd = len(m.recs)
-		m.pausedNew = 0
+		m.frozen = append([]*logRecord(nil), m.recs...)
 		return
 	}
-	m.pausedNew = 0
-	if m.follow {
-		m.offset = m.bottomOffset()
-	} else {
-		m.clampOffset()
-	}
+	m.frozen = nil
+	m.clampOffset()
 }
 
 // cycleLevel steps the level filter: all → error → warn → info → debug → all.
@@ -192,5 +193,4 @@ func (m *Model) cycleLevel() {
 	}
 	m.levelFilter = next
 	m.follow = true
-	m.offset = m.bottomOffset()
 }

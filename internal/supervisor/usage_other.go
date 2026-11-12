@@ -2,5 +2,7 @@
 
 package supervisor
 
+import "context"
+
 // groupUsage is unavailable off unix; status then carries no usage.
-func groupUsage() map[int]Usage { return nil }
+func groupUsage(context.Context) map[int]Usage { return nil }

@@ -142,9 +142,11 @@ type tailSession struct {
 // pane shows; backlog is how many existing lines each service replays.
 //
 // Per service it runs Tail on its own unbuffered channel plus a forwarder that
-// labels lines into the session's channel. Tail closes its channel as it
-// returns, including during a panic (its close is deferred), so every
-// forwarder ends. When the last one does, the session publishes the joined
+// labels lines into the session's channel. Every forwarder ends because Tail
+// closes its channel as it returns — supervisor.Supervisor.Tail does so in a
+// defer, so even a panic inside it closes the channel; a Controller that
+// panics before closing would leave its forwarder waiting, which is why the
+// contract on [Controller.Tail] matters. When the last one does, the session publishes the joined
 // error on done and closes lines, in that order, which is what lets
 // [tailSession.next] report a failure rather than a silent, empty pane. A
 // panic inside the supervisor's tail is recovered and reported the same way,

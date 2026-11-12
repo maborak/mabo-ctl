@@ -629,17 +629,21 @@ func (s *Supervisor) status(ctx context.Context, withHolders bool) []Status {
 		}(i, in)
 	}
 
-	if withHolders {
-		// One ps for the whole stack, alongside the probes. Every spawned
-		// service leads its own process group (setsid), so its pid is the
-		// group id the usage is summed under.
+	live := false
+	for i := range out {
+		live = live || out[i].PID > 0
+	}
+	if withHolders && live {
+		// One ps for the whole stack, alongside the probes, and none when
+		// nothing runs. Every spawned service leads its own process group
+		// (setsid), so its pid is the group id the usage is summed under.
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			if ctx.Err() != nil {
 				return
 			}
-			usage := s.usageFn()
+			usage := s.usageFn(ctx)
 			for i := range out {
 				if pid := out[i].PID; pid > 0 {
 					out[i].Usage = usage[pid]
@@ -653,11 +657,11 @@ func (s *Supervisor) status(ctx context.Context, withHolders bool) []Status {
 }
 
 // usageFn is [groupUsage] unless a test replaced it.
-func (s *Supervisor) usageFn() map[int]Usage {
+func (s *Supervisor) usageFn(ctx context.Context) map[int]Usage {
 	if s.usageLookup != nil {
 		return s.usageLookup()
 	}
-	return groupUsage()
+	return groupUsage(ctx)
 }
 
 // wantsHolder reports whether Status should ask who holds st's port.

@@ -103,3 +103,29 @@ func TestRedactStatusesCoversDetailToo(t *testing.T) {
 		}
 	}
 }
+
+func TestPrettyJSONRefusesDeepNesting(t *testing.T) {
+	t.Parallel()
+	deep := strings.Repeat("[", 9000) + strings.Repeat("]", 9000)
+	if _, ok := PrettyJSON(deep); ok {
+		t.Error("9000 levels of nesting were re-indented")
+	}
+	ok64 := strings.Repeat("[", MaxPrettyDepth) + strings.Repeat("]", MaxPrettyDepth)
+	if _, ok := PrettyJSON(ok64); !ok {
+		t.Errorf("%d levels, the bound itself, were refused", MaxPrettyDepth)
+	}
+}
+
+// TestRedactStatusesCoversNetHTTPsRendering: net/http's error quotes the URL
+// with the password starred but the query intact, which is not the raw URL
+// and so slipped past a plain replace.
+func TestRedactStatusesCoversNetHTTPsRendering(t *testing.T) {
+	t.Parallel()
+	raw := "http://user:pw@localhost:7100/health?token=T0PS3CRET"
+	sts := []supervisor.Status{{Health: raw,
+		Detail: `health: Head "http://user:***@localhost:7100/health?token=T0PS3CRET": dial tcp: refused`}}
+	RedactStatuses(sts)
+	if strings.Contains(sts[0].Detail, "T0PS3CRET") {
+		t.Errorf("the query token survived in Detail: %s", sts[0].Detail)
+	}
+}

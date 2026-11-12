@@ -677,7 +677,7 @@ func TestScrollingStopsAndResumesFollow(t *testing.T) {
 		m.appendLine(strings.Repeat("x", 3) + string(rune('a'+i%26)))
 	}
 
-	if !m.follow || m.offset != m.bottomOffset() {
+	if !m.follow || m.viewOffset(len(m.rows())) != m.bottomOffset() {
 		t.Fatalf("following broke while lines arrived: follow=%v offset=%d bottom=%d", m.follow, m.offset, m.bottomOffset())
 	}
 
@@ -696,7 +696,7 @@ func TestScrollingStopsAndResumesFollow(t *testing.T) {
 	}
 
 	m, _ = send(t, m, key("G"))
-	if !m.follow || m.offset != m.bottomOffset() {
+	if !m.follow || m.viewOffset(len(m.rows())) != m.bottomOffset() {
 		t.Errorf("G did not resume following: follow=%v offset=%d", m.follow, m.offset)
 	}
 

@@ -77,6 +77,18 @@ contract and service phase names are stable.
 
 ### Fixed
 
+- `init`'s commented-out scaffold could carry live YAML: a repo directory name
+  holding a Unicode line break (NEL, U+2028, U+2029) ended the comment, and a
+  `checks:` entry injected that way ran on the next `preflight`. Comment text
+  now also loses C1 controls and those separators.
+- A health-URL query token could reach `/api/status` through `detail`, where
+  net/http's error quotes the URL with the password starred but the query
+  intact. Every credential value the health URL carries is now redacted
+  wherever `detail` contains it.
+- A pid record is read only if it is a regular file of at most 4 KiB, so a
+  committed `.mabo-ctl/pids/x.pid` symlink to `/dev/zero` cannot hang a status
+  read (or the shell hook on `cd`).
+
 - `docs/API.md` and the OpenAPI spec described `elapsed_ms` as time since
   spawn; it is how long the last readiness probe took (`uptime_ms` is uptime).
 

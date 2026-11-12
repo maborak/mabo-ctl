@@ -378,7 +378,8 @@ func (m Model) logHeaderView() string {
 	case m.follow:
 		flags = append(flags, "follow")
 	default:
-		flags = append(flags, fmt.Sprintf("line %d/%d", m.offset+1, max(len(m.rows()), 1)))
+		n := len(m.rows())
+		flags = append(flags, fmt.Sprintf("line %d/%d", m.viewOffset(n)+1, max(n, 1)))
 	}
 	if m.levelFilter != "" {
 		flags = append(flags, "level "+m.levelFilter)
@@ -432,7 +433,7 @@ func (m Model) logView() []string {
 			labelW = max(labelW, utf8.RuneCountInString(st.Name))
 		}
 	}
-	start := min(max(m.offset, 0), max(0, len(visible)-1))
+	start := m.viewOffset(len(visible))
 	for i := start; i < len(visible) && len(out) < h; i++ {
 		out = append(out, m.logRowView(visible[i], labelW))
 	}

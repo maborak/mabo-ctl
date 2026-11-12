@@ -73,6 +73,10 @@ type Model struct {
 	// with the selection (or merged mode) after Update returns.
 	tail    *tailSession
 	tailSvc string
+	// tailFailed is the key whose tail ended in an error. It is not retried
+	// on every status tick — that rebuilt the session and wiped the pane once a
+	// second — but on the next selection change or reload.
+	tailFailed string
 
 	// recs is the retained log buffer, capped at maxLogLines and maxLogBytes
 	// (recBytes is its size). offset is the first visible ROW of the filtered,
@@ -83,12 +87,13 @@ type Model struct {
 	follow   bool
 
 	// Log presentation, the web console's toolbar in keys: all merges every
-	// service into one pane; paused freezes the pane at pauseEnd records while
-	// lines keep arriving (pausedNew counts them); levelFilter keeps one level;
-	// pretty re-indents JSON lines; separators draws a rule between entries.
+	// service into one pane; paused freezes the pane on frozen, a snapshot of
+	// the buffer, while lines keep arriving (pausedNew counts them);
+	// levelFilter keeps one level; pretty re-indents JSON lines; separators
+	// draws a rule between entries.
 	all         bool
 	paused      bool
-	pauseEnd    int
+	frozen      []*logRecord
 	pausedNew   int
 	levelFilter string
 	pretty      bool
@@ -290,11 +295,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.sess != m.tail {
 			return m, nil
 		}
-		m.tail = nil
-		m.tailSvc = ""
 		if msg.err != nil {
 			m.err = msg.err
+			m.tailFailed = msg.sess.key
 		}
+		m.tail = nil
+		m.tailSvc = ""
 		return m, nil
 
 	case opEventMsg:
@@ -362,6 +368,10 @@ func (m Model) syncTail() (Model, tea.Cmd) {
 	if (m.tail != nil && m.tailSvc == key) || m.ctrl == nil {
 		return m, nil
 	}
+	if m.tail == nil && key == m.tailFailed {
+		return m, nil
+	}
+	m.tailFailed = ""
 
 	sess := newTail(m.ctrl, key, svcs, backlog)
 	if !m.live.setTail(sess) {
@@ -657,7 +667,6 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "G":
 		m.follow = true
-		m.offset = m.bottomOffset()
 		return m, nil
 
 	case "/":
@@ -715,7 +724,6 @@ func (m Model) editFilter(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.filtering = false
 		m.filterDraft = ""
 		m.follow = true
-		m.offset = m.bottomOffset()
 		return m, nil
 
 	case tea.KeyEsc:
@@ -777,6 +785,9 @@ func (m *Model) scroll(delta int) {
 	if delta == 0 {
 		return
 	}
+	if m.follow {
+		m.offset = m.bottomOffset()
+	}
 	m.offset += delta
 	m.clampOffset()
 	m.follow = m.offset >= m.bottomOffset()
@@ -787,14 +798,23 @@ func (m Model) bottomOffset() int {
 	return max(0, len(m.rows())-m.logHeight())
 }
 
-// repin keeps a following pane at the bottom after a change to how records
-// expand into rows (pretty JSON, separators), and clamps one that is not.
+// repin clamps a scrolled pane after a change to how records expand into rows
+// (pretty JSON, separators). A following pane needs nothing: it is drawn from
+// the bottom.
 func (m *Model) repin() {
-	if m.follow {
-		m.offset = m.bottomOffset()
-		return
+	if !m.follow {
+		m.clampOffset()
 	}
-	m.clampOffset()
+}
+
+// viewOffset is the first row drawn when the expanded view has n rows: the
+// bottom screenful while following, else the scrolled offset kept in range.
+func (m Model) viewOffset(n int) int {
+	bottom := max(0, n-m.logHeight())
+	if m.follow {
+		return bottom
+	}
+	return min(max(m.offset, 0), bottom)
 }
 
 // listIndices is the indices into statuses the list shows: every service, or

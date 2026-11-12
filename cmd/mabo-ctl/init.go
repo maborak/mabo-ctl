@@ -291,10 +291,12 @@ func renderInit(guesses []guess) string {
 // file would otherwise terminate the comment and let the rest of the line
 // become ACTIVE yaml in the scaffolded file — and a scaffold's checks:
 // entries execute when preflight runs. Every control character becomes a
-// space; the comment stays readable and stays a comment.
+// space, C1 included, and so do the line breaks YAML recognises beyond ASCII:
+// NEL (U+0085), LINE SEPARATOR (U+2028) and PARAGRAPH SEPARATOR (U+2029).
+// The comment stays readable and stays a comment.
 func yamlComment(s string) string {
 	return strings.Map(func(r rune) rune {
-		if r < 0x20 || r == 0x7f {
+		if r < 0x20 || (r >= 0x7f && r <= 0x9f) || r == 0x2028 || r == 0x2029 {
 			return ' '
 		}
 		return r
