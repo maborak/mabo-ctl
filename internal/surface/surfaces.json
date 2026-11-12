@@ -146,6 +146,7 @@
       "config:console_access_key",
       "config:console_addr",
       "config:console_terminal",
+      "config:console_terminal_scrollback",
       "config:ready_timeout",
       "config:services",
       "config:services[].autostart",

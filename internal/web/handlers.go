@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/maborak/mabo-ctl/internal/config"
 	"github.com/maborak/mabo-ctl/internal/redact"
 	"github.com/maborak/mabo-ctl/internal/supervisor"
 	"github.com/maborak/mabo-ctl/internal/ui"
@@ -390,10 +391,13 @@ func (s *Server) renderPageFor(a accessGrant) []byte {
 		"URL":      "/?token=" + token,
 		"Services": func() []string { names, _ := s.serviceNames(); return names }(),
 		"Terminal": s.terminals != nil && a.Role == "owner",
+
+		"TerminalScrollback": config.DefaultTerminalScrollback,
 	}
 	if cfg := s.controller().Config(); cfg != nil {
 		data["Root"] = cfg.Root
 		data["ConfigPath"] = cfg.Path
+		data["TerminalScrollback"] = cfg.ConsoleTerminalScrollback
 	}
 
 	out := []byte(consoleHTML)

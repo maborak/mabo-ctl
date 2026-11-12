@@ -8,6 +8,14 @@ contract and service phase names are stable.
 
 ## [Unreleased]
 
+### Added
+
+- `console_terminal_scrollback` in `mabo-ctl.yaml` sets how many lines of
+  history each Terminal tab shell keeps in the browser (default 10000, the
+  previous fixed value; 0 to 100000, no unlimited). History costs about
+  columns × lines × 12 bytes per shell, so a lower value bounds the page's
+  memory. A config reload says to refresh the page to apply it.
+
 ### Fixed
 
 - Bound the browser's pending log-render queue as well as displayed history.

@@ -125,6 +125,8 @@ console_addr: "127.0.0.1:9000"   # optional: address `mabo-ctl serve` binds when
 # console_access_key: "..."      # optional; --access-key overrides it; absent
                                  # means a random key is generated per run
 # console_terminal: true         # optional; enables the console's Terminal tab
+# console_terminal_scrollback: 10000  # optional; lines of history per shell
+                                 # (0–100000, default 10000)
 
 services:
   - name: website
@@ -701,7 +703,12 @@ only once; copy the new URL when it is created.
 repository root. The xterm.js emulator supports interactive programs such as
 Claude Code, OpenCode, vim and htop. Shells keep running when
 the tab is closed or reloaded — the page reattaches and replays the scrollback —
-and are hung up when `serve` stops. A shell runs as you, so terminals are
+and are hung up when `serve` stops. Each shell keeps
+`console_terminal_scrollback` lines of history in the browser (default 10000,
+at most 100000; there is no unlimited). That history costs about columns ×
+lines × 12 bytes per shell: measured in Chrome, 20,000 lines at 196 columns
+took 46 MB at a 100000 setting and nothing extra at 1000. The page reads the
+setting when it loads, so refresh it after changing the file. A shell runs as you, so terminals are
 loopback-only by default. Remote terminals require explicit `--terminal` plus
 `--i-know-allow-remote-terminal-is-dangerous`; a non-loopback bind also requires
 `--i-know-this-is-dangerous`. For example:

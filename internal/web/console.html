@@ -38,6 +38,7 @@
 -->
 <meta name="mabo-ctl-token" content="{{.Token}}">
 <meta name="mabo-ctl-role" content="{{.Role}}">
+<meta name="mabo-ctl-terminal-scrollback" content="{{.TerminalScrollback}}">
 
 <!--
   Everything this page needs is in this file. No CDN, no web font, no remote
@@ -4943,6 +4944,14 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
   // Allow the server's 1 MiB replay plus live output, then detach and recover
   // from bounded server scrollback rather than grow the browser indefinitely.
   var TERM_OUTPUT_LIMIT = 2 * 1024 * 1024;
+  // Lines of history per shell, from console_terminal_scrollback in
+  // mabo-ctl.yaml (validated server-side; default 10000). xterm holds about
+  // 12 bytes per cell, so this bounds each shell's memory in this page.
+  var TERM_SCROLLBACK = (function () {
+    var m = document.querySelector('meta[name="mabo-ctl-terminal-scrollback"]');
+    var n = m ? parseInt(m.content, 10) : NaN;
+    return n >= 0 && n <= 100000 ? n : 10000;
+  })();
 
   var terminals = {
     body: document.getElementById("term-body"),
@@ -5082,7 +5091,7 @@ table.cfg-tbl td.dim { color: var(--text-faint); }
         cursorBlink: true,
         fontFamily: getComputedStyle(document.documentElement).getPropertyValue("--mono"),
         fontSize: 12,
-        scrollback: 10000,
+        scrollback: TERM_SCROLLBACK,
         macOptionIsMeta: true,
         theme: TERM_THEME,
         // OSC 8 hyperlinks come from whatever the shell prints — a catted file
