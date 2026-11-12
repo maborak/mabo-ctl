@@ -960,3 +960,32 @@ the count would have kept, one leading marker line says how many.
 ```bash
 go test ./internal/supervisor -race -run 'TestLineReader|TestFollowBacklogSurvivesAnOversizedLine|TestLogTailKeepsLinesAfterAnOversizedOne|TestTailFollowTruncatesAnEndlessLineAtTheSource|TestBacklogStaysWithinItsByteBudget'
 ```
+
+## 35. `reset --force` killed another checkout's service
+
+**Shape.** Two git worktrees, or two clones, of one repository declare the same
+ports. A service running in checkout A holds its declared port. In checkout B,
+`reset --force` sweeps every declared port. It finds A's listener, sees that B's
+own pid records do not claim it, calls it a foreign orphan and kills it. A's
+mabo-ctl still recorded that service as running, and B's had no business
+signalling it. The earlier guard asked "did THIS checkout start it?" and never
+"did ANY mabo-ctl start it?".
+
+**Evidence.** By reading the code: `reapPort` spared a holder only when it was
+this checkout's own live pid, then killed any other holder under `--force`.
+Verified after the fix in a scratch repo copied to `w1` and `w2`. With `start`
+in `w1` holding port 47900, `reset --force` in `w2` reports
+`port 47900 is held by pid … a service of the mabo-ctl checkout at …/w1 — left
+alone, even with --force`, and `w1` still answers HTTP 200.
+
+**Fix.** Before reaping, `reapPort` finds the holder's working directory (lsof),
+walks up to the nearest `.mabo-ctl`, and checks whether that checkout's pid
+records name the holder or its process-group leader. If they do and that
+checkout is not this one, the holder is left alone even with `--force`, and the
+message names the checkout and `--port-offset auto`, which gives each checkout
+its own ports.
+
+**Detector.**
+```bash
+go test ./internal/supervisor -race -run 'TestResetWithForceSparesAnotherCheckoutsService|TestRecordsClaimReadsTheOtherCheckoutsPidRecords'
+```

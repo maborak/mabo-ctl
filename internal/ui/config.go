@@ -76,7 +76,8 @@ type ConfigService struct {
 	// Port is the resolved port, 0 for a portless service.
 	Port int `json:"port"`
 	// PortSource is the precedence level that produced Port: "flag", "env",
-	// "run.env" or "default". It is the field this whole view exists for.
+	// "run.env", "offset" (the declared default moved by the checkout's port
+	// offset) or "default". It is the field this whole view exists for.
 	PortSource string `json:"port_source"`
 	// PortDeclared is the port mabo-ctl.yaml declares, which is NOT necessarily
 	// the port in use.

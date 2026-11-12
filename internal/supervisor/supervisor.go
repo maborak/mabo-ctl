@@ -267,6 +267,11 @@ type Supervisor struct {
 	// answer on the machine running the tests is not something a test can
 	// arrange.
 	holderLookup func(port int) Holder
+
+	// checkoutLookup overrides [Supervisor.otherCheckout]. It is nil in
+	// production; it is a test seam, because a test cannot arrange another
+	// checkout's process to hold a port.
+	checkoutLookup func(pid int) string
 }
 
 // markStopping records that mabo-ctl is deliberately taking svc down.
@@ -1710,6 +1715,16 @@ func (s *Supervisor) reapPort(ctx context.Context, in service.Instance, force bo
 		emit(ev, Event{Service: in.Name, Msg: fmt.Sprintf(
 			"port %d is held by pid %d, which mabo-ctl started while this reset was running — left alone",
 			in.Port, h.PID)})
+		return nil
+	}
+
+	// Another checkout's live service, even with --force: that mabo-ctl
+	// started it and still tracks it. See otherCheckout.
+	if root := s.otherCheckoutFn(h.PID); root != "" {
+		emit(ev, Event{Service: in.Name, Msg: fmt.Sprintf(
+			"port %d is held by pid %d (%s), a service of the mabo-ctl checkout at %s — left alone, even with --force; "+
+				"stop it there, or give this checkout its own ports with --port-offset auto",
+			in.Port, h.PID, h.Command, root)})
 		return nil
 	}
 

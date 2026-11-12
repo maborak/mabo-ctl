@@ -106,6 +106,9 @@ func (a *app) rootCmd() *cobra.Command {
 			// can meet it. Deliberately NOT in startFlagNames — it must not
 			// turn a bare `mabo-ctl --refresh-ports` into a start.
 			a.refreshPorts = boolFlag(cmd, "refresh-ports")
+			if f := cmd.Flags().Lookup("port-offset"); f != nil && f.Changed {
+				a.portOffset = f.Value.String()
+			}
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 0 && !startFlagsChanged(cmd) {
@@ -139,6 +142,8 @@ func (a *app) rootCmd() *cobra.Command {
 		"comma-separated profiles to activate (overrides MABO_PROFILE); services whose profiles: list misses all of them stay out of this run")
 	root.PersistentFlags().Bool("refresh-ports", false,
 		"re-resolve every port from the declared defaults, ignoring persisted .mabo-ctl/run.env, and rewrite the file")
+	root.PersistentFlags().String("port-offset", "",
+		"move every declared port by N for this checkout (a git worktree or second clone), or \"auto\" for the first free +100…+1000; saved in .mabo-ctl/run.env, 0 clears it")
 	addStartFlags(root)
 
 	root.AddCommand(

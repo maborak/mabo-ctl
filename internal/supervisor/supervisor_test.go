@@ -2483,3 +2483,65 @@ func TestStatusNamesAnUnrunnableService(t *testing.T) {
 		t.Errorf("unstarted service grew detail %q; want none", d)
 	}
 }
+
+// TestResetWithForceSparesAnotherCheckoutsService: a port declared here can be
+// held by the same service in another checkout of this repository (a git
+// worktree, a second clone), which that checkout's mabo-ctl started and still
+// tracks. --force must not kill it.
+func TestResetWithForceSparesAnotherCheckoutsService(t *testing.T) {
+	foreign, foreignDead := spawnForeign(t)
+
+	inst := service.Instance{Name: "svc", Port: 7915, Cmd: helperCmd(), Env: helperEnvFor("sleep")}
+	sup, _ := fixture(t, inst)
+	defer func() { _ = sup.Stop(context.Background(), nil, nil); sup.Wait() }()
+	sup.holderLookup = func(int) Holder { return Holder{PID: foreign, Command: "node"} }
+	sup.checkoutLookup = func(pid int) string {
+		if pid == foreign {
+			return "/work/other-worktree"
+		}
+		return ""
+	}
+
+	events, collect := drain(t)
+	if err := sup.Reset(context.Background(), true, events); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if foreignDead() {
+		t.Fatal("reset --force killed another checkout's service")
+	}
+	var named bool
+	for _, e := range collect() {
+		if strings.Contains(e.Msg, "/work/other-worktree") && strings.Contains(e.Msg, "--port-offset auto") {
+			named = true
+		}
+	}
+	if !named {
+		t.Errorf("the spare did not name the other checkout and the remedy; events = %v", msgs(collect()))
+	}
+}
+
+// TestRecordsClaimReadsTheOtherCheckoutsPidRecords pins how ownership is
+// proved: a pid record in that checkout's .mabo-ctl naming the holder or its
+// group leader, and nothing else.
+func TestRecordsClaimReadsTheOtherCheckoutsPidRecords(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	st, err := state.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.WritePID("web", 4242); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		pid, pgid int
+		want      bool
+	}{{4242, 0, true}, {5000, 4242, true}, {5000, 5000, false}} {
+		if got := recordsClaim(root, tc.pid, tc.pgid); got != tc.want {
+			t.Errorf("recordsClaim(pid %d, pgid %d) = %v, want %v", tc.pid, tc.pgid, got, tc.want)
+		}
+	}
+	if recordsClaim(t.TempDir(), 4242, 0) {
+		t.Error("a directory with no .mabo-ctl claimed a pid")
+	}
+}

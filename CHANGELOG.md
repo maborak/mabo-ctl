@@ -15,6 +15,12 @@ contract and service phase names are stable.
   previous fixed value; 0 to 100000, no unlimited). History costs about
   columns × lines × 12 bytes per shell, so a lower value bounds the page's
   memory. A config reload says to refresh the page to apply it.
+- `--port-offset N|auto`, a global flag, moves every declared port by N for
+  this checkout, so two git worktrees or clones of one repository can run side
+  by side. `auto` picks the first of +100…+1000 where every declared port is
+  free. It is saved per checkout in `.mabo-ctl/run.env` (`MABO_PORT_OFFSET`),
+  ranks below every explicit port level, and `config` reports those ports as
+  `from offset`. A refused start for a held port now suggests it.
 - The full-screen console (TUI) gains the web console's log and service
   controls: merged all-services log (`m`), pause (`p`) and clear (`c`), a
   level filter (`v`) using the same JSON level classification as the browser,
@@ -41,6 +47,13 @@ contract and service phase names are stable.
   selection.
 
 ### Fixed
+
+- `reset --force` killed the other checkout's service. Two worktrees or clones
+  of one repository declare the same ports, so the "foreign" listener `reset
+  --force` reaped on a declared port could be the same service that another
+  checkout's mabo-ctl started and still records. Reset now finds the holder's
+  nearest `.mabo-ctl`, and when that checkout's pid records claim the holder or
+  its process group, it names the checkout and leaves the process alone.
 
 - Bound the browser's pending log-render queue as well as displayed history.
   Background tabs no longer retain every incoming line while animation frames

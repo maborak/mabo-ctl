@@ -263,7 +263,7 @@ Leave the key out to inherit the global.
 | `mabo-ctl health [--wait [--timeout=D]]` | The same phases `status` reports, with an exit code: 4 when any declared probe (http, tcp or exec) did not answer. `--wait` polls until every probe answers, or gives up after `--timeout` and names who was still down. |
 | `mabo-ctl config [svc] [--json] [--raw] [--graph]` | Where `mabo-ctl.yaml` was loaded from and what it resolved to: the port **and which of the five precedence levels produced it**, the absolute command, the runtime, the expanded health URL, the declared env. `--raw` prints the file verbatim. `--graph` prints the start order: one row per dependency level (services on a level start in parallel), each with what it waits for; `--json` carries the same as `levels`. |
 | `mabo-ctl logs [svc\|all] [--tail=N] [-f] [--timestamps] [--grep=S] [--since=D]` | Tail a log, or interleave every log with per-service labels. `tailf` is an alias. `--grep` keeps lines containing a substring; `--since` (historical tails only) skips services whose log has not changed within that window. With `-f --timestamps` each line carries an HH:MM:SS.mmm READ-time stamp — follow-only by design; historical tails refuse it rather than lie about write times. |
-| `mabo-ctl reset [--force]` | Stop everything and delete `.mabo-ctl/`. `--force` also kills whatever still holds a declared port. |
+| `mabo-ctl reset [--force]` | Stop everything and delete `.mabo-ctl/`. `--force` also kills whatever still holds a declared port, except another checkout's own service. |
 | `mabo-ctl preflight` | Two blocks: MACHINE (can this machine run what mabo-ctl.yaml declares? runtimes resolve, cmd[0] executable, node_modules present under node:, .nvmrc agreement — detect-and-hint, never fix) then the declared `checks:` block in parallel. `tcp:` takes `expect: free` to require a port be open before start; a failure names its holder. Either block failing exits 1. |
 | `mabo-ctl doctor` | Read-only stack exam: unresolvable runtimes, stale or recycled pids, foreign port holders, unsurfaced crashes, loose `.mabo-ctl/` permissions. Warn → 0, FAIL → 1. |
 | `mabo-ctl schema [--commands]` | Print the JSON Schema (draft-07) for `mabo-ctl.yaml`. With `--commands`, print a machine-readable catalogue of the binary itself: every command's flags and argument semantics, which mutate state, the exit-code table, which outputs are stable contracts, every web-console route with its auth level. Generated from the same tree `--help` renders — see [For agents and scripts](#for-agents-and-scripts). |
@@ -277,7 +277,7 @@ Leave the key out to inherit the global.
 | `mabo-ctl completion <bash\|zsh\|fish\|powershell>` | Print a completion script. |
 | `mabo-ctl upgrade [--force]` | Replace this binary with the latest GitHub release — see [Upgrading](#upgrading). |
 
-Global flags on every command: `--config <path>` overrides discovery, `--profile a,b` activates profiles (overrides `MABO_PROFILE`), and `--refresh-ports` re-resolves ports from the declared defaults, ignoring `.mabo-ctl/run.env`.
+Global flags on every command: `--config <path>` overrides discovery, `--profile a,b` activates profiles (overrides `MABO_PROFILE`), `--refresh-ports` re-resolves ports from the declared defaults, ignoring `.mabo-ctl/run.env`, and `--port-offset N|auto` moves every declared port for this checkout — see [Two checkouts of one repo](#two-checkouts-of-one-repo).
 
 ### Exit codes
 
@@ -419,7 +419,30 @@ Highest first. This is the heart of the tool.
 | 2 | `--ports=A,B,C,D` | Positional. Slot *i* is the *i*-th service that declares a port, in declaration order. An **empty slot keeps the declared default**, so `--ports=,,7999` overrides only the third. |
 | 3 | `<NAME>_PORT` in the caller's environment | e.g. `BACKEND_PORT=7999`. A `-` in a service name becomes `_`. |
 | 4 | `.mabo-ctl/run.env` | Persisted by the previous `start` or `restart`. |
-| 5 | `port:` in `mabo-ctl.yaml` | The declared default. |
+| 5 | `port:` in `mabo-ctl.yaml` | The declared default — moved by this checkout's port offset when one is set (below). |
+
+### Two checkouts of one repo
+
+Two git worktrees, or two clones, of the same repository declare the same
+ports, so the second checkout's `start` finds them taken. Give it its own:
+
+```sh
+mabo-ctl start --port-offset auto    # first +100…+1000 where every declared port is free
+mabo-ctl start --port-offset 200     # or a fixed offset
+mabo-ctl status --port-offset 0      # clear it: declared ports apply again
+```
+
+The offset is a global flag, saved per checkout in `.mabo-ctl/run.env`
+(`MABO_PORT_OFFSET`), so later commands keep it without the flag; `mabo-ctl
+reset` clears it with the rest of the state. It moves every declared default by
+N, ranks below every explicit level (flags, `<NAME>_PORT`), and `config` shows
+those ports as `from offset`. Only ports that reach a service through
+`{{.Port}}` or `PORT`/`<NAME>_PORT` move: a port written literally into `cmd`
+or `health` stays where it was written. Change the offset while the checkout's
+services are stopped.
+
+`reset --force` never kills a port holder that another checkout's mabo-ctl
+started and still records: it names that checkout and leaves the process alone.
 
 Two rules are not optional:
 

@@ -1908,3 +1908,60 @@ func lookupEnvOK(env []string, key string) (string, bool) {
 	}
 	return "", false
 }
+
+// TestPortOffsetMovesTheDeclaredDefaults covers a checkout's port offset: it
+// moves every declared default (and only declared ports), keeps its rank below
+// every explicit level, survives IgnoreRunEnv, does not flag a port persisted
+// under the same offset as an override, and refuses a result outside 1-65535.
+func TestPortOffsetMovesTheDeclaredDefaults(t *testing.T) {
+	root, _ := testRepo(t)
+	cfg := testConfig(t, root, svc("website", 7100), svc("backend", 7102), svc("worker", 0))
+	st := testState(t, root, nil)
+	if err := st.SetPortOffset(100); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, ignore := range []bool{false, true} {
+		insts, origins, err := Resolve(cfg, st, Options{IgnoreRunEnv: ignore})
+		if err != nil {
+			t.Fatalf("Resolve: %v", err)
+		}
+		if o := originFor(t, origins, "website"); o.Port != 7200 || o.Source != FromOffset || o.Declared != 7100 {
+			t.Errorf("ignore=%v: website = %d from %q (declared %d), want 7200 from offset", ignore, o.Port, o.Source, o.Declared)
+		}
+		if got := instFor(t, insts, "worker").Port; got != 0 {
+			t.Errorf("ignore=%v: portless worker got port %d from the offset", ignore, got)
+		}
+	}
+
+	_, origins, err := Resolve(cfg, st, Options{EnvVars: map[string]string{"BACKEND_PORT": "7500"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o := originFor(t, origins, "backend"); o.Port != 7500 || o.Source != FromEnv {
+		t.Errorf("backend = %d from %q, want the caller's 7500 over the offset", o.Port, o.Source)
+	}
+
+	insts, _, err := Resolve(cfg, st, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Persist(st, insts); err != nil {
+		t.Fatal(err)
+	}
+	re, _ := st.ReadRunEnv()
+	if re.PortOffset() != 100 {
+		t.Fatalf("Persist dropped the offset: %d", re.PortOffset())
+	}
+	_, origins, _ = Resolve(cfg, st, Options{})
+	if o := originFor(t, origins, "website"); o.Source != FromOffset || o.Override || o.Port != 7200 {
+		t.Errorf("website persisted under the offset = %+v, want 7200 from offset with no override", o)
+	}
+
+	if err := st.SetPortOffset(60000); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := Resolve(cfg, st, Options{IgnoreRunEnv: true}); err == nil || !strings.Contains(err.Error(), "outside 1-65535") {
+		t.Errorf("an offset past 65535 resolved: %v", err)
+	}
+}

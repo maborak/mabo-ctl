@@ -15,6 +15,13 @@ import (
 // future version of mabo-ctl — and are preserved verbatim on rewrite.
 const portKeyPrefix = "PORT_"
 
+// PortOffsetKey is the run.env key holding this checkout's port offset: a
+// number added to every declared port, so two checkouts of one repository —
+// git worktrees, or a second clone — can run side by side. It is not a PORT_
+// key, so the parser keeps it as a preserved key and a rewrite that only
+// knows about ports carries it over.
+const PortOffsetKey = "MABO_PORT_OFFSET"
+
 // runEnvHeader is rewritten on every WriteRunEnv. It is a comment, so it is
 // dropped by the parser and never mistaken for a preserved key.
 const runEnvHeader = "# mabo-ctl resolved ports. Generated file; safe to delete.\n"
@@ -88,6 +95,40 @@ func (r *RunEnv) Unknown() map[string]string {
 		out[e.key] = e.value
 	}
 	return out
+}
+
+// PortOffset returns the checkout's persisted port offset, or 0 when none is
+// recorded or the value is not a whole number.
+func (r *RunEnv) PortOffset() int {
+	if r == nil {
+		return 0
+	}
+	for _, e := range r.unknown {
+		if e.key == PortOffsetKey {
+			if n, err := strconv.Atoi(e.value); err == nil {
+				return n
+			}
+		}
+	}
+	return 0
+}
+
+// SetPortOffset records the checkout's port offset. 0 is written rather than
+// the key removed: WriteRunEnv unions preserved keys with the file on disk, so
+// a removed key would come back from the old file.
+func (r *RunEnv) SetPortOffset(n int) {
+	r.setUnknown(PortOffsetKey, strconv.Itoa(n))
+}
+
+// SetPortOffset persists the checkout's port offset in run.env, keeping every
+// port and preserved key already there.
+func (d *Dir) SetPortOffset(n int) error {
+	re, err := d.ReadRunEnv()
+	if err != nil {
+		return err
+	}
+	re.SetPortOffset(n)
+	return d.WriteRunEnv(re)
 }
 
 // Malformed reports how many lines of run.env could not be parsed and were
