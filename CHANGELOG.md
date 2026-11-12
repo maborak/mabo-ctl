@@ -74,6 +74,7 @@ contract and service phase names are stable.
 - The TUI's `a` (start all) now starts every service by name, autostart or
   not, like the web console's Start all; it used to start only the autostart
   selection.
+- Build with Go 1.26.11 to address GO-2026-6859 (`net/http`).
 
 ### Fixed
 
