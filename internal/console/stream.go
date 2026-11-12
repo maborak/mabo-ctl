@@ -31,9 +31,13 @@ const (
 	tailBacklog = 500
 
 	// tailBuffer is the channel depth between the supervisor's tail and the
-	// event loop. A burst of output from a starting service is absorbed here
-	// instead of blocking the producer between two Update calls.
-	tailBuffer = 256
+	// event loop. A line may be 256 KiB, so depth is memory: 16 lines is at
+	// most 4 MiB. Blocking the tail loses nothing — it reads a file.
+	tailBuffer = 16
+
+	// eventBuffer is the depth of a lifecycle operation's event channel.
+	// Events are small; a start emits a burst of them, absorbed here.
+	eventBuffer = 256
 
 	// maxLogLines caps the retained log buffer. A dev server can emit
 	// megabytes an hour; the console keeps the tail of that, not all of it.
@@ -230,7 +234,7 @@ func newOp(ctrl Controller, kind opKind, names []string) *opSession {
 	s := &opSession{
 		kind:   kind,
 		names:  names,
-		ev:     make(chan supervisor.Event, tailBuffer),
+		ev:     make(chan supervisor.Event, eventBuffer),
 		done:   make(chan error, 1),
 		cancel: cancel,
 	}

@@ -64,7 +64,7 @@ type reloadSession struct {
 // that sees the close never waits for the result.
 func newReload(reload func(context.Context, chan<- supervisor.Event) (*Reloaded, error)) *reloadSession {
 	s := &reloadSession{
-		ev:   make(chan supervisor.Event, tailBuffer),
+		ev:   make(chan supervisor.Event, eventBuffer),
 		done: make(chan reloadDoneMsg, 1),
 	}
 	go func() {

@@ -37,6 +37,12 @@ contract and service phase names are stable.
   `?tail=` request (from any console or shared link) read over a gigabyte
   into memory. Lines dropped by the byte cap are replaced by one marker
   saying how many were omitted.
+- Log streams buffer at most 16 lines between the tailer and a slow reader
+  (was 256), and the merged all-services stream no longer buffers per
+  service. With 256 KiB lines, one slow browser could pin 64 MiB per stream,
+  and the merged stream that much per service; now about 4 MiB per stream
+  plus two lines per service. Nothing is dropped: the tailer reads a file
+  and simply waits.
 
 ## [1.4.0] - 2026-11-11
 

@@ -1156,7 +1156,7 @@ func TestStreamEndsEvenWithTheProducerMidSend(t *testing.T) {
 	// Far more output than the channel between the tail and the handler can
 	// hold, so the tail is blocked on a send when the tab closes. A handler
 	// that returned without cancelling and draining would strand it there.
-	ctrl.lines = make([]string, streamBuffer*8)
+	ctrl.lines = make([]string, lineBuffer*8)
 	for i := range ctrl.lines {
 		ctrl.lines[i] = fmt.Sprintf("chatty line %d", i)
 	}

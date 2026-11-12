@@ -522,7 +522,7 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
-	lines := make(chan string, streamBuffer)
+	lines := make(chan string, lineBuffer)
 	done := make(chan error, 1)
 	go func() { done <- s.controller().Tail(ctx, svc, n, false, lines) }()
 

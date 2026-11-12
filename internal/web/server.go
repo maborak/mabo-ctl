@@ -115,10 +115,18 @@ const (
 	defaultLogTail = 200
 	maxLogTail     = 5000
 
-	// streamBuffer is the channel depth between supervisor.Tail and an SSE
-	// handler. A starting service emits a burst; the burst is absorbed here
-	// rather than blocking the tail between two writes to the socket.
+	// streamBuffer is the depth of a lifecycle operation's event channel.
+	// Events are small; a start emits a burst of them, absorbed here.
 	streamBuffer = 256
+
+	// lineBuffer is the channel depth between supervisor.Tail and a log
+	// handler. It is small on purpose: a line may be 256 KiB, and a slow
+	// browser fills the channel, so depth is memory — 16 lines is at most
+	// 4 MiB per stream where 256 was 64 MiB. Blocking the tail loses
+	// nothing (it reads a file); depth only smooths throughput. The merged
+	// stream keeps its per-service channels unbuffered, so it holds about
+	// two lines per service plus this depth, not this depth per service.
+	lineBuffer = 16
 
 	// maxInflightMutations bounds concurrent start/stop/restart operations. A
 	// start blocks for the readiness timeout, so without a bound a page that
