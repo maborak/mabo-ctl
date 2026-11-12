@@ -15,6 +15,12 @@ contract and service phase names are stable.
   previous fixed value; 0 to 100000, no unlimited). History costs about
   columns × lines × 12 bytes per shell, so a lower value bounds the page's
   memory. A config reload says to refresh the page to apply it.
+- Homebrew: `brew install maborak/tap/mabo-ctl`. The release workflow
+  regenerates the formula from each release's `SHA256SUMS`
+  (`packaging/homebrew/formula.sh`) and pushes it to the tap; it installs the
+  prebuilt static binary and shell completions. `mabo-ctl upgrade` on a
+  Homebrew install points at `brew upgrade` instead of replacing the file
+  Homebrew manages.
 - `mabo-ctl mcp` serves this repository's services to an AI assistant (Claude
   Code, Claude Desktop, any MCP client) over the Model Context Protocol on
   stdio: `status`, `health`, `logs` and `config` tools, plus `start`, `stop`

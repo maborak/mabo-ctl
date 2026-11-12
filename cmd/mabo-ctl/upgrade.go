@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/maborak/mabo-ctl/internal/selfupdate"
 	"github.com/spf13/cobra"
@@ -66,6 +67,10 @@ func (a *app) runUpgrade(ctx context.Context, force bool) error {
 	if resolved, err := filepath.EvalSymlinks(exe); err == nil {
 		exe = resolved
 	}
+	if homebrewManaged(exe) {
+		return usageErrorf("mabo-ctl upgrade: %s was installed by Homebrew; update it with `brew upgrade mabo-ctl`, "+
+			"which keeps Homebrew's record of the version true", exe)
+	}
 
 	fmt.Fprintln(a.env.Stderr, "checking the latest mabo-ctl release")
 	rel, err := selfupdate.Latest(ctx, selfupdate.Options{Token: githubToken()})
@@ -109,4 +114,11 @@ func githubToken() string {
 		return t
 	}
 	return os.Getenv("GH_TOKEN")
+}
+
+// homebrewManaged reports whether exe lives in a Homebrew Cellar. Replacing that
+// file in place would leave Homebrew believing an older version is installed,
+// and its next upgrade or cleanup would act on a binary it did not put there.
+func homebrewManaged(exe string) bool {
+	return strings.Contains(filepath.ToSlash(exe), "/Cellar/mabo-ctl/")
 }

@@ -76,3 +76,17 @@ func TestUpgradeRejectsArguments(t *testing.T) {
 		t.Fatalf("exit code = %d, want %d", code, exitUsage)
 	}
 }
+
+func TestUpgradeRecognisesAHomebrewInstall(t *testing.T) {
+	t.Parallel()
+	for path, want := range map[string]bool{
+		"/opt/homebrew/Cellar/mabo-ctl/1.4.0/bin/mabo-ctl":              true,
+		"/home/linuxbrew/.linuxbrew/Cellar/mabo-ctl/1.4.0/bin/mabo-ctl": true,
+		"/Users/me/.local/bin/mabo-ctl":                                 false,
+		"/usr/local/bin/mabo-ctl":                                       false,
+	} {
+		if got := homebrewManaged(path); got != want {
+			t.Errorf("homebrewManaged(%q) = %v, want %v", path, got, want)
+		}
+	}
+}

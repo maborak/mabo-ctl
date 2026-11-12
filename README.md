@@ -47,6 +47,17 @@ and the binary is checksum-verified before it is written. With `GITHUB_TOKEN` or
 `GH_TOKEN` set, the same script authenticates a private repository — GitHub
 serves a private repo's release assets only through the API.
 
+Or with Homebrew (macOS and Linux):
+
+```sh
+brew install maborak/tap/mabo-ctl
+```
+
+The formula installs the same prebuilt static binary, checked against the
+release's SHA-256, plus bash, zsh and fish completions. Update it with
+`brew upgrade mabo-ctl`; `mabo-ctl upgrade` recognises a Homebrew install and
+says so instead of replacing a file Homebrew manages.
+
 Or install from source:
 
 ```sh
