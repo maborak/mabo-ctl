@@ -63,6 +63,12 @@
       "description": "Enable the web console's Terminal tab: interactive shells in the repository root, running as you. Loopback consoles only. `serve --terminal` enables it for one run. Default false.",
       "type": "boolean"
     },
+    "console_terminal_scrollback": {
+      "description": "Lines of history each Terminal tab shell keeps in the browser, like a terminal app's scrollback setting. Memory is about columns × lines × 12 bytes per shell. 0 keeps none; there is no unlimited. Read when the console page loads; reload the page to apply a change. Default 10000.",
+      "maximum": 100000,
+      "minimum": 0,
+      "type": "integer"
+    },
     "ready_timeout": {
       "description": "How long a readiness probe polls before a service is slow, then degraded. Default 30s. Accepts \"10s\", \"1m30s\", \"500ms\" or a bare number of seconds.",
       "type": [

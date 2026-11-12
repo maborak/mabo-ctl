@@ -6,12 +6,14 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/maborak/mabo-ctl/internal/config"
 	"github.com/maborak/mabo-ctl/internal/supervisor"
 )
 
@@ -58,6 +60,26 @@ func TestTerminalRoutesAreOffUnlessEnabled(t *testing.T) {
 	}
 	if page := string(s.renderPage()); !strings.Contains(page, "Terminal is off") {
 		t.Error("the page does not explain how to enable the terminal")
+	}
+}
+
+// TestTerminalScrollbackComesFromTheConfig: the page hands xterm the
+// configured history length, and the default without a config.
+func TestTerminalScrollbackComesFromTheConfig(t *testing.T) {
+	t.Parallel()
+	const meta = `<meta name="mabo-ctl-terminal-scrollback" content="%d">`
+	ctrl := twoServices()
+	ctrl.cfg = nil
+	s := newRecorderServer(t, ctrl)
+	if page := string(s.renderPage()); !strings.Contains(page, fmt.Sprintf(meta, config.DefaultTerminalScrollback)) {
+		t.Errorf("without a config the page does not carry the default scrollback")
+	}
+	ctrl.cfg = &config.Config{ConsoleTerminalScrollback: 2500}
+	if page := string(s.renderPage()); !strings.Contains(page, fmt.Sprintf(meta, 2500)) {
+		t.Errorf("the page does not carry console_terminal_scrollback")
+	}
+	if !strings.Contains(consoleHTML, "scrollback: TERM_SCROLLBACK,") || strings.Contains(consoleHTML, "scrollback: 10000") {
+		t.Error("xterm is not given the configured scrollback")
 	}
 }
 

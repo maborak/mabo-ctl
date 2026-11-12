@@ -8,6 +8,138 @@ contract and service phase names are stable.
 
 ## [Unreleased]
 
+### Added
+
+- `console_terminal_scrollback` in `mabo-ctl.yaml` sets how many lines of
+  history each Terminal tab shell keeps in the browser (default 10000, the
+  previous fixed value; 0 to 100000, no unlimited). History costs about
+  columns × lines × 12 bytes per shell, so a lower value bounds the page's
+  memory. A config reload says to refresh the page to apply it.
+- Homebrew: `brew install maborak/tap/mabo-ctl`. The release workflow
+  regenerates the formula from each release's `SHA256SUMS`
+  (`packaging/homebrew/formula.sh`) and pushes it to the tap; it installs the
+  prebuilt static binary and shell completions. `mabo-ctl upgrade` on a
+  Homebrew install points at `brew upgrade` instead of replacing the file
+  Homebrew manages.
+- `mabo-ctl mcp` serves this repository's services to an AI assistant (Claude
+  Code, Claude Desktop, any MCP client) over the Model Context Protocol on
+  stdio: `status`, `health`, `logs` and `config` tools, plus `start`, `stop`
+  and `restart` only with `--allow-mutate`. Standard library only, no network
+  listener, health-URL credentials redacted as on the web console, strict
+  argument checking.
+- `mabo-ctl activate zsh|bash|fish` prints a shell hook that prints one line
+  when you `cd` into a repository with a `mabo-ctl.yaml` — what runs and what
+  stopped. It reads only the pid records (identity-checked), never starts
+  anything, never creates `.mabo-ctl/`, and runs no probe or port lookup.
+- CPU and memory per service: `status` gains CPU and MEM columns, the web
+  console's detail pane and the TUI detail block show them, and
+  `status --json` appends `cpu_percent` and `rss_bytes` to every record (an
+  additive contract change). Each figure is the service's whole process group,
+  summed from one `ps` per status read; observation only, no limits.
+- `mabo-ctl init --from Procfile|process-compose.yaml` imports another
+  tool's processes into a live `mabo-ctl.yaml`: commands run through `sh -c`,
+  foreman's `$PORT` assignment, and process-compose dependencies, health
+  conditions, environment, working directories, `disabled` and HTTP readiness
+  probes carry over. Unsafe entries (a `{{` template opener, an invalid env
+  key) are written commented out with the reason, every value is quoted so
+  repo text cannot inject YAML, and the file is validated before init reports
+  success.
+- `--port-offset N|auto`, a global flag, moves every declared port by N for
+  this checkout, so two git worktrees or clones of one repository can run side
+  by side. `auto` picks the first of +100…+1000 where every declared port is
+  free. It is saved per checkout in `.mabo-ctl/run.env` (`MABO_PORT_OFFSET`),
+  ranks below every explicit port level, and `config` reports those ports as
+  `from offset`. A refused start for a held port now suggests it.
+- The full-screen console (TUI) gains the web console's log and service
+  controls: merged all-services log (`m`), pause (`p`) and clear (`c`), a
+  level filter (`v`) using the same JSON level classification as the browser,
+  pretty JSON (`J`), separators between entries (`|`), a detail block for the
+  selected service (`i`), list filters by name (`f`) and phase (`1`-`7`, `0`),
+  an activity history (`e`), a configuration view with port sources and start
+  order (`C`), and restart of every running service (`R`). Health URLs are
+  redacted on screen as they are in the browser.
+- `mabo-ctl config --graph` prints the start order: one row per dependency
+  level, each service with what it waits for. `config --json` and
+  `GET /api/config` carry it as `levels`, and the web Config tab shows a
+  "start order" table. All three come from the same levelling `start` uses.
+- **Pretty JSON** checkbox in the web console's log toolbar. It indents log
+  lines that are complete JSON objects or arrays by changing whitespace only,
+  so big integers, duplicate keys and key order show exactly as written. Lines
+  cut by the display limit stay raw, the text filter still matches the
+  original line, the choice is remembered per browser, and VIEW share links
+  mirror it.
+
+### Changed
+
+- The TUI's `a` (start all) now starts every service by name, autostart or
+  not, like the web console's Start all; it used to start only the autostart
+  selection.
+- Build with Go 1.26.11 to address GO-2026-6859 (`net/http`).
+
+### Fixed
+
+- `init`'s commented-out scaffold could carry live YAML: a repo directory name
+  holding a Unicode line break (NEL, U+2028, U+2029) ended the comment, and a
+  `checks:` entry injected that way ran on the next `preflight`. Comment text
+  now also loses C1 controls and those separators.
+- A health-URL query token could reach `/api/status` through `detail`, where
+  net/http's error quotes the URL with the password starred but the query
+  intact. Every credential value the health URL carries is now redacted
+  wherever `detail` contains it.
+- A pid record is read only if it is a regular file of at most 4 KiB, so a
+  committed `.mabo-ctl/pids/x.pid` symlink to `/dev/zero` cannot hang a status
+  read (or the shell hook on `cd`).
+
+- `docs/API.md` and the OpenAPI spec described `elapsed_ms` as time since
+  spawn; it is how long the last readiness probe took (`uptime_ms` is uptime).
+
+- `reset --force` killed the other checkout's service. Two worktrees or clones
+  of one repository declare the same ports, so the "foreign" listener `reset
+  --force` reaped on a declared port could be the same service that another
+  checkout's mabo-ctl started and still records. Reset now finds the holder's
+  nearest `.mabo-ctl`, and when that checkout's pid records claim the holder or
+  its process group, it names the checkout and leaves the process alone.
+
+- Bound the browser's pending log-render queue as well as displayed history.
+  Background tabs no longer retain every incoming line while animation frames
+  are suspended. Log previews are limited to 2,000 lines and 2 Mi UTF-16 code
+  units, with explicit display-only truncation for lines over 16 Ki code units.
+  Raw service log files remain unchanged.
+- Filtering, clearing and resuming logs cancel stale paints instead of replaying
+  pending records twice. DOM pruning follows the retained text budget even when
+  new lines do not match the active filter.
+- Bound each terminal's unparsed browser output at 2 MiB. An overloaded display
+  detaches and, when visible and drained, reloads recent server scrollback.
+  Recovery explicitly warns that older terminal output may be omitted; the
+  shell itself keeps running and replay cannot generate shell input.
+- A paused terminal display now recovers when the page becomes visible again
+  or the Terminal tab is reopened, not only after a click on that shell's tab.
+  Pause and recovery notes name the shell they refer to.
+- Log tailing bounds every line at 256 KiB at the source: backlog, live
+  follow and failure excerpts alike. A newline-less progress bar or dump no
+  longer grows `serve` (or the TUI, or `logs -f`) by re-reading the partial
+  line every poll. One oversized line no longer makes a service's stream fail
+  with `bufio.Scanner: token too long` and reconnect forever. Truncated lines
+  carry an explicit marker; the log file is unchanged. A trailing `\r` is now
+  stripped from live lines as it already was from backlog lines.
+- The history a log tail replays is capped at 8 MiB per request, on top of
+  its line count. 5000 lines of up to 256 KiB each could previously make one
+  `?tail=` request (from any console or shared link) read over a gigabyte
+  into memory. Lines dropped by the byte cap are replaced by one marker
+  saying how many were omitted.
+- The TUI's log buffer is capped at 4 MiB as well as 5000 lines; with 256 KiB
+  lines the line count alone allowed over a gigabyte.
+- Log streams in the web console, the TUI and `logs -f` buffer at most 16
+  lines between the tailer and a slow reader (was 256, and 128 per service
+  in `logs -f`), and merged all-services streams no longer buffer per
+  service. With 256 KiB lines, one slow reader could pin 64 MiB per stream,
+  and a merged stream that much again per service; now about 4 MiB per
+  stream plus, per service, about three lines and a 64 KiB read buffer.
+  Nothing is dropped: the tailer reads a file and simply waits.
+- Removed private project names from public docs and examples; links to an
+  unpublished roadmap are gone, and `docs/SPEC.md` is marked as the
+  historical original spec.
+
 ## [1.4.0] - 2026-11-11
 
 ### Added

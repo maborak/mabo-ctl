@@ -275,7 +275,7 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	defer s.streams.Add(-1)
 
 	ctrl := s.controller()
-	lines := make(chan string, streamBuffer)
+	lines := make(chan string, lineBuffer)
 	done := make(chan error, 1)
 	go func() {
 		defer func() {
@@ -430,13 +430,15 @@ func (s *Server) handleStreamAll(w http.ResponseWriter, r *http.Request) {
 	defer s.streams.Add(-1)
 
 	ctrl := s.controller()
-	merged := make(chan streamMsg, streamBuffer)
+	merged := make(chan streamMsg, lineBuffer)
 	tail := tailCount(r.URL.Query().Get("tail"))
 
 	var wg sync.WaitGroup
 	for _, in := range insts {
 		name := in.Name
-		lines := make(chan string, streamBuffer)
+		// Unbuffered: the forwarder holding one line is this service's buffer;
+		// merged is shared, so per-service depth would multiply by services.
+		lines := make(chan string)
 		done := make(chan error, 1)
 
 		// The tailer: exactly one per service, panics captured like the

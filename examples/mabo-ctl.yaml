@@ -46,6 +46,13 @@ ready_timeout: 30s
 # origin in --allow-origin. Default false.
 # console_terminal: true
 
+# Lines of history each Terminal tab shell keeps in the browser, like a terminal
+# app's scrollback setting. Memory is about columns × lines × 12 bytes per shell
+# (a 200-column shell at 10000 lines is about 24 MB), for up to 16 shells.
+# 0 keeps none; the maximum is 100000 and there is no unlimited. Read when the
+# console page loads: after a reload, refresh the page. Default 10000.
+# console_terminal_scrollback: 10000
+
 # ---------------------------------------------------------------------------
 # services — the registry. At least one is required.
 # ---------------------------------------------------------------------------

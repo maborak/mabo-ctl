@@ -217,3 +217,40 @@ func TestShellLineQuotesOnlyWhatNeedsIt(t *testing.T) {
 		}
 	}
 }
+
+// TestConfigLevelsFollowTheStartOrder pins that the start order shown by
+// `config --graph`, `config --json` and the web Config tab is the levelling
+// service.SelectLevels gives start, and that a narrowed view whose
+// dependencies are not shown carries no order rather than a wrong one.
+func TestConfigLevelsFollowTheStartOrder(t *testing.T) {
+	t.Parallel()
+	in := ConfigInput{
+		Config: &config.Config{Root: "/repo", Path: "/repo/mabo-ctl.yaml"},
+		Instances: []service.Instance{
+			{Name: "web", DependsOn: []string{"api"}},
+			{Name: "db"},
+			{Name: "api", DependsOn: []string{"db", "cache"}},
+			{Name: "cache"},
+		},
+	}
+	v := BuildConfigView(in)
+	got, _ := json.Marshal(v.Levels)
+	if want := `[["db","cache"],["api"],["web"]]`; string(got) != want {
+		t.Fatalf("levels = %s, want %s", got, want)
+	}
+	graph := (&Renderer{}).ConfigGraph(v)
+	for _, want := range []string{" 1  db\n    cache", " 2  api    ← db, cache", " 3  web    ← api"} {
+		if !strings.Contains(graph, want) {
+			t.Errorf("graph lacks %q:\n%s", want, graph)
+		}
+	}
+
+	in.Instances = in.Instances[:1] // web alone: api is not in the view
+	if v := BuildConfigView(in); v.Levels != nil {
+		t.Errorf("narrowed view levels = %v, want none", v.Levels)
+	}
+	body, _ := ConfigJSON(BuildConfigView(in))
+	if strings.Contains(string(body), `"levels"`) {
+		t.Errorf("narrowed config JSON still carries levels:\n%s", body)
+	}
+}

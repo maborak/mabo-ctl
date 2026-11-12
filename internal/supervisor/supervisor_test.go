@@ -2483,3 +2483,106 @@ func TestStatusNamesAnUnrunnableService(t *testing.T) {
 		t.Errorf("unstarted service grew detail %q; want none", d)
 	}
 }
+
+// TestResetWithForceSparesAnotherCheckoutsService: a port declared here can be
+// held by the same service in another checkout of this repository (a git
+// worktree, a second clone), which that checkout's mabo-ctl started and still
+// tracks. --force must not kill it.
+func TestResetWithForceSparesAnotherCheckoutsService(t *testing.T) {
+	foreign, foreignDead := spawnForeign(t)
+
+	inst := service.Instance{Name: "svc", Port: 7915, Cmd: helperCmd(), Env: helperEnvFor("sleep")}
+	sup, _ := fixture(t, inst)
+	defer func() { _ = sup.Stop(context.Background(), nil, nil); sup.Wait() }()
+	sup.holderLookup = func(int) Holder { return Holder{PID: foreign, Command: "node"} }
+	sup.checkoutLookup = func(pid int) string {
+		if pid == foreign {
+			return "/work/other-worktree"
+		}
+		return ""
+	}
+
+	events, collect := drain(t)
+	if err := sup.Reset(context.Background(), true, events); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if foreignDead() {
+		t.Fatal("reset --force killed another checkout's service")
+	}
+	var named bool
+	for _, e := range collect() {
+		if strings.Contains(e.Msg, "/work/other-worktree") && strings.Contains(e.Msg, "--port-offset auto") {
+			named = true
+		}
+	}
+	if !named {
+		t.Errorf("the spare did not name the other checkout and the remedy; events = %v", msgs(collect()))
+	}
+}
+
+// TestRecordsClaimReadsTheOtherCheckoutsPidRecords pins how ownership is
+// proved: a pid record in that checkout's .mabo-ctl naming the holder or its
+// group leader, and nothing else.
+func TestRecordsClaimReadsTheOtherCheckoutsPidRecords(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	st, err := state.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.WritePID("web", 4242); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		pid, pgid int
+		want      bool
+	}{{4242, 0, true}, {5000, 4242, true}, {5000, 5000, false}} {
+		if got := recordsClaim(root, tc.pid, tc.pgid); got != tc.want {
+			t.Errorf("recordsClaim(pid %d, pgid %d) = %v, want %v", tc.pid, tc.pgid, got, tc.want)
+		}
+	}
+	if recordsClaim(t.TempDir(), 4242, 0) {
+		t.Error("a directory with no .mabo-ctl claimed a pid")
+	}
+}
+
+func TestParseGroupUsageSumsPerProcessGroup(t *testing.T) {
+	t.Parallel()
+	got := parseGroupUsage("  100  1.5  2048\n  100 10.0  1024\n  200  0.0   512\njunk line here x\n   0  9.9  9999\n")
+	if u := got[100]; u.CPU != 11.5 || u.RSS != 3072*1024 {
+		t.Errorf("group 100 = %+v, want 11.5%% and 3 MiB", u)
+	}
+	if u := got[200]; u.RSS != 512*1024 {
+		t.Errorf("group 200 = %+v, want 512 KiB", u)
+	}
+	if _, ok := got[0]; ok {
+		t.Error("pgid 0 was counted")
+	}
+}
+
+// TestStatusCarriesTheGroupUsageOfLiveServices: a running service reports its
+// process group's CPU and memory, read once per status.
+func TestStatusCarriesTheGroupUsageOfLiveServices(t *testing.T) {
+	inst := service.Instance{Name: "svc", Cmd: helperCmd(), Env: helperEnvFor("sleep")}
+	sup, _ := fixture(t, inst)
+	defer func() { _ = sup.Stop(context.Background(), nil, nil); sup.Wait() }()
+	if err := sup.Start(context.Background(), nil, nil); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	var calls atomic.Int32
+	sup.usageLookup = func() map[int]Usage {
+		calls.Add(1)
+		out := map[int]Usage{}
+		for _, st := range sup.status(context.Background(), false) {
+			out[st.PID] = Usage{CPU: 3, RSS: 42 << 20}
+		}
+		return out
+	}
+	st := sup.Status(context.Background())[0]
+	if st.PID == 0 || st.Usage.RSS != 42<<20 || st.Usage.CPU != 3 {
+		t.Errorf("status = pid %d usage %+v, want the group's usage", st.PID, st.Usage)
+	}
+	if calls.Load() != 1 {
+		t.Errorf("usage was read %d times for one status, want 1", calls.Load())
+	}
+}

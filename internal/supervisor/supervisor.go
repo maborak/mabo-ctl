@@ -182,6 +182,10 @@ type Status struct {
 	// is no exit record. It is the field that says whether the two above mean
 	// anything.
 	ExitedAt time.Time
+	// Usage is the live process group's CPU and resident memory, zero when
+	// nothing is running or ps could not be read. It is observation only:
+	// mabo-ctl sets no limits.
+	Usage Usage
 }
 
 // Event reports one lifecycle transition as it happens.
@@ -267,6 +271,15 @@ type Supervisor struct {
 	// answer on the machine running the tests is not something a test can
 	// arrange.
 	holderLookup func(port int) Holder
+
+	// checkoutLookup overrides [Supervisor.otherCheckout]. It is nil in
+	// production; it is a test seam, because a test cannot arrange another
+	// checkout's process to hold a port.
+	checkoutLookup func(pid int) string
+
+	// usageLookup overrides [groupUsage]. It is nil in production; it is a
+	// test seam, because ps output for a test's own processes is not stable.
+	usageLookup func() map[int]Usage
 }
 
 // markStopping records that mabo-ctl is deliberately taking svc down.
@@ -616,8 +629,39 @@ func (s *Supervisor) status(ctx context.Context, withHolders bool) []Status {
 		}(i, in)
 	}
 
+	live := false
+	for i := range out {
+		live = live || out[i].PID > 0
+	}
+	if withHolders && live {
+		// One ps for the whole stack, alongside the probes, and none when
+		// nothing runs. Every spawned service leads its own process group
+		// (setsid), so its pid is the group id the usage is summed under.
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if ctx.Err() != nil {
+				return
+			}
+			usage := s.usageFn(ctx)
+			for i := range out {
+				if pid := out[i].PID; pid > 0 {
+					out[i].Usage = usage[pid]
+				}
+			}
+		}()
+	}
+
 	wg.Wait()
 	return out
+}
+
+// usageFn is [groupUsage] unless a test replaced it.
+func (s *Supervisor) usageFn(ctx context.Context) map[int]Usage {
+	if s.usageLookup != nil {
+		return s.usageLookup()
+	}
+	return groupUsage(ctx)
 }
 
 // wantsHolder reports whether Status should ask who holds st's port.
@@ -1710,6 +1754,16 @@ func (s *Supervisor) reapPort(ctx context.Context, in service.Instance, force bo
 		emit(ev, Event{Service: in.Name, Msg: fmt.Sprintf(
 			"port %d is held by pid %d, which mabo-ctl started while this reset was running — left alone",
 			in.Port, h.PID)})
+		return nil
+	}
+
+	// Another checkout's live service, even with --force: that mabo-ctl
+	// started it and still tracks it. See otherCheckout.
+	if root := s.otherCheckoutFn(h.PID); root != "" {
+		emit(ev, Event{Service: in.Name, Msg: fmt.Sprintf(
+			"port %d is held by pid %d (%s), a service of the mabo-ctl checkout at %s — left alone, even with --force; "+
+				"stop it there, or give this checkout its own ports with --port-offset auto",
+			in.Port, h.PID, h.Command, root)})
 		return nil
 	}
 

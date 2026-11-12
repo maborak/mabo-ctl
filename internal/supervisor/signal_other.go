@@ -24,6 +24,9 @@ func processGroup(int) (int, error) { return 0, errPlatform }
 
 func verifyGroup(int, time.Time) (int, error) { return 0, errPlatform }
 
+// CheckIdentity cannot verify a process off unix.
+func CheckIdentity(int, time.Time) error { return errPlatform }
+
 func signalGroup(int, syscall.Signal) error { return errPlatform }
 
 func signalPID(int, syscall.Signal) error { return errPlatform }

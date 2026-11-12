@@ -25,8 +25,11 @@ Three front ends over ONE supervisor:
 
 1. **One-shot CLI** — `start`, `stop`, `restart`, `status [--json]`, `health`,
    `config`, `logs`/`tailf`, `open`, `reset`, `preflight`, `doctor`, `init`,
-   `attach`,
-   `exec`, `shell`, `serve`, `completion`, `schema [--commands]`, `upgrade`.
+   `attach`, `exec`, `shell`, `repl`, `serve`, `mcp`, `completion`,
+   `activate`, `schema [--commands]`, `upgrade`. `mcp` serves the same
+   supervisor to an AI assistant over stdio (`internal/mcp`, stdlib JSON-RPC):
+   read-only tools by default, start/stop/restart only with `--allow-mutate`,
+   statuses through `ui.RedactStatuses`. It is not a network listener.
    `ui.StatusJSON` is the stable machine contract, `--version` prints the full
    build report, and `schema --commands` is the machine-readable catalogue of
    the binary itself.
@@ -91,6 +94,7 @@ internal/ui/          colour, fixed-width labels, table + status rendering
 internal/redact/      THE one credential-redaction implementation
 internal/selfupdate/  self-upgrade: latest release, version compare, verified binary swap
 internal/web/         web console: embedded page, JSON/SSE API, HTTP guards
+internal/mcp/         MCP stdio server: JSON-RPC protocol only; tools are built in cmd
 internal/surface/     generated surface inventories (cli, config, json) and the drift gate
 tools/surfacemap/     generator whose output must be byte-identical to surfaces.json
 ```
@@ -170,7 +174,7 @@ name and is a complete sentence.
 
 ## Docs map
 
-- `docs/SPEC.md` — spec of record.
+- `docs/SPEC.md` — the original spec, kept for history; not maintained.
 - `docs/ARCHITECTURE.md` — how the packages fit and why.
 - `docs/EXTENSIONS.md` — the shipped extension contracts (hooks,
   `depends_ready_on`, profiles, `--wait`, log filters, phase history) and

@@ -523,6 +523,18 @@ services:
 			want: []string{`console_addr ":9000" must name a host`},
 		},
 
+		// ---- console_terminal_scrollback ----
+		{
+			name: "console_terminal_scrollback past the maximum",
+			yaml: "console_terminal_scrollback: 100001\n" + okService,
+			want: []string{`console_terminal_scrollback must be between 0 and 100000 lines, got 100001`},
+		},
+		{
+			name: "negative console_terminal_scrollback",
+			yaml: "console_terminal_scrollback: -1\n" + okService,
+			want: []string{`console_terminal_scrollback must be between 0 and 100000 lines, got -1`},
+		},
+
 		// ---- shells block ----
 		{
 			name: "shell bound to an unknown service",
@@ -747,6 +759,25 @@ func TestLoadDefaultsAndOverrides(t *testing.T) {
 		}
 		if cfg.ConsoleAddr != "127.0.0.1:9000" {
 			t.Errorf("ConsoleAddr = %q, want 127.0.0.1:9000", cfg.ConsoleAddr)
+		}
+	})
+
+	t.Run("console_terminal_scrollback", func(t *testing.T) {
+		for _, tt := range []struct {
+			yaml string
+			want int
+		}{
+			{"", DefaultTerminalScrollback},
+			{"console_terminal_scrollback: 0\n", 0},
+			{"console_terminal_scrollback: 2500\n", 2500},
+		} {
+			cfg, err := Load(write(t, t.TempDir(), tt.yaml+okService))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.ConsoleTerminalScrollback != tt.want {
+				t.Errorf("%q: ConsoleTerminalScrollback = %d, want %d", tt.yaml, cfg.ConsoleTerminalScrollback, tt.want)
+			}
 		}
 	})
 

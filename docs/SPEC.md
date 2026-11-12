@@ -1,12 +1,13 @@
 # mabo-ctl — porting `dev.sh` to a standalone Go supervisor
 
-**Status:** spec, not started. Written 2026-08-15 so the shell version can be
-retired rather than reverse-engineered later.
+> **Historical document.** This is the original spec, written 2026-08-15
+> before any code existed, and kept as the design record. It is not maintained:
+> commands, flags and open questions below may have changed or been resolved
+> since. `README.md` and `AGENTS.md` describe current behaviour.
 
-**Source:** ``dev.sh` in the operator's application repository`
-— 1,081 lines of bash, 48 functions. A sibling exists at
-`a second copy of `dev.sh` in a sibling repository` (~29 KB) which has already
-diverged: it carries a persisted-port cache and a `--ports` flag with different
+**Source:** a `dev.sh` in the operator's application repository, 1,081 lines
+of bash and 48 functions. A second copy in a sibling repository (~29 KB) had
+already diverged: it carries a persisted-port cache and a `--ports` flag with different
 precedence. **Two copies of this tool exist and they have already drifted.**
 That is the actual reason to extract it.
 

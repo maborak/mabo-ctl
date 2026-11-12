@@ -285,7 +285,7 @@ dependency closure), and a verb that needed "exactly the named things" reused
 the answer without noticing it was a different question.
 
 **Where it bit us.** `internal/supervisor/supervisor.go`, diagnosed 2026-08-24
-against the tiktok-bot stack. `mabo-ctl stop listener` went through
+against a real three-service stack. `mabo-ctl stop listener` went through
 `service.Select`, whose DFS appends every transitive `depends_on` — so the
 selection came back `[backend, listener]`, and Stop's reverse walk SIGTERM'd
 the listener's own backend seconds after the listener died. The operator saw
@@ -588,8 +588,8 @@ its abort timer when headers arrived, so a body that stalled after the headers
 was unbounded.
 
 **Where it bit us.** `internal/web/console.html` (`request`, `pollNow`), reported
-2026-10-25 after the `mabo-ctl serve` consoles in tiktok-bot, legal-ai and
-amazon-watcher-backend went unresponsive across a laptop sleep while a fresh
+2026-10-25 after the `mabo-ctl serve` consoles of three separate
+projects went unresponsive across a laptop sleep while a fresh
 `curl` to the same server answered in milliseconds. EventSource connections
 stuck in CONNECTING had the same shape: the page only reopened them from
 `onerror`, which a stalled connection never fires.
@@ -873,4 +873,165 @@ and context cancellation remain unchanged.
 **Detector.**
 ```bash
 go test ./internal/supervisor -race -run 'TestTailFollowKeepsStartupAndConcurrentOutput|TestFollowBacklogCompleteLineOffsets|TestTailFollowsTheLogAcrossARotation'
+```
+
+## 33. Background log rendering retained an unbounded second history
+
+**Shape.** The log ring held at most 2,000 lines, but each incoming line also
+entered an unbounded `pending` array awaiting `requestAnimationFrame`. Browsers
+suspend those callbacks in background tabs while SSE may keep delivering data.
+Evicted history records remained reachable from `pending`; returning to the tab
+also tried to construct the entire accumulated DOM before trimming it. A line
+count alone did not bound large log strings. Terminal scrollback separately
+bounded parsed rows, not output queued for xterm's asynchronous parser.
+
+**Evidence.** Suspending paint and ingesting 100,000 roughly 1 KiB lines retained
+all 100,000 in `pending` (100,988,890 text characters), despite a 2,000-line ring.
+This is a reproducible memory-growth path, not proof of any particular Chrome
+crash without that browser's diagnostics.
+
+An isolated Chrome 156 stress test measured 116,321,600 bytes of JavaScript heap
+with the old client after those 100,000 lines, versus 4,945,360 bytes with the
+bounded client. Another 100,000 lines left the bounded client at 4,961,248 bytes.
+These are controlled retained-heap measurements, not whole-browser memory or a
+claim that the user's original crash was diagnosed from a crash report.
+
+**Fix.** Eviction releases pending references too; count and text budgets bound
+both history and DOM. Oversized display prefixes are copied so sliced strings
+cannot retain the original allocation. Rebuilds cancel obsolete paints. Bound
+unparsed terminal output and recover visibly from recent server scrollback once
+the parser drains; preserve replay suppression and leave shells/log files alone.
+
+**Second bite (same branch, before release).** Recovery only ran from the write
+callback, a shell-tab click, and a boot-time `recoverOutput()` that ran before
+any shell existed. A display that drained while the page was hidden, or while
+another console tab was open, stayed frozen on "paused" until the operator
+clicked that shell's tab. The original detector only asserted that the string
+`terminals.recoverOutput();` existed somewhere, so it passed. Reproduced in
+Chrome with 40× CPU throttling and a spoofed hidden page: paused, drained,
+still paused after 15 s. With the fix, it recovered within 3 s of
+`visibilitychange`. `recoverStreams` (visibility, pageshow, online, interval)
+and `terminals.show` now resume it. Recovery notes name their shell, because
+all shells share one note line.
+
+**Detector.** The terminal test checks WHERE recovery is called: inside
+`recoverStreams`, inside `terminals.show`, and the visible branch of
+`visibilitychange` reaching `recoverStreams`.
+```bash
+go test ./internal/web -run 'TestConsoleLogRetentionBoundsEveryQueue|TestConsoleTerminalOutputHasBackpressure|TestConsoleTerminalOutputRecoversWithoutAClick'
+```
+
+## 34. The log tailer's line bound covered only one of its three readers
+
+**Shape.** `maxLineBytes` (256 KiB) claimed to bound a single log line, but only
+the backlog `bufio.Scanner` enforced it, and there it was fatal. The live
+follower used `bufio.Reader.ReadString('\n')`, which has no limit. On EOF with a
+partial line it seeked back and re-read the whole partial on every 200 ms poll,
+separately for each subscriber. A `\r` progress bar or a newline-less dump grew
+mabo-ctl without bound. When the newline finally arrived, the whole line went
+through the channel and SSE to the browser, which parsed all of it before its
+16 Ki display preview applied. Meanwhile, one line over 256 KiB already in the
+log made `followBacklog` return `bufio.Scanner: token too long`. Every web, TUI
+and `logs -f` stream of that service then ended at once and retried forever
+until the next start truncated the log. `logTail` silently stopped at the long
+line and lost everything after it.
+
+**Evidence.** In a throwaway repo, `serve` RSS went from 20 MB to 128 MB in 40 s
+with one `/api/stream` attached while a service wrote 64 KiB/100 ms with no
+newline. A service printing one 300 KiB line got
+`"error":"backlog …: bufio.Scanner: token too long"`. After the fix, the same
+runs held RSS at 21–22 MB. They delivered
+`… [mabo-ctl: line truncated to 262144 of 307200 bytes; the log file has all of it]`.
+
+**Fix.** A single `lineReader` serves backlog, live follow and `logTail`. It keeps
+at most `maxLineBytes` of a line, counts and discards the rest, and marks the
+truncation without splitting a UTF-8 sequence. It keeps a partial line across
+EOFs instead of re-reading it. It strips a trailing `\r` on both paths, where
+the live path used to keep it. The bound applies at the source, so every
+consumer (web, TUI, CLI) gets bounded lines. Log files are unchanged.
+
+Bounding each line still left the history unbounded in practice: `?tail=` is
+clamped to 5000 lines, and 5000 lines of 256 KiB is 1.25 GiB read into memory
+for every request any console or shared link makes. `backlogRing` now also
+caps the history at `maxBacklogBytes` (8 MiB). When the byte cap drops lines
+the count would have kept, one leading marker line says how many.
+
+**Detector.**
+```bash
+go test ./internal/supervisor -race -run 'TestLineReader|TestFollowBacklogSurvivesAnOversizedLine|TestLogTailKeepsLinesAfterAnOversizedOne|TestTailFollowTruncatesAnEndlessLineAtTheSource|TestBacklogStaysWithinItsByteBudget'
+```
+
+## 35. `reset --force` killed another checkout's service
+
+**Shape.** Two git worktrees, or two clones, of one repository declare the same
+ports. A service running in checkout A holds its declared port. In checkout B,
+`reset --force` sweeps every declared port. It finds A's listener, sees that B's
+own pid records do not claim it, calls it a foreign orphan and kills it. A's
+mabo-ctl still recorded that service as running, and B's had no business
+signalling it. The earlier guard asked "did THIS checkout start it?" and never
+"did ANY mabo-ctl start it?".
+
+**Evidence.** By reading the code: `reapPort` spared a holder only when it was
+this checkout's own live pid, then killed any other holder under `--force`.
+Verified after the fix in a scratch repo copied to `w1` and `w2`. With `start`
+in `w1` holding port 47900, `reset --force` in `w2` reports
+`port 47900 is held by pid … a service of the mabo-ctl checkout at …/w1 — left
+alone, even with --force`, and `w1` still answers HTTP 200.
+
+**Fix.** Before reaping, `reapPort` finds the holder's working directory (lsof),
+walks up to the nearest `.mabo-ctl`, and checks whether that checkout's pid
+records name the holder or its process-group leader. If they do and that
+checkout is not this one, the holder is left alone even with `--force`, and the
+message names the checkout and `--port-offset auto`, which gives each checkout
+its own ports.
+
+**Detector.**
+```bash
+go test ./internal/supervisor -race -run 'TestResetWithForceSparesAnotherCheckoutsService|TestRecordsClaimReadsTheOtherCheckoutsPidRecords'
+```
+
+## 36. A Unicode line break turned `init`'s comments into live YAML
+
+**Shape.** `init` writes every guess as a `#` comment and promises that
+nothing runs yet. The fix for row-less finding 8cd2b5a replaced C0 control
+characters in repo-derived comment text, but YAML also ends a line at NEL
+(U+0085), LINE SEPARATOR (U+2028) and PARAGRAPH SEPARATOR (U+2029). A cloned
+repository with a subdirectory named `a<U+2028>checks: [{name: pwn, command:
+[touch, PWNED]}]<U+2028>#` and a `manage.py` produced a scaffold with a LIVE
+top-level `checks:` entry. It ran on `preflight`, the step the scaffold tells
+the operator to run next. `init --from` had the same hole for the commented-out
+form of a blocked process.
+
+**Evidence.** The security review of the feature branch reproduced both with
+yaml.v3: the injected `checks:` and an injected live service.
+
+**Fix.** `yamlComment` also replaces C1 controls (U+0080–U+009F), U+2028 and
+U+2029 with a space.
+
+**Detector.**
+```bash
+go test ./cmd/mabo-ctl -run 'TestYAMLCommentNeutralisesUnicodeLineBreaks|TestInitScaffoldNeutralisesNewlineInjection'
+```
+
+## 37. A health-URL token survived redaction in the probe failure detail
+
+**Shape.** The web console redacts the health URL and replaces the raw URL
+wherever `detail` quotes it. But a failed probe's detail embeds net/http's own
+rendering of the URL, `Head "http://user:***@host/?token=…"`: password starred,
+query intact. That string never equals the raw URL, so the replace missed it,
+and the `?token=` value went out in `/api/status`. The TUI and the MCP tools,
+which share the same redaction, inherited the leak.
+
+**Evidence.** The security review reproduced it with
+`health: http://h:{{.Port}}/?token=T` against a running service that did not
+answer: `T` appeared in `detail`.
+
+**Fix.** `redact.URLSecrets` lists the credential values `redact.URL` withholds
+(the userinfo password or token, and every secret-looking query value, also
+percent-decoded). `ui.RedactStatuses` replaces each of them wherever `detail`
+contains it.
+
+**Detector.**
+```bash
+go test ./internal/ui -run 'TestRedactStatusesCoversNetHTTPsRendering|TestRedactStatusesCoversDetailToo'
 ```

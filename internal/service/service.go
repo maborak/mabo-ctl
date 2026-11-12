@@ -161,6 +161,10 @@ const (
 	FromRunEnv PortSource = "run.env"
 	// FromDefault means the port is the one declared in mabo-ctl.yaml.
 	FromDefault PortSource = "default"
+	// FromOffset means the port is the declared one plus this checkout's
+	// port offset (MABO_PORT_OFFSET in .mabo-ctl/run.env, set by
+	// --port-offset).
+	FromOffset PortSource = "offset"
 )
 
 // Origin explains one service's resolved port. Resolve returns one for every

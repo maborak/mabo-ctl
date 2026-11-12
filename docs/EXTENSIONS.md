@@ -1,9 +1,10 @@
 # EXTENSIONS — shipped extensions and their contracts
 
-> Companion to `docs/SPEC.md` (spec of record) and `docs/ROADMAP.md`. This
+> Companion to `docs/SPEC.md` (the original spec, kept for history). This
 > file documents the eight extension candidates that were audited, what was
 > already built in, what was added, and the invariant each one had to respect.
-> When SPEC.md and this file disagree, SPEC.md wins.
+> Where they disagree, the code, README.md and AGENTS.md describe current
+> behaviour.
 
 Audited 2026-08-27. Every claim below was verified against the live tree, not
 carried over from earlier planning notes — three of the eight turned out to

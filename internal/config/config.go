@@ -49,6 +49,15 @@ const DefaultStopGrace = 10 * time.Second
 // reported slow, when mabo-ctl.yaml does not set ready_timeout.
 const DefaultReadyTimeout = 30 * time.Second
 
+// DefaultTerminalScrollback is how many lines of history each web console
+// terminal keeps, when mabo-ctl.yaml does not set console_terminal_scrollback.
+const DefaultTerminalScrollback = 10000
+
+// MaxTerminalScrollback bounds console_terminal_scrollback. There is no
+// "unlimited": xterm.js keeps about 12 bytes per cell in the browser, so
+// history is columns × lines × 12 bytes per shell, up to 16 shells.
+const MaxTerminalScrollback = 100000
+
 // ErrNotFound reports that no mabo-ctl.yaml exists at or above the starting
 // directory. Test for it with errors.Is.
 var ErrNotFound = errors.New("mabo-ctl.yaml not found")
@@ -73,6 +82,9 @@ type Config struct {
 	// interactive shells as the operator. Off unless set; `serve --terminal`
 	// enables it for one run.
 	ConsoleTerminal bool
+	// ConsoleTerminalScrollback is how many lines of history each Terminal
+	// tab shell keeps in the browser, 0 to MaxTerminalScrollback.
+	ConsoleTerminalScrollback int
 	// ActiveProfiles is the profile set in force, when one was requested and
 	// passed validation; nil means "no profile selection", not "no profiles".
 	ActiveProfiles []string
@@ -412,6 +424,11 @@ func Load(path string) (*Config, error) {
 		ConsoleTerminal:  doc.ConsoleTerminal,
 		StopGrace:        DefaultStopGrace,
 		ReadyTimeout:     DefaultReadyTimeout,
+
+		ConsoleTerminalScrollback: DefaultTerminalScrollback,
+	}
+	if doc.ConsoleTerminalScrollback != nil {
+		cfg.ConsoleTerminalScrollback = *doc.ConsoleTerminalScrollback
 	}
 	if doc.StopGrace != nil {
 		cfg.StopGrace = time.Duration(*doc.StopGrace)
@@ -588,9 +605,12 @@ type fileDoc struct {
 	ConsoleAddr      string         `yaml:"console_addr"`
 	ConsoleAccessKey string         `yaml:"console_access_key"`
 	ConsoleTerminal  bool           `yaml:"console_terminal"`
-	Services         []specDoc      `yaml:"services"`
-	Checks           []Check        `yaml:"checks"`
-	Shells           []Shell        `yaml:"shells"`
+	// ConsoleTerminalScrollback is a pointer so an absent key takes the
+	// default while an explicit 0 (no history) is kept.
+	ConsoleTerminalScrollback *int      `yaml:"console_terminal_scrollback"`
+	Services                  []specDoc `yaml:"services"`
+	Checks                    []Check   `yaml:"checks"`
+	Shells                    []Shell   `yaml:"shells"`
 }
 
 // specDoc mirrors Spec with a lenient env value type.

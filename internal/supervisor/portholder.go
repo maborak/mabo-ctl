@@ -162,7 +162,8 @@ func LsofCommand(port int) string {
 // discoverability goes to die.
 func portHeldError(name string, port int, h Holder) error {
 	return fmt.Errorf("%w: port %d held by pid %d (%s) — inspect with: %s; "+
-		"or start it elsewhere with %s=<port> mabo-ctl start %s",
+		"or start it elsewhere with %s=<port> mabo-ctl start %s; "+
+		"or, if it is another checkout of this repo, give this one its own ports with --port-offset auto",
 		ErrPortHeld, port, h.PID, h.Command, LsofCommand(port), service.PortEnvVar(name), name)
 }
 

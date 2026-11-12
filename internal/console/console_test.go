@@ -366,20 +366,20 @@ func TestTailLinesReachTheLogPaneAndStaleOnesDoNot(t *testing.T) {
 	msg := runCmd(t, m.tail.next())
 	m, _ = send(t, m, msg)
 
-	if got := strings.Join(m.lines, "\n"); !strings.Contains(got, "website line one") {
+	if got := strings.Join(m.lineTexts(), "\n"); !strings.Contains(got, "website line one") {
 		t.Fatalf("log buffer = %q, want it to contain the tailed line", got)
 	}
 
 	// A line tagged with a superseded session is dropped rather than shown
 	// under the wrong service.
-	stale := &tailSession{svc: "gone", lines: make(chan string, 1), done: make(chan error, 1), cancel: func() {}}
-	before := len(m.lines)
+	stale := &tailSession{key: "gone", lines: make(chan tailLine, 1), done: make(chan error, 1), cancel: func() {}}
+	before := len(m.recs)
 	m, cmd = send(t, m, tailLineMsg{sess: stale, line: "output from the previous selection"})
 	if cmd != nil {
 		t.Error("a stale tail line re-armed its reader; the drain goroutine owns it")
 	}
-	if len(m.lines) != before {
-		t.Errorf("stale line was appended: %v", m.lines)
+	if len(m.recs) != before {
+		t.Errorf("stale line was appended: %v", m.lineTexts())
 	}
 }
 
@@ -387,7 +387,7 @@ func TestFilterAppliesToTheLogPane(t *testing.T) {
 	t.Parallel()
 	f := &fakeCtrl{}
 	m := booted(t, f)
-	m.lines = []string{"listening on 7100", "ERROR: boom", "still fine"}
+	m.setLines("listening on 7100", "ERROR: boom", "still fine")
 
 	m, _ = send(t, m, key("/"))
 	if !m.filtering {
@@ -408,7 +408,7 @@ func TestFilterAppliesToTheLogPane(t *testing.T) {
 	if got := m.Filter(); got != "err" {
 		t.Fatalf("filter = %q, want err", got)
 	}
-	if got := m.visibleLines(); len(got) != 1 || got[0] != "ERROR: boom" {
+	if got := m.visibleTexts(); len(got) != 1 || got[0] != "ERROR: boom" {
 		t.Fatalf("visible lines = %v, want the matching line only (match is case-insensitive)", got)
 	}
 
@@ -438,7 +438,7 @@ func TestFilterAppliesToTheLogPane(t *testing.T) {
 	if got := m.Filter(); got != "" {
 		t.Errorf("filter = %q, want it cleared", got)
 	}
-	if got := len(m.visibleLines()); got != 3 {
+	if got := len(m.visibleTexts()); got != 3 {
 		t.Errorf("visible lines = %d, want all 3 back", got)
 	}
 }
@@ -498,7 +498,8 @@ func TestOperationKeysCallTheSupervisorWithoutBlocking(t *testing.T) {
 		{"s", opStart, []string{"website"}},
 		{"x", opStop, []string{"website"}},
 		{"r", opRestart, []string{"website"}},
-		{"a", opStart, nil},
+		// Every service by name: nil would be the autostart selection.
+		{"a", opStart, []string{"website", "backend", "worker"}},
 		{"S", opStop, nil},
 	} {
 		f := &fakeCtrl{block: make(chan struct{})}
@@ -594,7 +595,7 @@ func TestViewIsNonEmptyAndFitsTheTerminal(t *testing.T) {
 	t.Parallel()
 	f := &fakeCtrl{}
 	m := booted(t, f)
-	m.lines = []string{"a log line that is quite a lot longer than a narrow terminal is wide"}
+	m.setLines("a log line that is quite a lot longer than a narrow terminal is wide")
 
 	for _, size := range []tea.WindowSizeMsg{
 		{Width: 20, Height: 6},
@@ -676,7 +677,7 @@ func TestScrollingStopsAndResumesFollow(t *testing.T) {
 		m.appendLine(strings.Repeat("x", 3) + string(rune('a'+i%26)))
 	}
 
-	if !m.follow || m.offset != m.bottomOffset() {
+	if !m.follow || m.viewOffset(len(m.rows())) != m.bottomOffset() {
 		t.Fatalf("following broke while lines arrived: follow=%v offset=%d bottom=%d", m.follow, m.offset, m.bottomOffset())
 	}
 
@@ -695,7 +696,7 @@ func TestScrollingStopsAndResumesFollow(t *testing.T) {
 	}
 
 	m, _ = send(t, m, key("G"))
-	if !m.follow || m.offset != m.bottomOffset() {
+	if !m.follow || m.viewOffset(len(m.rows())) != m.bottomOffset() {
 		t.Errorf("G did not resume following: follow=%v offset=%d", m.follow, m.offset)
 	}
 
@@ -716,8 +717,8 @@ func TestLogBufferIsCapped(t *testing.T) {
 	for i := range maxLogLines + 500 {
 		m.appendLine(strings.Repeat("l", 4) + string(rune('a'+i%26)))
 	}
-	if len(m.lines) != maxLogLines {
-		t.Errorf("log buffer holds %d lines, want it capped at %d", len(m.lines), maxLogLines)
+	if len(m.recs) != maxLogLines {
+		t.Errorf("log buffer holds %d lines, want it capped at %d", len(m.recs), maxLogLines)
 	}
 	if m.offset > m.bottomOffset() {
 		t.Errorf("offset %d escaped the trimmed buffer (bottom %d)", m.offset, m.bottomOffset())
@@ -1054,4 +1055,35 @@ func TestUpCountsProcessesThatExist(t *testing.T) {
 	if view := m.View(); !strings.Contains(view, "2/4 up") {
 		t.Fatalf("title does not report 2/4 up:\n%s", view)
 	}
+}
+
+// lineTexts is the retained buffer's text, oldest first.
+func (m Model) lineTexts() []string {
+	out := make([]string, 0, len(m.recs))
+	for _, r := range m.recs {
+		out = append(out, r.text)
+	}
+	return out
+}
+
+// visibleTexts is the text of the log rows the pane would draw.
+func (m Model) visibleTexts() []string {
+	var out []string
+	for _, r := range m.rows() {
+		out = append(out, r.text)
+	}
+	return out
+}
+
+// setLines replaces the buffer with lines from the selected service.
+func (m *Model) setLines(lines ...string) {
+	m.clearLog()
+	for _, l := range lines {
+		m.appendLine(l)
+	}
+}
+
+// appendLine adds one line from the selected service, as a tail would.
+func (m *Model) appendLine(line string) {
+	m.appendRecord(m.selectedName(), line)
 }
