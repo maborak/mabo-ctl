@@ -65,7 +65,32 @@ func TestHelperProcess(t *testing.T) {
 		}
 		time.Sleep(2 * time.Minute)
 
+	case "wrapper":
+		// A shell-style wrapper: start a child in our process group that
+		// ignores SIGTERM, record its pid, and keep the default SIGTERM
+		// disposition ourselves, so the wrapper dies at once on a stop while
+		// the server it started keeps running.
+		sub := exec.Command(os.Args[0], "-test.run=TestHelperProcess")
+		sub.Env = append(os.Environ(), helperEnv+"=ignoreterm")
+		sub.Stdout = os.Stdout
+		if err := sub.Start(); err != nil {
+			fmt.Fprintln(os.Stderr, "spawn server:", err)
+			os.Exit(1)
+		}
+		if err := os.WriteFile(os.Getenv("MABOCTL_HELPER_PIDFILE"),
+			[]byte(strconv.Itoa(sub.Process.Pid)), 0o600); err != nil {
+			fmt.Fprintln(os.Stderr, "record server:", err)
+			os.Exit(1)
+		}
+		time.Sleep(2 * time.Minute)
+
 	case "ignoreterm":
+		if dir := os.Getenv("MABOCTL_HELPER_CHDIR"); dir != "" {
+			if err := os.Chdir(dir); err != nil {
+				fmt.Fprintln(os.Stderr, "chdir:", err)
+				os.Exit(1)
+			}
+		}
 		signalIgnoreTERM()
 		fmt.Println("ignoring SIGTERM")
 		time.Sleep(2 * time.Minute)
@@ -333,6 +358,158 @@ func TestStopEscalatesToSIGKILL(t *testing.T) {
 	}
 	if !hasMsg(events, "SIGKILL") {
 		t.Errorf("no event mentioned the SIGKILL escalation; events = %v", msgs(events))
+	}
+}
+
+// TestStopWaitsForTheWholeGroup is the regression for docs/LANDMINES.md §38:
+// a wrapper that exits on SIGTERM while the server it started ignores it.
+// Waiting on the leader alone reported "stopped" at once, never escalated, and
+// left the server holding its port.
+func TestStopWaitsForTheWholeGroup(t *testing.T) {
+	pidFile := filepath.Join(t.TempDir(), "server.pid")
+	sup, _ := fixture(t, service.Instance{
+		Name: "wrapped",
+		Cmd:  helperCmd(),
+		Env:  helperEnvFor("wrapper", "MABOCTL_HELPER_PIDFILE="+pidFile),
+	})
+	ev, collect := drain(t)
+	if err := sup.Start(context.Background(), nil, ev); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	var server int
+	for i := 0; i < 100 && server == 0; i++ {
+		if b, err := os.ReadFile(pidFile); err == nil {
+			server, _ = strconv.Atoi(string(b))
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if server == 0 {
+		t.Fatal("the wrapper never recorded its server's pid")
+	}
+	t.Cleanup(func() { _ = syscall.Kill(server, syscall.SIGKILL) }) // never leak it
+	// Let the server install its SIGTERM handler first; otherwise the test
+	// passes because the server died of the TERM, not because Stop waited.
+	time.Sleep(300 * time.Millisecond)
+
+	start := time.Now()
+	if err := sup.Stop(context.Background(), nil, ev); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	events := collect()
+	sup.Wait()
+
+	for i := 0; i < 20 && state.Alive(server); i++ {
+		time.Sleep(50 * time.Millisecond)
+	}
+	if state.Alive(server) {
+		t.Fatalf("server %d outlived Stop: it waited on the wrapper, not the group; events = %v",
+			server, msgs(events))
+	}
+	if elapsed := time.Since(start); elapsed < 2*time.Second {
+		t.Errorf("Stop took %s; the server ignored SIGTERM, so it must have waited the 2s stop_grace", elapsed)
+	}
+	if !hasMsg(events, "SIGKILL") {
+		t.Errorf("no event mentioned the SIGKILL escalation; events = %v", msgs(events))
+	}
+}
+
+// startWrapperThenKillIt starts a "wrapper" service, waits for the server it
+// spawns, then SIGKILLs the wrapper alone: the shape of a wrapper that crashed
+// earlier and left its server running. It returns the server's pid.
+func startWrapperThenKillIt(t *testing.T, sup *Supervisor, st *state.Dir, pidFile string, ev chan<- Event) int {
+	t.Helper()
+	if err := sup.Start(context.Background(), nil, ev); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	var server int
+	for i := 0; i < 100 && server == 0; i++ {
+		if b, err := os.ReadFile(pidFile); err == nil {
+			server, _ = strconv.Atoi(string(b))
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if server == 0 {
+		t.Fatal("the wrapper never recorded its server's pid")
+	}
+	t.Cleanup(func() { _ = syscall.Kill(server, syscall.SIGKILL) }) // never leak it
+	time.Sleep(300 * time.Millisecond)                              // let it ignore SIGTERM
+
+	leader, _ := st.ReadPID("wrapped")
+	if err := syscall.Kill(leader, syscall.SIGKILL); err != nil {
+		t.Fatalf("kill the wrapper: %v", err)
+	}
+	for i := 0; i < 100 && state.Alive(leader); i++ {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if state.Alive(leader) {
+		t.Fatal("the wrapper was never reaped")
+	}
+	if !state.Alive(server) {
+		t.Fatal("the server died with its wrapper; the test needs it to outlive it")
+	}
+	return server
+}
+
+// TestStopReachesTheGroupOfADeadLeader: a wrapper that died BEFORE the stop
+// leaves a pid record naming a dead leader and a server still in its group.
+// The stop used to clear the record as stale and leave the server running.
+func TestStopReachesTheGroupOfADeadLeader(t *testing.T) {
+	pidFile := filepath.Join(t.TempDir(), "server.pid")
+	sup, st := fixture(t, service.Instance{
+		Name: "wrapped",
+		Cmd:  helperCmd(),
+		Env:  helperEnvFor("wrapper", "MABOCTL_HELPER_PIDFILE="+pidFile),
+	})
+	ev, collect := drain(t)
+	server := startWrapperThenKillIt(t, sup, st, pidFile, ev)
+
+	if err := sup.Stop(context.Background(), nil, ev); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	events := collect()
+	sup.Wait()
+
+	for i := 0; i < 20 && state.Alive(server); i++ {
+		time.Sleep(50 * time.Millisecond)
+	}
+	if state.Alive(server) {
+		t.Fatalf("server %d outlived Stop after its wrapper died; events = %v", server, msgs(events))
+	}
+	if !hasMsg(events, "still running") || !hasMsg(events, "SIGKILL") {
+		t.Errorf("Stop did not report the leftover group and its escalation; events = %v", msgs(events))
+	}
+	if pid, _ := st.ReadPID("wrapped"); pid != 0 {
+		t.Errorf("the pid record survived a completed stop: %d", pid)
+	}
+}
+
+// TestStopRefusesALeaderlessGroupItCannotTie: when nothing in the group holds
+// the service's port or works inside the checkout, the group id may have been
+// reused, and the stop must refuse rather than signal it.
+func TestStopRefusesALeaderlessGroupItCannotTie(t *testing.T) {
+	pidFile := filepath.Join(t.TempDir(), "server.pid")
+	sup, st := fixture(t, service.Instance{
+		Name: "wrapped",
+		Cmd:  helperCmd(),
+		Env:  helperEnvFor("wrapper", "MABOCTL_HELPER_PIDFILE="+pidFile, "MABOCTL_HELPER_CHDIR=/"),
+	})
+	ev, collect := drain(t)
+	server := startWrapperThenKillIt(t, sup, st, pidFile, ev)
+
+	if err := sup.Stop(context.Background(), nil, ev); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	events := collect()
+	sup.Wait()
+
+	if !state.Alive(server) {
+		t.Fatal("Stop signalled a group it could not tie to the service")
+	}
+	if !hasMsg(events, "refusing to signal process group") {
+		t.Errorf("Stop did not explain the refusal; events = %v", msgs(events))
+	}
+	if pid, _ := st.ReadPID("wrapped"); pid == 0 {
+		t.Error("the refusal removed the pid record, the one thing still naming the group")
 	}
 }
 

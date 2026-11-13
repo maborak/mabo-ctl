@@ -8,6 +8,25 @@ contract and service phase names are stable.
 
 ## [Unreleased]
 
+## [1.4.1] - 2026-11-13
+
+### Fixed
+
+- `stop` waited for the process group's leader alone. A shell wrapper that
+  exits on SIGTERM, around a server that ignores it, read as `stopped` at
+  once: no SIGKILL followed, and the server kept running and held its port.
+  Stop now waits until the whole group has exited and escalates to SIGKILL
+  after `stop_grace` when any member is left.
+- `stop` of a service whose wrapper had already died cleared the pid file as
+  stale and left the server it started running. Stop now stops the leftover
+  processes in the group when at least one of them holds the service's port
+  or works inside the checkout. Otherwise it refuses, lists their pids, and
+  keeps the pid file.
+
+### Security
+
+- Build with Go 1.26.11 to address GO-2026-6859 (`net/http`).
+
 ## [1.4.0] - 2026-11-11
 
 ### Added

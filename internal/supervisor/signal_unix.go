@@ -225,6 +225,17 @@ func signalGroup(pgid int, sig syscall.Signal) error {
 	return nil
 }
 
+// groupAlive reports whether any process is left in group pgid. Signal 0
+// checks without delivering anything; EPERM means a member exists that this
+// user may not signal, which is still a member.
+func groupAlive(pgid int) bool {
+	if pgid <= 1 {
+		return false
+	}
+	err := syscall.Kill(-pgid, 0)
+	return err == nil || errors.Is(err, syscall.EPERM)
+}
+
 // termSignal and killSignal name the two stages of the stop escalation.
 var (
 	termSignal = syscall.SIGTERM

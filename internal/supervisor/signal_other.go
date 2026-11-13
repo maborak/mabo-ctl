@@ -26,6 +26,12 @@ func verifyGroup(int, time.Time) (int, error) { return 0, errPlatform }
 
 func signalGroup(int, syscall.Signal) error { return errPlatform }
 
+func groupAlive(int) bool { return false }
+
+func groupMembers(int) ([]int, error) { return nil, errPlatform }
+
+func processCwds([]int) map[int]string { return nil }
+
 func signalPID(int, syscall.Signal) error { return errPlatform }
 
 var (
