@@ -1404,28 +1404,50 @@ func (s *Supervisor) stopOne(ctx context.Context, name string, ev chan<- Event) 
 		emit(ev, Event{Service: name, Phase: PhaseStopped, Msg: "not running"})
 		return
 	}
+	var pgid int
 	if !state.Alive(pid) {
-		// Stale pid file for a process that is already gone: clean it up, but
-		// never signal on the strength of it.
-		_ = s.st.RemovePID(name)
-		emit(ev, Event{Service: name, Phase: PhaseStopped,
-			Msg: fmt.Sprintf("not running (cleared stale pid %d)", pid)})
-		return
-	}
-
-	// The recycled-pid guard. See verifyGroup: every service mabo-ctl spawns is
-	// its own process-group leader, AND was spawned at the time its pid record
-	// recorded — a live group leader whose real start time disagrees with the
-	// record is a recycled pid wearing our shape, and must not be signalled.
-	pgid, err := verifyGroup(pid, pidRec.StartedAt)
-	if err != nil {
-		// Refusing to signal is right; leaving the file behind is not. Without
-		// the clear, every later start reported "already running" and every
-		// later stop repeated this same refusal.
-		emit(ev, Event{Service: name, Err: err,
-			Msg: fmt.Sprintf("refusing to signal pid %d: %v", pid, err)})
-		s.clearStalePID(name, err, ev)
-		return
+		// The leader is gone. Its group may not be: a shell wrapper that died
+		// earlier leaves the server it started running, in the same group and
+		// holding the port. See docs/LANDMINES.md §38.
+		var members []int
+		var lerr error
+		if groupAlive(pid) {
+			members, lerr = s.leaderlessGroup(name, pid)
+		}
+		if lerr != nil {
+			// Keep the pid file: it is the only thing still naming the group,
+			// and the operator needs it to look.
+			emit(ev, Event{Service: name, Err: lerr,
+				Msg: fmt.Sprintf("refusing to signal process group %d: %v", pid, lerr)})
+			return
+		}
+		if len(members) == 0 {
+			// Nothing left at all: clean up the stale pid file, but never
+			// signal on the strength of it.
+			_ = s.st.RemovePID(name)
+			emit(ev, Event{Service: name, Phase: PhaseStopped,
+				Msg: fmt.Sprintf("not running (cleared stale pid %d)", pid)})
+			return
+		}
+		emit(ev, Event{Service: name, Msg: fmt.Sprintf(
+			"pid %d has exited, but %d process(es) it started are still running (pids %s)",
+			pid, len(members), joinPIDs(members))})
+		pgid = pid
+	} else {
+		// The recycled-pid guard. See verifyGroup: every service mabo-ctl
+		// spawns is its own process-group leader, AND was spawned at the time
+		// its pid record recorded — a live group leader whose real start time
+		// disagrees with the record is a recycled pid wearing our shape, and
+		// must not be signalled.
+		if pgid, err = verifyGroup(pid, pidRec.StartedAt); err != nil {
+			// Refusing to signal is right; leaving the file behind is not.
+			// Without the clear, every later start reported "already running"
+			// and every later stop repeated this same refusal.
+			emit(ev, Event{Service: name, Err: err,
+				Msg: fmt.Sprintf("refusing to signal pid %d: %v", pid, err)})
+			s.clearStalePID(name, err, ev)
+			return
+		}
 	}
 
 	if in, ok := s.byName[name]; ok {
@@ -1445,13 +1467,17 @@ func (s *Supervisor) stopOne(ctx context.Context, name string, ev chan<- Event) 
 	s.markStoppedOnDisk(name, pid, ev)
 
 	// SIGTERM the GROUP, not the pid: `npm run dev` spawns a child that
-	// survives a bare pid kill and keeps the port bound.
+	// survives a bare pid kill and keeps the port bound. Wait on the group
+	// too: a shell wrapper exits on SIGTERM at once while the server it
+	// started ignores it, and waiting on the leader alone reported that
+	// "stopped" and never escalated. See docs/LANDMINES.md §38.
+	groupLive := func() bool { return groupAlive(pgid) }
 	if err := signalGroup(pgid, termSignal); err != nil {
 		emit(ev, Event{Service: name, Err: err, Msg: err.Error()})
 		return
 	}
 
-	if s.awaitDeath(ctx, pid, s.stopGrace()) {
+	if s.awaitDeath(ctx, groupLive, s.stopGrace()) {
 		s.forgetStopped(name)
 		if in, ok := s.byName[name]; ok {
 			s.runStopHook(ctx, in, in.Hooks.PostStop, ev, "post_stop")
@@ -1468,8 +1494,8 @@ func (s *Supervisor) stopOne(ctx context.Context, name string, ev chan<- Event) 
 	// the pid file naming it. SIGKILL is earned by the grace running out.
 	// See docs/LANDMINES.md §18.
 	if err := ctx.Err(); err != nil {
-		err = fmt.Errorf("%s: stop interrupted after SIGTERM, not escalating; pid %d may still be exiting: %w",
-			name, pid, err)
+		err = fmt.Errorf("%s: stop interrupted after SIGTERM, not escalating; process group %d may still be exiting: %w",
+			name, pgid, err)
 		emit(ev, Event{Service: name, Err: err, Msg: err.Error()})
 		return
 	}
@@ -1480,7 +1506,7 @@ func (s *Supervisor) stopOne(ctx context.Context, name string, ev chan<- Event) 
 		emit(ev, Event{Service: name, Err: err, Msg: err.Error()})
 		return
 	}
-	if s.awaitDeath(ctx, pid, killGrace) {
+	if s.awaitDeath(ctx, groupLive, killGrace) {
 		s.forgetStopped(name)
 		if in, ok := s.byName[name]; ok {
 			s.runStopHook(ctx, in, in.Hooks.PostStop, ev, "post_stop")
@@ -1491,19 +1517,20 @@ func (s *Supervisor) stopOne(ctx context.Context, name string, ev chan<- Event) 
 
 	// Leave the pid file in place: something is still there, and forgetting it
 	// would strand an orphan mabo-ctl can no longer name.
-	err = fmt.Errorf("%s: pid %d survived SIGKILL", name, pid)
+	err = fmt.Errorf("%s: process group %d survived SIGKILL", name, pgid)
 	emit(ev, Event{Service: name, Err: err, Msg: err.Error()})
 }
 
-// awaitDeath polls until pid is gone or the budget expires, reporting whether
-// it died. Polling beats waitpid here because the reaper goroutine owns the
-// wait and there is only ever one waiter per child.
-func (s *Supervisor) awaitDeath(ctx context.Context, pid int, budget time.Duration) bool {
+// awaitDeath polls until alive reports false or the budget expires, reporting
+// whether the target died. A stop passes its whole process group, a port reap
+// the single pid it signalled. Polling beats waitpid here because the reaper
+// goroutine owns the wait and there is only ever one waiter per child.
+func (s *Supervisor) awaitDeath(ctx context.Context, alive func() bool, budget time.Duration) bool {
 	deadline := time.Now().Add(budget)
 	tick := time.NewTicker(deathPollInterval)
 	defer tick.Stop()
 	for {
-		if !state.Alive(pid) {
+		if !alive() {
 			return true
 		}
 		if time.Now().After(deadline) {
@@ -1511,7 +1538,7 @@ func (s *Supervisor) awaitDeath(ctx context.Context, pid int, budget time.Durati
 		}
 		select {
 		case <-ctx.Done():
-			return !state.Alive(pid)
+			return !alive()
 		case <-tick.C:
 		}
 	}
@@ -1746,14 +1773,15 @@ func (s *Supervisor) reapPort(ctx context.Context, in service.Instance, force bo
 		emit(ev, Event{Service: in.Name, Err: err, Msg: err.Error()})
 		return nil
 	}
-	if s.awaitDeath(ctx, h.PID, reapGrace) {
+	holderLive := func() bool { return state.Alive(h.PID) }
+	if s.awaitDeath(ctx, holderLive, reapGrace) {
 		return nil
 	}
 	if err := signalPID(h.PID, killSignal); err != nil {
 		emit(ev, Event{Service: in.Name, Err: err, Msg: err.Error()})
 		return nil
 	}
-	if !s.awaitDeath(ctx, h.PID, killGrace) {
+	if !s.awaitDeath(ctx, holderLive, killGrace) {
 		emit(ev, Event{Service: in.Name, Msg: fmt.Sprintf(
 			"pid %d still holds port %d after SIGKILL", h.PID, in.Port)})
 	}

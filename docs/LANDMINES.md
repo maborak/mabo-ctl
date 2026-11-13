@@ -874,3 +874,41 @@ and context cancellation remain unchanged.
 ```bash
 go test ./internal/supervisor -race -run 'TestTailFollowKeepsStartupAndConcurrentOutput|TestFollowBacklogCompleteLineOffsets|TestTailFollowsTheLogAcrossARotation'
 ```
+
+## 38. A stop waited on the wrapper while its server kept the port
+
+**Shape.** Stop sent SIGTERM to the whole process group, then waited for the
+group LEADER's pid alone. A shell wrapper (`sh -c "server …; echo done"`) is
+the leader: it dies at once on SIGTERM, while the server it started ignores the
+signal, as one stuck in a slow shutdown does. The wait saw the leader gone,
+reported `stopped`, and never escalated to SIGKILL. The server kept running and
+kept its port, and the next start failed with "port already in use".
+
+**Where it bit us.** `internal/supervisor/supervisor.go` (`stopOne` →
+`awaitDeath`), reported by a user against v1.4.0: a seventh service wrapping a
+SIGTERM-ignoring server, 3 of 3 runs. When the stubborn server was itself the
+leader, the escalation worked, which is why `TestStopEscalatesToSIGKILL` never
+caught it.
+
+The same shape had a second door. When the wrapper had died BEFORE the stop (it
+crashed, or was killed), the pid record named a dead leader, and the stop
+cleared it as stale without looking at the group: "not running", server still
+up, port still held.
+
+**Fix.** `awaitDeath` takes a liveness check. A stop passes `groupAlive(pgid)`
+(`kill(-pgid, 0)`), so it waits until every process in the group is gone, and
+SIGKILL follows the grace when any member outlives it. A port reap still waits
+on the single pid it signalled.
+
+A stop that finds the leader dead now checks the group. If members remain,
+`leaderlessGroup` must tie them to the service before anything is signalled,
+because with no leader there is no start time to verify. At least one member
+must hold the service's declared port, or have its cwd inside the checkout.
+Then the group goes through the same TERM → grace → KILL path. Without that tie
+the group id may have been reused, for example by a daemon's double fork, so
+the stop refuses, names the pids and keeps the pid file.
+
+**Detector.**
+```bash
+go test ./internal/supervisor -race -run 'TestStopWaitsForTheWholeGroup|TestStopReachesTheGroupOfADeadLeader|TestStopRefusesALeaderlessGroupItCannotTie|TestStopEscalatesToSIGKILL'
+```
