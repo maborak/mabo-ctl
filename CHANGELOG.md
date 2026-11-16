@@ -8,6 +8,8 @@ contract and service phase names are stable.
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-11-16
+
 ### Added
 
 - `console_terminal_scrollback` in `mabo-ctl.yaml` sets how many lines of
