@@ -19,6 +19,12 @@ import (
 // defaultTailLines is how much backlog `logs` shows before it starts following.
 const defaultTailLines = 50
 
+// followBuffer is the depth of the merged channel between the tailers and the
+// printer in `logs`. It is small for the same reason as the web console's
+// streams: a tailed line can be 256 KiB, so every slot can pin that much memory
+// behind a slow terminal or pipe. The tailers read files and simply wait.
+const followBuffer = 16
+
 // statusCmd builds `mabo-ctl status`.
 func (a *app) statusCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -359,14 +365,16 @@ func (a *app) runTail(cmd *cobra.Command, names []string, n int, follow, stamp b
 	type labelled struct {
 		svc, text string
 	}
-	merged := make(chan labelled, 256)
+	merged := make(chan labelled, followBuffer)
 	errs := make([]error, len(names))
 
 	var wg sync.WaitGroup
 	for i, name := range names {
 		// Tail owns lines and closes it when it returns, so the forwarder below
 		// terminates on its own and this side must never close it.
-		lines := make(chan string, 128)
+		// Unbuffered: each service already holds one line in its blocked
+		// tailer and one in its forwarder.
+		lines := make(chan string)
 		wg.Add(2)
 		go func() {
 			defer wg.Done()

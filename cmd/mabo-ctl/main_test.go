@@ -1840,3 +1840,31 @@ func TestAttachRefusesAServiceWithoutTTY(t *testing.T) {
 		t.Fatalf("unknown service not refused; exit %d stderr:\n%s", code, bad.stderr.String())
 	}
 }
+
+// TestPortOffsetFlagIsSavedAndMovesThePorts: --port-offset N saves the offset
+// for this checkout, rewrites the ports persisted under the old one, and is
+// kept by the next invocation without the flag; 0 clears it, and a bad value
+// is a usage error.
+func TestPortOffsetFlagIsSavedAndMovesThePorts(t *testing.T) {
+	h := driftedHarness(t, "status", "--port-offset", "100")
+	if code := h.run(); code != exitOK {
+		t.Fatalf("exit code = %d, want %d (stderr: %s)", code, exitOK, h.stderr)
+	}
+	runEnvIs(t, h, "MABO_PORT_OFFSET=100")
+	runEnvIs(t, h, "PORT_ALPHA=7200")
+	if msg := h.stderr.String(); !strings.Contains(msg, "port offset +100 for this checkout") {
+		t.Errorf("the new offset was not announced:\n%s", msg)
+	}
+
+	again := newHarnessAt(t, h.root, "status", "--port-offset", "0")
+	if code := again.run(); code != exitOK {
+		t.Fatalf("clearing: exit code = %d (stderr: %s)", code, again.stderr)
+	}
+	runEnvIs(t, h, "MABO_PORT_OFFSET=0")
+	runEnvIs(t, h, "PORT_ALPHA=7100")
+
+	bad := newHarness(t, "status", "--port-offset", "-5")
+	if code := bad.run(); code != exitUsage {
+		t.Errorf("--port-offset -5: exit code = %d, want %d", code, exitUsage)
+	}
+}

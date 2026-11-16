@@ -110,7 +110,8 @@ func Persist(st *state.Dir, insts []Instance) error {
 // returns one Origin per service, in declaration order.
 //
 // Precedence, highest first: --ports slot, caller <NAME>_PORT, persisted
-// run.env, declared default.
+// run.env, declared default — the default moved by the checkout's port offset
+// when one is recorded.
 func resolvePorts(cfg *config.Config, st *state.Dir, opt Options) ([]Origin, error) {
 	slots, err := portSlots(cfg, opt.Ports)
 	if err != nil {
@@ -129,11 +130,18 @@ func resolvePorts(cfg *config.Config, st *state.Dir, opt Options) ([]Origin, err
 		slots[n] = p
 	}
 
+	// The offset is read even when the persisted ports are ignored: it says
+	// which checkout this is, not which port a service had last time.
 	var persisted *state.RunEnv
-	if st != nil && !opt.IgnoreRunEnv {
-		persisted, err = st.ReadRunEnv()
+	offset := 0
+	if st != nil {
+		onDisk, err := st.ReadRunEnv()
 		if err != nil {
 			return nil, fmt.Errorf("service: read persisted ports: %w", err)
+		}
+		offset = onDisk.PortOffset()
+		if !opt.IgnoreRunEnv {
+			persisted = onDisk
 		}
 	}
 
@@ -145,6 +153,15 @@ func resolvePorts(cfg *config.Config, st *state.Dir, opt Options) ([]Origin, err
 	origins := make([]Origin, 0, len(cfg.Services))
 	for _, s := range cfg.Services {
 		o := Origin{Service: s.Name, Port: s.Port, Source: FromDefault, Declared: s.Port}
+		base := s.Port
+		if s.Port > 0 && offset != 0 {
+			base = s.Port + offset
+			if base < 1 || base > 65535 {
+				return nil, fmt.Errorf("service %q: port %d with this checkout's port offset %+d is %d, outside 1-65535; "+
+					"choose another with --port-offset", s.Name, s.Port, offset, base)
+			}
+			o.Port, o.Source = base, FromOffset
+		}
 
 		// A level is only consulted when every higher level declined, so a flag
 		// shadows a caller variable completely — including its validation.
@@ -177,9 +194,16 @@ func resolvePorts(cfg *config.Config, st *state.Dir, opt Options) ([]Origin, err
 		// service declared portless stays portless.
 		if p, ok := persisted.Port(s.Name); ok && p > 0 && s.Port > 0 && !adopt[s.Name] {
 			o.Port, o.Source = p, FromRunEnv
+			if p == base && base != s.Port {
+				// Persisted under this checkout's offset: say why it is
+				// that number, not merely where it was read from.
+				o.Source = FromOffset
+			}
 			// The reason Origin exists: a persisted port outranking a default
-			// that has since changed must be visible, never silent.
-			o.Override = p != o.Declared
+			// that has since changed must be visible, never silent. The
+			// default here is the offset one: a port persisted under this
+			// checkout's offset is not an override.
+			o.Override = p != base
 		}
 		origins = append(origins, o)
 	}

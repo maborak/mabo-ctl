@@ -399,6 +399,11 @@ func (a *app) reloadServe(ctx context.Context, ev chan<- supervisor.Event, srv *
 			"console_terminal changed in %s; the Terminal tab follows it when serve is restarted",
 			filepath.Base(cfg.Path))})
 	}
+	if cfg.ConsoleTerminalScrollback != prev.ConsoleTerminalScrollback {
+		notify(ev, supervisor.Event{Msg: fmt.Sprintf(
+			"console_terminal_scrollback changed in %s; reload the console page to apply it (open shells reattach)",
+			filepath.Base(cfg.Path))})
+	}
 	if cfg.ConsoleAccessKey != prev.ConsoleAccessKey {
 		switch {
 		case !keyFromConfig:

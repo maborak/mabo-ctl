@@ -10,7 +10,7 @@ bug, and several of those are recorded in [LANDMINES.md](LANDMINES.md).
 ```
                  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐
    front ends    │  one-shot    │  │ interactive  │  │ web console  │
-                 │     CLI      │  │ prompt / TUI │  │mabo-ctl serve  │
+                 │     CLI      │  │ prompt / TUI │  │mabo-ctl serve│
                  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘
                         │                 │                 │
                         └────────┬────────┴────────┬────────┘
@@ -21,11 +21,11 @@ bug, and several of those are recorded in [LANDMINES.md](LANDMINES.md).
                         │ pid · reap      │  └──────────┘
                         └────────┬────────┘
                                  ▼
-                    ┌────────────────────────┐
-     model + state  │  service    │  state   │
-                    │  ports,     │  .mabo-ctl/   │
-                    │  templates  │          │
-                    └────────────┬───────────┘
+                    ┌──────────────────────────┐
+     model + state  │  service    │  state     │
+                    │  ports,     │ .mabo-ctl/ │
+                    │  templates  │            │
+                    └────────────┬─────────────┘
                                  ▼
                           ┌─────────────┐
      config               │   config    │  pure: reads and validates
@@ -82,7 +82,9 @@ What `mabo-ctl start` actually does, in order:
 3. **Refuse if the port is held** by something mabo-ctl did not start — and print
    the `lsof` command, so the operator can see who holds it rather than being
    told "in use" and left to guess.
-4. **Truncate the log**, so the tail printed on failure is *this* run's output.
+4. **Rotate, then truncate the log**: the previous run's log moves to
+   `<svc>.log.1` (one generation), so the tail printed on failure is *this*
+   run's output and the last crash is still on disk.
 5. **Spawn detached**: `SysProcAttr{Setsid: true}`, stdout and stderr to the log,
    stdin from `/dev/null`. Setsid is what makes the child survive the invoking
    terminal closing — a supervisor whose children die with the shell is broken —
@@ -172,11 +174,13 @@ never started — [LANDMINES.md](LANDMINES.md) §3.
 Git-ignored, safe to delete, `0700` with `0600` files.
 
 ```
-.mabo-ctl/logs/<svc>.log     truncated on each start
+.mabo-ctl/logs/<svc>.log     this run's output; rotated to <svc>.log.1 on each start
+.mabo-ctl/logs/<svc>.log.1   the previous run's output (one generation)
 .mabo-ctl/pids/<svc>.pid     {"pid":N,"started_at":"…"} — a legacy bare integer is still read
 .mabo-ctl/pids/<svc>.pid.claim   a start IN PROGRESS; O_EXCL create, see the supervision path
 .mabo-ctl/exits/<svc>.json   the last death observed: code or signal, timings, a capped log tail
 .mabo-ctl/run.env            persisted resolved ports (read-modify-write, under a lock)
+.mabo-ctl/tty/<svc>.sock     terminal-relay socket for a `tty: true` service (local IPC, not network)
 ```
 
 The exit record carries two flags that decide what a *later, different* mabo-ctl
@@ -198,7 +202,9 @@ controls, and the asymmetry between them, are documented in
 [SECURITY.md](../SECURITY.md).
 
 The one architectural note: the page is a single embedded hand-written HTML file
-with no framework, no build step, and no external request of any kind — enforced
+with no framework and no build step. Two vendored, embedded scripts ride along
+(xterm.js for the Terminal tab, RapiDoc for the API tab), and nothing makes an
+external request of any kind — enforced
 by a strict CSP and by a test that fails on any fetching construct pointing off
 -origin. mabo-ctl ships no telemetry, and a console that phoned out for a
 stylesheet would be its first outbound call that was not a health probe.

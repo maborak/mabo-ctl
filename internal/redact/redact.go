@@ -19,6 +19,7 @@
 package redact
 
 import (
+	"net/url"
 	"regexp"
 	"sort"
 	"strings"
@@ -171,6 +172,41 @@ func URL(raw string) string {
 		}
 	}
 	return head + strings.Join(parts, "&")
+}
+
+// URLSecrets returns the credential values URL would withhold from raw — the
+// userinfo password (or bare token) and every secret-looking query value —
+// each also in its percent-decoded form when that differs. It exists for text
+// that QUOTES a URL in another shape than raw: net/http's error for a failed
+// probe renders `Head "http://user:***@host/?token=abc"`, which replacing raw
+// with URL(raw) never matches, so the token survived next to the redacted
+// field. Replacing each secret value wherever it appears is what holds.
+func URLSecrets(raw string) []string {
+	var out []string
+	add := func(v string) {
+		if v == "" {
+			return
+		}
+		out = append(out, v)
+		if dec, err := url.QueryUnescape(v); err == nil && dec != v && dec != "" {
+			out = append(out, dec)
+		}
+	}
+	if m := userinfoPattern.FindStringSubmatch(raw); m != nil {
+		if _, pass, hasPass := strings.Cut(m[2], ":"); hasPass {
+			add(pass)
+		} else {
+			add(m[2])
+		}
+	}
+	if q := strings.IndexByte(raw, '?'); q >= 0 {
+		for _, p := range strings.Split(raw[q+1:], "&") {
+			if k, v, ok := strings.Cut(p, "="); ok && v != "" && IsSecret(k, v) {
+				add(v)
+			}
+		}
+	}
+	return out
 }
 
 // Args strips credentials from an argv vector before it is rendered.

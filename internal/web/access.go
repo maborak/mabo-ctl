@@ -81,6 +81,7 @@ type mirrorView struct {
 	Follow        bool         `json:"follow"`
 	Scroll        float64      `json:"scroll"`
 	Separators    bool         `json:"separators"`
+	Pretty        bool         `json:"pretty"`
 	FontSize      int          `json:"font_size"`
 	Details       bool         `json:"details"`
 	Pointer       *mirrorPoint `json:"pointer,omitempty"`

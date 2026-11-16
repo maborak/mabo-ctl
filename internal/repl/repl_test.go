@@ -306,8 +306,8 @@ func TestEndOfInputQuits(t *testing.T) {
 // behind a blocking read.
 func TestPromptCarriesTheRepoName(t *testing.T) {
 	t.Parallel()
-	out := runLines(t, Options{Commands: &fakeDispatcher{}, Repo: "amazon-watcher"}, "quit\n")
-	if !strings.Contains(out, "mabo-ctl(amazon-watcher)> ") {
+	out := runLines(t, Options{Commands: &fakeDispatcher{}, Repo: "my-app"}, "quit\n")
+	if !strings.Contains(out, "mabo-ctl(my-app)> ") {
 		t.Fatalf("want the repo in the prompt; got:\n%s", out)
 	}
 	if strings.Contains(out, "↑") {

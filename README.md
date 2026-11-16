@@ -12,14 +12,14 @@ enough state on disk that a second terminal knows what the first one started.
 
 ```
 $ mabo-ctl status
-SERVICE   STATUS      PORT  PID    PROBE  DETAIL
-website   ● ready     7100  41823  1.4s   HTTP 200
-frontend  ● ready     7101  41824  2.1s   HTTP 200
-backend   ⚠ degraded  7102  41825  2.0s   dial tcp 127.0.0.1:7102: connection refused
-browser   ◐ slow      7103  41826  30.0s  waiting for http://localhost:7103/health
-worker    ⊘ exited    -     -      -      exit code 1, 4m ago
-                                          Traceback (most recent call last):
-                                            ImportError: no module named app
+SERVICE   STATUS      PORT  PID    CPU   MEM   PROBE  DETAIL
+website   ● ready     7100  41823  0.4%  143M  1.4s   HTTP 200
+frontend  ● ready     7101  41824  12%   381M  2.1s   HTTP 200
+backend   ⚠ degraded  7102  41825  0.0%  96M   2.0s   dial tcp 127.0.0.1:7102: connection refused
+browser   ◐ slow      7103  41826  98%   1.2G  30.0s  waiting for http://localhost:7103/health
+worker    ⊘ exited    -     -      -     -     -      exit code 1, 4m ago
+    Traceback (most recent call last):
+      ImportError: no module named app
 ```
 
 `mabo-ctl` starts, stops, restarts, health-checks, tails and inspects N services,
@@ -46,6 +46,17 @@ after installation. Nothing runs from the network: the script is a shell script
 and the binary is checksum-verified before it is written. With `GITHUB_TOKEN` or
 `GH_TOKEN` set, the same script authenticates a private repository — GitHub
 serves a private repo's release assets only through the API.
+
+Or with Homebrew (macOS and Linux):
+
+```sh
+brew install maborak/tap/mabo-ctl
+```
+
+The formula installs the same prebuilt static binary, checked against the
+release's SHA-256, plus bash, zsh and fish completions. Update it with
+`brew upgrade mabo-ctl`; `mabo-ctl upgrade` recognises a Homebrew install and
+says so instead of replacing a file Homebrew manages.
 
 Or install from source:
 
@@ -125,6 +136,8 @@ console_addr: "127.0.0.1:9000"   # optional: address `mabo-ctl serve` binds when
 # console_access_key: "..."      # optional; --access-key overrides it; absent
                                  # means a random key is generated per run
 # console_terminal: true         # optional; enables the console's Terminal tab
+# console_terminal_scrollback: 10000  # optional; lines of history per shell
+                                 # (0–100000, default 10000)
 
 services:
   - name: website
@@ -258,10 +271,10 @@ Leave the key out to inherit the global.
 | `mabo-ctl stop [svc...]` | SIGTERM the process **group**, wait `stop_grace`, then SIGKILL. On a terminal, offers to kill each selected service's foreign port holder individually; every answer defaults to no and scripts are never prompted. |
 | `mabo-ctl restart [svc...] [-f]` | Stop, then start. |
 | `mabo-ctl status [--json]` | One line per service. `--json` is the stable machine contract. Always exits 0: a service being down is information. |
-| `mabo-ctl health` | The same phases `status` reports, with an exit code: 4 when any declared probe (http, tcp or exec) did not answer. |
-| `mabo-ctl config [svc] [--json] [--raw]` | Where `mabo-ctl.yaml` was loaded from and what it resolved to: the port **and which of the five precedence levels produced it**, the absolute command, the runtime, the expanded health URL, the declared env. `--raw` prints the file verbatim. |
-| `mabo-ctl logs [svc\|all] [--tail=N] [-f] [--timestamps]` | Tail a log, or interleave every log with per-service labels. `tailf` is an alias. With `-f --timestamps` each line carries an HH:MM:SS.mmm READ-time stamp — follow-only by design; historical tails refuse it rather than lie about write times. |
-| `mabo-ctl reset [--force]` | Stop everything and delete `.mabo-ctl/`. `--force` also kills whatever still holds a declared port. |
+| `mabo-ctl health [--wait [--timeout=D]]` | The same phases `status` reports, with an exit code: 4 when any declared probe (http, tcp or exec) did not answer. `--wait` polls until every probe answers, or gives up after `--timeout` and names who was still down. |
+| `mabo-ctl config [svc] [--json] [--raw] [--graph]` | Where `mabo-ctl.yaml` was loaded from and what it resolved to: the port **and which of the five precedence levels produced it**, the absolute command, the runtime, the expanded health URL, the declared env. `--raw` prints the file verbatim. `--graph` prints the start order: one row per dependency level (services on a level start in parallel), each with what it waits for; `--json` carries the same as `levels`. |
+| `mabo-ctl logs [svc\|all] [--tail=N] [-f] [--timestamps] [--grep=S] [--since=D]` | Tail a log, or interleave every log with per-service labels. `tailf` is an alias. `--grep` keeps lines containing a substring; `--since` (historical tails only) skips services whose log has not changed within that window. With `-f --timestamps` each line carries an HH:MM:SS.mmm READ-time stamp — follow-only by design; historical tails refuse it rather than lie about write times. |
+| `mabo-ctl reset [--force]` | Stop everything and delete `.mabo-ctl/`. `--force` also kills whatever still holds a declared port, except another checkout's own service. |
 | `mabo-ctl preflight` | Two blocks: MACHINE (can this machine run what mabo-ctl.yaml declares? runtimes resolve, cmd[0] executable, node_modules present under node:, .nvmrc agreement — detect-and-hint, never fix) then the declared `checks:` block in parallel. `tcp:` takes `expect: free` to require a port be open before start; a failure names its holder. Either block failing exits 1. |
 | `mabo-ctl doctor` | Read-only stack exam: unresolvable runtimes, stale or recycled pids, foreign port holders, unsurfaced crashes, loose `.mabo-ctl/` permissions. Warn → 0, FAIL → 1. |
 | `mabo-ctl schema [--commands]` | Print the JSON Schema (draft-07) for `mabo-ctl.yaml`. With `--commands`, print a machine-readable catalogue of the binary itself: every command's flags and argument semantics, which mutate state, the exit-code table, which outputs are stable contracts, every web-console route with its auth level. Generated from the same tree `--help` renders — see [For agents and scripts](#for-agents-and-scripts). |
@@ -269,13 +282,15 @@ Leave the key out to inherit the global.
 | `mabo-ctl shell <name>` | Run a declared `shells:` entry, or open `$SHELL` in a service's environment. |
 | `mabo-ctl attach <svc>` | Connect your terminal to a service declared `tty: true`, through the broker beside it. Ctrl-Q detaches; one session at a time, and detaching never stops the service. |
 | `mabo-ctl open` | Hand each running service's URL — its `open:` target when declared, else the derived origin — to `open` (macOS) or `xdg-open` (Linux). |
-| `mabo-ctl serve [--addr] [--access-key] [--open] [--notify] [--terminal] [--i-know-this-is-dangerous]` | Serve the web console on `127.0.0.1:7999` — or the `console_addr` in `mabo-ctl.yaml` — until interrupted; if that port is already taken by another server, it falls back to a kernel-chosen free port and prints the real address. `--access-key` overrides `console_access_key`; absent keys are generated randomly. `--notify` announces dying services on the desktop. `--terminal` enables the Terminal tab. It can start and stop services — see [Web console](#web-console). |
-| `mabo-ctl init` | Scaffold a fully commented-out `mabo-ctl.yaml` from what the repo looks like (`package.json` + `.nvmrc`, `manage.py`, `pyproject.toml`, `Cargo.toml`). Refuses to overwrite; adds `.mabo-ctl/` to `.gitignore`; runs nothing it finds. |
+| `mabo-ctl serve [--addr] [--access-key] [--allow-origin=O]... [--open] [--notify] [--terminal] [--i-know-this-is-dangerous] [--i-know-allow-remote-terminal-is-dangerous]` | Serve the web console on `127.0.0.1:7999` — or the `console_addr` in `mabo-ctl.yaml` — until interrupted; if that port is already taken by another server, it falls back to a kernel-chosen free port and prints the real address. `--access-key` overrides `console_access_key`; absent keys are generated randomly. `--notify` announces dying services on the desktop. `--terminal` enables the Terminal tab (loopback only unless `--i-know-allow-remote-terminal-is-dangerous` is also given). `--allow-origin` trusts an extra browser origin, e.g. a tunnel's HTTPS URL. It can start and stop services — see [Web console](#web-console). |
+| `mabo-ctl init [--from FILE]` | Scaffold a fully commented-out `mabo-ctl.yaml` from what the repo looks like (`package.json` + `.nvmrc`, `manage.py`, `pyproject.toml`, `Cargo.toml`). Refuses to overwrite; adds `.mabo-ctl/` to `.gitignore`; runs nothing it finds. `--from Procfile` or `--from process-compose.yaml` imports those processes instead, written live (each through `sh -c`): a Procfile process that reads `$PORT` gets foreman's port (5000, +100 per process); process-compose `depends_on`, `process_healthy`, environment, `working_dir`, `disabled` and an `http_get` readiness probe carry over. Anything unsafe to import is written commented out with the reason, and the result is validated before init reports success. |
 | `mabo-ctl --version` | The full build report: commit, dirty flag, when it was linked, toolchain, platform and dependencies. Paste it whole into bug reports — [SECURITY.md](SECURITY.md) asks for exactly this output. |
 | `mabo-ctl completion <bash\|zsh\|fish\|powershell>` | Print a completion script. |
+| `mabo-ctl mcp [--allow-mutate]` | Serve status, health, logs and config — and with `--allow-mutate`, start/stop/restart — to an AI assistant over MCP on stdio — see [AI assistants (MCP)](#ai-assistants-mcp). |
+| `mabo-ctl activate <zsh\|bash\|fish>` | Print a shell hook that says what runs when you `cd` into a repo: `eval "$(mabo-ctl activate zsh)"` in `~/.zshrc` (`activate bash` in `~/.bashrc`; `mabo-ctl activate fish \| source` in fish). One line per repository change, e.g. `mabo-ctl: api, web running · worker stopped`. Display only: it reads the pid records (with the same identity check `doctor` uses) and never starts anything, never creates `.mabo-ctl/`, and runs no probe or port lookup. |
 | `mabo-ctl upgrade [--force]` | Replace this binary with the latest GitHub release — see [Upgrading](#upgrading). |
 
-Global `--config <path>` overrides discovery on every command.
+Global flags on every command: `--config <path>` overrides discovery, `--profile a,b` activates profiles (overrides `MABO_PROFILE`), `--refresh-ports` re-resolves ports from the declared defaults, ignoring `.mabo-ctl/run.env`, and `--port-offset N|auto` moves every declared port for this checkout — see [Two checkouts of one repo](#two-checkouts-of-one-repo).
 
 ### Exit codes
 
@@ -325,7 +340,7 @@ declared service. Treat it as a password.
 http://127.0.0.1:59104/?token=6f1c…
 Leaving the prompt — "quit", "exit" or Ctrl-D — stops the console, and so does
 typing "unserve". The services keep running either way.
-mabo-ctl(amazon-watcher)> logs backend -f
+mabo-ctl(my-app)> logs backend -f
 ```
 
 **Without a terminal, none of them happens.** In a script, a Makefile or CI the
@@ -397,6 +412,13 @@ pid file naming a process that no longer exists; that is still `exited`, with
 the log tail and without an exit status, because "it crashed and I cannot tell
 you how" is a different answer from "you never started it".
 
+CPU and MEM are the service's whole process group — `npm run dev` and the node
+child doing the work — summed from one `ps` per status read. They are
+observation only; mabo-ctl sets no limits. CPU is `ps`'s %CPU (100% is one
+core): a lifetime average on Linux, a recent one on macOS. `status --json`
+carries them as `cpu_percent` and `rss_bytes`, appended to each record; the web
+console and the TUI detail block (`i`) show them too.
+
 > **`--json` contract change.** `degraded` and `exited` are new phase values,
 > `failed` is newly reachable in `status` output rather than only in the live
 > event stream, and the fields `started_at`, `uptime_ms`, `exit_code`,
@@ -417,7 +439,30 @@ Highest first. This is the heart of the tool.
 | 2 | `--ports=A,B,C,D` | Positional. Slot *i* is the *i*-th service that declares a port, in declaration order. An **empty slot keeps the declared default**, so `--ports=,,7999` overrides only the third. |
 | 3 | `<NAME>_PORT` in the caller's environment | e.g. `BACKEND_PORT=7999`. A `-` in a service name becomes `_`. |
 | 4 | `.mabo-ctl/run.env` | Persisted by the previous `start` or `restart`. |
-| 5 | `port:` in `mabo-ctl.yaml` | The declared default. |
+| 5 | `port:` in `mabo-ctl.yaml` | The declared default — moved by this checkout's port offset when one is set (below). |
+
+### Two checkouts of one repo
+
+Two git worktrees, or two clones, of the same repository declare the same
+ports, so the second checkout's `start` finds them taken. Give it its own:
+
+```sh
+mabo-ctl start --port-offset auto    # first +100…+1000 where every declared port is free
+mabo-ctl start --port-offset 200     # or a fixed offset
+mabo-ctl status --port-offset 0      # clear it: declared ports apply again
+```
+
+The offset is a global flag, saved per checkout in `.mabo-ctl/run.env`
+(`MABO_PORT_OFFSET`), so later commands keep it without the flag; `mabo-ctl
+reset` clears it with the rest of the state. It moves every declared default by
+N, ranks below every explicit level (flags, `<NAME>_PORT`), and `config` shows
+those ports as `from offset`. Only ports that reach a service through
+`{{.Port}}` or `PORT`/`<NAME>_PORT` move: a port written literally into `cmd`
+or `health` stays where it was written. Change the offset while the checkout's
+services are stopped.
+
+`reset --force` never kills a port holder that another checkout's mabo-ctl
+started and still records: it names that checkout and leaves the process alone.
 
 Two rules are not optional:
 
@@ -533,11 +578,24 @@ the selected service's log below, key hints on the last line. `mabo-ctl start -a
 opens the same console with the stack already coming up in it.
 
 ```
-↑/↓ or j/k  select      s  start     x  stop      r  restart
-a  start all            S  stop all  l or tab  focus the log pane
-/  filter logs          g/G  top/bottom          ?  help      q  quit
-L  reload mabo-ctl.yaml (asks first)
+↑/↓ or j/k  select         s/x/r  start/stop/restart the selected service
+a  start all (autostart or not)   R  restart the running ones   S  stop all
+l or tab  focus the log pane      g/G  top/bottom   pgup/pgdn  page
+/  filter log lines        v  level: all/error/warn/info/debug
+m  merge every service's log into one labelled pane
+p  pause   c  clear   J  pretty JSON   |  separators between entries
+i  details of the selected service (uptime, health, cmd, dir, deps, env)
+f  filter the list by name   1-7  show one phase   0  clear the phase
+e  activity history          C  configuration, port sources, start order
+L  reload mabo-ctl.yaml (asks first)          ?  help      q  quit
 ```
+
+These are the web console's log toolbar and detail pane, by key: the level
+classification, the pretty-JSON indentation (whitespace only) and the merged
+pane behave the same in both. The log buffer keeps the newest 5000 lines and
+4 MiB, and a paused pane keeps receiving within that same cap. Health URLs are
+redacted on this screen as in the browser, because a terminal gets shared and
+recorded. Terminals, API docs and sharing stay browser-only.
 
 Quitting does **not** stop the supervised services. They were spawned with
 `setsid` and mabo-ctl is not their parent.
@@ -561,10 +619,10 @@ produced two diverging copies of the shell script mabo-ctl replaces.
 
 ```
 $ mabo-ctl repl
-mabo-ctl(amazon-watcher)> start backend
-mabo-ctl(amazon-watcher)> logs website -f
-mabo-ctl(amazon-watcher)> exec backend pytest -k "not slow"
-mabo-ctl(amazon-watcher)> status
+mabo-ctl(my-app)> start backend
+mabo-ctl(my-app)> logs website -f
+mabo-ctl(my-app)> exec backend pytest -k "not slow"
+mabo-ctl(my-app)> status
 ```
 
 Anything that works as `mabo-ctl <line>` works as `<line>` here, flags included.
@@ -592,6 +650,35 @@ The prompt shows the repository and nothing else. A count of running services
 would be drawn once and be wrong the moment one died — the exact failure this
 tool exists to remove — so `status` answers that on demand and the crash line
 volunteers the only change worth interrupting for.
+
+## AI assistants (MCP)
+
+`mabo-ctl mcp` is a [Model Context Protocol](https://modelcontextprotocol.io)
+server on stdin/stdout, so an assistant such as Claude Code can see this repo's
+stack without screen-scraping the CLI:
+
+```sh
+claude mcp add mabo-ctl -- mabo-ctl mcp                  # read-only
+claude mcp add mabo-ctl -- mabo-ctl mcp --allow-mutate   # may also start/stop
+```
+
+Any MCP client that spawns a stdio server works the same way. Run it from the
+repository, or pass `--config path/to/mabo-ctl.yaml`.
+
+| Tool | What it returns |
+|---|---|
+| `status` | The `status --json` records (all, or the named `services`) |
+| `health` | Which declared probes are not answering, then the records |
+| `logs` | The last `tail` lines (≤5000) of one `service`, or `"all"`, optionally `grep`-filtered |
+| `config` | The resolved configuration, port sources and start order |
+| `start`, `stop`, `restart` | Only with `--allow-mutate`: the operation's events, then the final records |
+
+It is not a network listener: the client owns both pipes and the server exits
+when they close. Health-URL credentials are redacted as on the web console,
+arguments are checked strictly (a misspelled argument or an undeclared service
+is an error the assistant sees), and without `--allow-mutate` there is no tool
+that changes anything. The configuration is read when the server starts;
+restart it after editing `mabo-ctl.yaml`.
 
 ## Web console
 
@@ -635,7 +722,11 @@ accent-colored text. Log scrolling, filters and Pause do not hide command
 progress; clearing the command history leaves the section visible.
 Severity filters show the selected level with a solid accent and checkmark.
 Enable **Separators** for extra spacing and dashed borders between log entries;
-wrapped text stays within its entry.
+wrapped text stays within its entry. **Pretty JSON** indents log lines that are
+complete JSON objects or arrays, for display only: it changes whitespace and
+nothing else (no key reordering, no number rounding), the text filter still
+matches the original compact line, and a line cut by the display limit stays
+as it was. The choice is remembered in this browser.
 The adjacent **A− / A+** slider adjusts log text from 10–18px (12px by default).
 Health sits beside Ready in; log file, command and arguments live in an
 expandable section that starts closed. System Commands uses a translucent
@@ -701,7 +792,12 @@ only once; copy the new URL when it is created.
 repository root. The xterm.js emulator supports interactive programs such as
 Claude Code, OpenCode, vim and htop. Shells keep running when
 the tab is closed or reloaded — the page reattaches and replays the scrollback —
-and are hung up when `serve` stops. A shell runs as you, so terminals are
+and are hung up when `serve` stops. Each shell keeps
+`console_terminal_scrollback` lines of history in the browser (default 10000,
+at most 100000; there is no unlimited). That history costs about columns ×
+lines × 12 bytes per shell: measured in Chrome, 20,000 lines at 196 columns
+took 46 MB at a 100000 setting and nothing extra at 1000. The page reads the
+setting when it loads, so refresh it after changing the file. A shell runs as you, so terminals are
 loopback-only by default. Remote terminals require explicit `--terminal` plus
 `--i-know-allow-remote-terminal-is-dangerous`; a non-loopback bind also requires
 `--i-know-this-is-dangerous`. For example:
@@ -735,6 +831,26 @@ tracebacks and indented continuations together. Plain-text grouping is best
 effort: the stream carries newline-delimited lines, not logging-call boundaries.
 JSON records remain separate, and raw logs, severity filters and line counts
 are unchanged.
+
+Browser log history and its pending render queue are bounded to 2,000 lines and
+2 Mi UTF-16 code units. Individual lines over 16 Ki code units display a marked
+preview; severity is still determined from the complete line. Display filters
+search that preview, and the full output remains in the service's log file.
+Before that, every tailer (console, TUI and `logs -f`) caps a single line at
+256 KiB at the source, with an explicit truncation marker, so a line that never
+ends cannot grow mabo-ctl or the browser. The history a tail replays is also
+capped at 8 MiB per request; when that, not the line count, cuts it short, one
+marker line says how many earlier lines were omitted.
+Older entries are automatically discarded from the display, including in
+background tabs; Clear affects the display only, never the file.
+
+Terminal scrollback limits alone do not bound output waiting for the emulator.
+If a terminal's unparsed browser queue would exceed 2 MiB, its display detaches
+while the shell continues running. Once its queue drains and it is the visible
+shell, it reconnects from the server's recent scrollback, including when you
+return to a hidden browser tab or reopen the Terminal tab. The console warns when older
+terminal output may have been omitted. This protects the display without
+silently stopping a shell or deleting service logs.
 
 ```sh
 $ mabo-ctl serve
@@ -861,18 +977,22 @@ outbound traffic is the HTTP readiness probes to the URLs your config declares.
 | vulnerabilities | `govulncheck ./...` |
 
 ```
-cmd/mabo-ctl/           flag wiring, exit codes, the console-vs-status decision
+cmd/mabo-ctl/         flag wiring, exit codes, the console-vs-status decision
 internal/config/      mabo-ctl.yaml: load and validate. Pure.
 internal/service/     port resolution, template expansion, runtime resolution
 internal/state/       .mabo-ctl/: logs, pid records, exit records, run.env. The only writer.
 internal/health/      readiness probes: http URL, tcp dial, exec argv
 internal/redact/      what is withheld from anything shown a reader. Pure, and the
-                      ONLY copy of those rules: both front ends import it.
+                      ONLY copy of those rules: every front end imports it.
 internal/supervisor/  spawn, signal process groups, pid files. Returns data.
 internal/ui/          colour, fixed-width labels, status and config rendering, JSON
 internal/console/     the full-screen TUI (bubbletea)
 internal/repl/        the interactive prompt and its session
 internal/web/         the web console: embedded page, JSON + SSE API, its guards
+internal/mcp/         the MCP stdio server: JSON-RPC protocol only, tools come from cmd
+internal/selfupdate/  self-upgrade: latest release, version compare, verified binary swap
+internal/surface/     generated surface inventories (cli, config, json) and the drift gate
+tools/surfacemap/     generator whose output must be byte-identical to surfaces.json
 ```
 
 Dependencies point inward. `ui`, `console`, `repl` and `web` never call `os/exec` or `syscall`;
@@ -916,7 +1036,6 @@ that proves it stays fixed, are in [`docs/LANDMINES.md`](docs/LANDMINES.md).
 | [`docs/openapi.yaml`](docs/openapi.yaml) | OpenAPI 3.0 spec for the web console API (for tooling integration) |
 | [`examples/mabo-ctl.yaml`](examples/mabo-ctl.yaml) | Every `mabo-ctl.yaml` field, annotated — the configuration reference, and a test asserts it stays valid |
 | [`docs/LANDMINES.md`](docs/LANDMINES.md) | Bugs mabo-ctl has actually shipped, and a runnable detector for each |
-| [`docs/ROADMAP.md`](docs/ROADMAP.md) | What is being considered, and what was rejected and why |
 | [`AGENTS.md`](AGENTS.md) | The full project brief — the source of truth for behaviour |
 | [`SECURITY.md`](SECURITY.md) | Trust boundary, the console's controls, accepted risks |
 | [`CHANGELOG.md`](CHANGELOG.md) | What changed, per release |

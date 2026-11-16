@@ -16,7 +16,10 @@ func (a *app) runConsole(sup *supervisor.Supervisor) error {
 		return a.env.RunConsole(sup)
 	}
 	return console.RunWith(sup, console.Options{
-		Root: a.cfg.Root,
+		Root:           a.cfg.Root,
+		Origins:        a.origins,
+		StateDir:       a.stateDir(),
+		ExplicitConfig: a.configPath != "",
 		Reload: func(ctx context.Context, ev chan<- supervisor.Event) (*console.Reloaded, error) {
 			r, err := a.reloadConfig(ctx, ev)
 			if r == nil {
@@ -26,6 +29,7 @@ func (a *app) runConsole(sup *supervisor.Supervisor) error {
 				Controller: r.sup,
 				Stopped:    r.report.Stopped,
 				Restarted:  r.report.Restarted,
+				Origins:    r.origins,
 			}, err
 		},
 	})

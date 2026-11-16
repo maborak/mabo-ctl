@@ -410,7 +410,7 @@ func TestMirrorIsScopedValidatedAndExcludesTerminals(t *testing.T) {
 	t.Parallel()
 	s := newRecorderServer(t, twoServices())
 	_, key := createTestShare(t, s, "view")
-	in := mirrorView{Source: "operator-tab", Active: true, Service: "backend", Tab: "terminal", FontSize: 12, Scroll: .5}
+	in := mirrorView{Source: "operator-tab", Active: true, Service: "backend", Tab: "terminal", FontSize: 12, Scroll: .5, Pretty: true}
 	body, _ := json.Marshal(in)
 	w := accessRequest(s, "POST", "/api/mirror", s.Token(), string(body))
 	if w.Code != http.StatusOK {
@@ -421,7 +421,7 @@ func TestMirrorIsScopedValidatedAndExcludesTerminals(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &mirrored); err != nil {
 		t.Fatal(err)
 	}
-	if !mirrored.Active || mirrored.Tab != "output" || mirrored.Service != "backend" {
+	if !mirrored.Active || mirrored.Tab != "output" || mirrored.Service != "backend" || !mirrored.Pretty {
 		t.Fatalf("wrong mirrored state: %+v", mirrored)
 	}
 	in.Source = "second-operator"

@@ -35,6 +35,8 @@ func Schema() ([]byte, error) {
 			"console_addr":       stringSchema("Address \"host:port\" that `mabo-ctl serve` binds when no --addr is given, e.g. \"127.0.0.1:9000\". Default 127.0.0.1:7999. A non-loopback host still needs --i-know-this-is-dangerous at serve time."),
 			"console_access_key": stringSchema("Access key for `mabo-ctl serve`; must be at least 4 URL-safe characters. `--access-key` overrides it. Empty or absent means generate a random key for this run."),
 			"console_terminal":   map[string]any{"type": "boolean", "description": "Enable the web console's Terminal tab: interactive shells in the repository root, running as you. Loopback consoles only. `serve --terminal` enables it for one run. Default false."},
+			"console_terminal_scrollback": map[string]any{"type": "integer", "minimum": 0, "maximum": MaxTerminalScrollback,
+				"description": "Lines of history each Terminal tab shell keeps in the browser, like a terminal app's scrollback setting. Memory is about columns × lines × 12 bytes per shell. 0 keeps none; there is no unlimited. Read when the console page loads; reload the page to apply a change. Default 10000."},
 			"services": map[string]any{
 				"type":     "array",
 				"minItems": 1,

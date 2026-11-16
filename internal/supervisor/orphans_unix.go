@@ -3,7 +3,6 @@
 package supervisor
 
 import (
-	"bufio"
 	"context"
 	"os/exec"
 	"strconv"
@@ -50,42 +49,4 @@ func parseGroupMembers(out string, pgid int) []int {
 		}
 	}
 	return pids
-}
-
-// processCwds reports each pid's working directory, from one
-// `lsof -a -d cwd -p PID,PID… -Fpn`. A pid lsof cannot read is simply absent;
-// a missing lsof yields an empty map.
-func processCwds(pids []int) map[int]string {
-	lsof, err := lsofPath()
-	if err != nil || len(pids) == 0 {
-		return nil
-	}
-	list := make([]string, len(pids))
-	for i, p := range pids {
-		list[i] = strconv.Itoa(p)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), orphanLookupTimeout)
-	defer cancel()
-	// lsof exits 1 when any listed pid is unreadable, yet still prints the
-	// rest, so the output is used whatever the exit status.
-	out, _ := exec.CommandContext(ctx, lsof, "-a", "-d", "cwd", "-p", strings.Join(list, ","), "-Fpn").Output()
-	return parseCwds(string(out))
-}
-
-// parseCwds reads lsof's -Fpn field output: a "p<pid>" line starts a process,
-// and the "n<path>" line after it is that process's cwd.
-func parseCwds(out string) map[int]string {
-	cwds := map[int]string{}
-	pid := 0
-	sc := bufio.NewScanner(strings.NewReader(out))
-	for sc.Scan() {
-		line := sc.Text()
-		switch {
-		case strings.HasPrefix(line, "p"):
-			pid, _ = strconv.Atoi(line[1:])
-		case strings.HasPrefix(line, "n") && pid > 0:
-			cwds[pid] = line[1:]
-		}
-	}
-	return cwds
 }

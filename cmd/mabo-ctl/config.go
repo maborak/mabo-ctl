@@ -44,6 +44,7 @@ it somewhere.
   mabo-ctl config              source, resolved services, and the file
   mabo-ctl config backend      the same, narrowed to one service
   mabo-ctl config --json       the resolved view, machine-readable
+  mabo-ctl config --graph      the start order: dependency levels, in parallel
   mabo-ctl config --raw        mabo-ctl.yaml verbatim, for piping`
 
 // configCmd builds `mabo-ctl config`.
@@ -61,6 +62,7 @@ func (a *app) configCmd() *cobra.Command {
 		RunE:          a.runConfig,
 	}
 	cmd.Flags().Bool("json", false, "emit the resolved view as JSON")
+	cmd.Flags().Bool("graph", false, "print the start order: one row per dependency level, each service with what it waits for")
 	cmd.Flags().Bool("raw", false, "print mabo-ctl.yaml verbatim and nothing else; the file is NOT redacted")
 	cmd.Flags().Var(&portsFlag{}, "ports", "resolve as if start had been given these port overrides, to preview what they would do")
 	cmd.Flags().Var(&namedPortsFlag{}, "port", "named port override SERVICE=PORT, e.g. --port backend=7999; repeatable. Cannot be combined with --ports")
@@ -70,9 +72,12 @@ func (a *app) configCmd() *cobra.Command {
 // runConfig prints the configuration in whichever of the three forms was asked
 // for.
 func (a *app) runConfig(cmd *cobra.Command, args []string) error {
-	asJSON, asRaw := boolFlag(cmd, "json"), boolFlag(cmd, "raw")
+	asJSON, asRaw, asGraph := boolFlag(cmd, "json"), boolFlag(cmd, "raw"), boolFlag(cmd, "graph")
 	if asJSON && asRaw {
 		return usageErrorf("--raw and --json cannot be combined: --raw prints mabo-ctl.yaml verbatim, which is not JSON")
+	}
+	if asGraph && (asJSON || asRaw || len(args) > 0) {
+		return usageErrorf("--graph prints the whole start order and stands alone; --json already carries it as \"levels\"")
 	}
 
 	if asRaw {
@@ -137,6 +142,10 @@ func (a *app) runConfig(cmd *cobra.Command, args []string) error {
 		Explicit:  a.configPath != "",
 	})
 
+	if asGraph {
+		fmt.Fprintln(a.env.Stdout, a.renderer().ConfigGraph(view))
+		return nil
+	}
 	if asJSON {
 		body, err := ui.ConfigJSON(view)
 		if err != nil {

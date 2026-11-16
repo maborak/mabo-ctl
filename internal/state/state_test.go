@@ -590,3 +590,33 @@ func deadPID(t *testing.T) int {
 	_ = cmd.Wait() // zombie reaped; the pid is now genuinely unallocated
 	return pid
 }
+
+// TestReadPIDRecordRefusesNonRegularAndHugeFiles: pid records are read on a
+// plain cd (the shell hook) and from other checkouts (reset), so a committed
+// symlink to /dev/zero or a huge file must fail fast, not hang or grow.
+func TestReadPIDRecordRefusesNonRegularAndHugeFiles(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	d, err := New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("/dev/zero", d.PIDPath("zero")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(d.PIDPath("huge"), []byte(strings.Repeat("1", maxPIDFile+1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, svc := range []string{"zero", "huge"} {
+		done := make(chan error, 1)
+		go func() { _, err := d.ReadPIDRecord(svc); done <- err }()
+		select {
+		case err := <-done:
+			if err == nil {
+				t.Errorf("%s: read succeeded", svc)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("%s: read did not return", svc)
+		}
+	}
+}

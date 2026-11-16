@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/maborak/mabo-ctl/internal/config"
 	"github.com/maborak/mabo-ctl/internal/redact"
 	"github.com/maborak/mabo-ctl/internal/supervisor"
 	"github.com/maborak/mabo-ctl/internal/ui"
@@ -390,10 +391,13 @@ func (s *Server) renderPageFor(a accessGrant) []byte {
 		"URL":      "/?token=" + token,
 		"Services": func() []string { names, _ := s.serviceNames(); return names }(),
 		"Terminal": s.terminals != nil && a.Role == "owner",
+
+		"TerminalScrollback": config.DefaultTerminalScrollback,
 	}
 	if cfg := s.controller().Config(); cfg != nil {
 		data["Root"] = cfg.Root
 		data["ConfigPath"] = cfg.Path
+		data["TerminalScrollback"] = cfg.ConsoleTerminalScrollback
 	}
 
 	out := []byte(consoleHTML)
@@ -492,14 +496,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	// through the field next to it. Redacting one channel and not the other is
 	// how the first version of this control was got wrong.
 	sts := s.controller().Status(ctx)
-	for i := range sts {
-		raw := sts[i].Health
-		safe := redact.URL(raw)
-		sts[i].Health = safe
-		if raw != "" && raw != safe {
-			sts[i].Detail = strings.ReplaceAll(sts[i].Detail, raw, safe)
-		}
-	}
+	ui.RedactStatuses(sts)
 
 	body, err := ui.StatusJSON(sts)
 	if err != nil {
@@ -522,7 +519,7 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
-	lines := make(chan string, streamBuffer)
+	lines := make(chan string, lineBuffer)
 	done := make(chan error, 1)
 	go func() { done <- s.controller().Tail(ctx, svc, n, false, lines) }()
 

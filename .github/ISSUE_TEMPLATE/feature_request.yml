@@ -11,7 +11,7 @@ body:
         runner, and not cross-platform. Those are stated boundaries, not gaps —
         a request to cross one needs to argue the boundary is wrong.
 
-        [`docs/ROADMAP.md`](https://github.com/maborak/mabo-ctl/blob/main/docs/ROADMAP.md) may already cover it.
+        Search [existing issues](https://github.com/maborak/mabo-ctl/issues?q=is%3Aissue) first; it may already be covered.
   - type: textarea
     id: problem
     attributes:

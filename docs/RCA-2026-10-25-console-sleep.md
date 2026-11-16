@@ -10,7 +10,7 @@ reload or restart; no service outage, data loss, or security impact.
 
 ## Summary
 
-The web consoles for `tiktok-bot`, `legal-ai`, and `amazon-watcher-backend`
+The web consoles of three separate projects
 became unresponsive after the laptop slept. The supervisors were healthy the
 whole time: a fresh `curl` to each listener answered in milliseconds while the
 already-loaded page stayed frozen.

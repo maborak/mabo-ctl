@@ -101,6 +101,11 @@ type app struct {
 	// non-interactive form of the drift prompt [app.reconcilePorts] asks.
 	refreshPorts bool
 
+	// portOffset records the global --port-offset flag: "" when not given,
+	// "auto", or a whole number. It is applied once, in [app.resolve], and
+	// persisted in .mabo-ctl/run.env so later invocations keep it.
+	portOffset string
+
 	// jsonContract records that this command emits the stable machine contract
 	// on stdout (`status --json`). Nothing human-facing may be interpolated into
 	// such a run, including the port-drift prompt.
@@ -506,14 +511,27 @@ func (a *app) resolve() ([]service.Instance, error) {
 		return nil, fmt.Errorf("mabo-ctl: prepare state directory: %w", err)
 	}
 
+	offsetChanged, err := a.applyPortOffset(cfg, st)
+	if err != nil {
+		return nil, err
+	}
+
 	insts, origins, err := service.Resolve(cfg, st, service.Options{
 		Ports:         a.ports.values,
 		PortOverrides: a.portOverrides,
 		EnvVars:       a.captured,
-		IgnoreRunEnv:  a.refreshPorts,
+		// A new offset moves every default, so the ports persisted under
+		// the old one must not outrank it.
+		IgnoreRunEnv: a.refreshPorts || offsetChanged,
 	})
 	if err != nil {
 		return nil, err
+	}
+	if offsetChanged {
+		if err := service.Persist(st, insts); err != nil {
+			return nil, fmt.Errorf("mabo-ctl: persist ports for the new offset: %w", err)
+		}
+		a.announcePortOffset(st, origins)
 	}
 	insts, origins, err = a.reconcilePorts(cfg, st, insts, origins)
 	if err != nil {

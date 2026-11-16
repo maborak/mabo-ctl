@@ -1156,7 +1156,7 @@ func TestStreamEndsEvenWithTheProducerMidSend(t *testing.T) {
 	// Far more output than the channel between the tail and the handler can
 	// hold, so the tail is blocked on a send when the tab closes. A handler
 	// that returned without cancelling and draining would strand it there.
-	ctrl.lines = make([]string, streamBuffer*8)
+	ctrl.lines = make([]string, lineBuffer*8)
 	for i := range ctrl.lines {
 		ctrl.lines[i] = fmt.Sprintf("chatty line %d", i)
 	}
@@ -2496,6 +2496,39 @@ func TestLogSeparatorsUseEntryBoundaries(t *testing.T) {
 	}
 }
 
+// TestPrettyJSONIsDisplayOnly pins the Pretty JSON toggle. The formatter must
+// only re-indent: JSON.parse/JSON.stringify would round big integers, merge
+// duplicate keys and reorder integer-like keys, showing values the service
+// never wrote. It applies to records classified structured at ingest, falls
+// back to the raw text, is mirrored to VIEW only on change, and the filter
+// keeps matching the original line.
+func TestPrettyJSONIsDisplayOnly(t *testing.T) {
+	t.Parallel()
+	formatter := jsBlock(t, "  function prettyJSON(text) {", "\n  }\n")
+	for _, forbidden := range []string{"JSON.parse", "JSON.stringify"} {
+		if strings.Contains(formatter, forbidden) {
+			t.Errorf("prettyJSON re-serializes through %s", forbidden)
+		}
+	}
+	for _, want := range []string{"return null;", `if (done || (!stack.length && c !== "{" && c !== "[")) { return null; }`} {
+		if !strings.Contains(formatter, want) {
+			t.Errorf("prettyJSON lost %q", want)
+		}
+	}
+	for _, want := range []string{
+		`if (this.pretty && rec.entry.structured) { text = prettyJSON(text) || text; }`,
+		`pretty.appendChild(txt("Pretty JSON"));`,
+		`var PRETTY_KEY = "mabo-ctl.log-pretty";`,
+		`pretty: pane.pretty,`,
+		`if (pane.pretty !== !!m.pretty) { pane.setPretty(m.pretty, false); }`,
+		`if (this.filter && rec.text.toLowerCase().indexOf(this.filter) < 0) { return false; }`,
+	} {
+		if !strings.Contains(consoleHTML, want) {
+			t.Errorf("pretty JSON lost %q", want)
+		}
+	}
+}
+
 // TestMirrorPointerIsVisualOnly guards cursor privacy, accessibility and the
 // separation between visual click indicators and input events.
 func TestMirrorPointerIsVisualOnly(t *testing.T) {
@@ -2780,15 +2813,31 @@ func TestStreamAllRequiresASession(t *testing.T) {
 func TestConsolePageHasAMergedLogMode(t *testing.T) {
 	t.Parallel()
 	for _, want := range []string{
-		`"All services"`,             // the toggle button
-		"bindAll",                    // entering merged mode
-		`this.name = "all"`,          // the sentinel that keeps stale-frame guards working
-		"all services",               // title and aria strings
-		"lineText",                   // the labelling render
-		`rec.svc + " · " + rec.text`, // the label format
+		`"All services"`,         // the toggle button
+		"bindAll",                // entering merged mode
+		`this.name = "all"`,      // the sentinel that keeps stale-frame guards working
+		"all services",           // title and aria strings
+		"lineText",               // the labelling render
+		`rec.svc + " · " + text`, // the label format
 	} {
 		if !strings.Contains(consoleHTML, want) {
 			t.Errorf("console.html lost %q; merged log mode is not wired", want)
+		}
+	}
+}
+
+// TestConfigTabShowsTheServerStartOrder pins that the Config tab draws the
+// start order the server computed (ui.ConfigView Levels) instead of deriving
+// its own from depends_on, which could disagree with what start does.
+func TestConfigTabShowsTheServerStartOrder(t *testing.T) {
+	t.Parallel()
+	for _, want := range []string{
+		`configLevels(cfg.levels || [], list)`,
+		`function configLevels(levels, list) {`,
+		`mabo-ctl config --graph prints the same order.`,
+	} {
+		if !strings.Contains(consoleHTML, want) {
+			t.Errorf("config tab lost %q", want)
 		}
 	}
 }

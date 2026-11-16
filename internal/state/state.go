@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -209,7 +210,7 @@ func (d *Dir) ReadPIDRecord(svc string) (PIDRecord, error) {
 		return PIDRecord{}, err
 	}
 	p := d.PIDPath(svc)
-	b, err := os.ReadFile(p)
+	b, err := readSmall(p, maxPIDFile)
 	if errors.Is(err, fs.ErrNotExist) {
 		return PIDRecord{}, nil
 	}
@@ -238,6 +239,40 @@ func (d *Dir) ReadPIDRecord(svc string) (PIDRecord, error) {
 		return PIDRecord{}, fmt.Errorf("state: pid file %s contains non-positive pid %d: %w", p, rec.PID, ErrMalformedPID)
 	}
 	return rec, nil
+}
+
+// maxPIDFile bounds a pid record. A real one is under a hundred bytes.
+const maxPIDFile = 4 << 10
+
+// readSmall reads a regular file of at most limit bytes. A pid record is read
+// on every status, by `reset` from ANOTHER checkout's .mabo-ctl, and by the
+// shell hook on a plain cd into a freshly cloned repository — so a record that
+// is a symlink to /dev/zero, a FIFO or a huge file must fail fast rather than
+// hang the shell or grow without bound.
+func readSmall(path string, limit int64) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+	fi, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !fi.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file", path)
+	}
+	if fi.Size() > limit {
+		return nil, fmt.Errorf("%s is %d bytes, over the %d-byte limit", path, fi.Size(), limit)
+	}
+	b, err := io.ReadAll(io.LimitReader(f, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(b)) > limit {
+		return nil, fmt.Errorf("%s is over the %d-byte limit", path, limit)
+	}
+	return b, nil
 }
 
 // RemovePID deletes svc's pid file. An already-absent file is not an error, so

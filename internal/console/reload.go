@@ -64,7 +64,7 @@ type reloadSession struct {
 // that sees the close never waits for the result.
 func newReload(reload func(context.Context, chan<- supervisor.Event) (*Reloaded, error)) *reloadSession {
 	s := &reloadSession{
-		ev:   make(chan supervisor.Event, tailBuffer),
+		ev:   make(chan supervisor.Event, eventBuffer),
 		done: make(chan reloadDoneMsg, 1),
 	}
 	go func() {
@@ -152,9 +152,11 @@ func (m Model) finishReload(msg reloadDoneMsg) (tea.Model, tea.Cmd) {
 		m.ctrl = msg.res.Controller
 		m.ctrlGen++
 		m.opt.Colors = serviceColors(m.ctrl)
+		m.opt.Origins = msg.res.Origins
+		m.cfgView = m.buildConfigView()
 		m.configChanged = false
 		m.live.clearTail()
-		m.tail, m.tailSvc = nil, ""
+		m.tail, m.tailSvc, m.tailFailed = nil, "", ""
 		m.notice = reloadSummary(msg.res)
 		m.reloadErr = nil
 		if msg.err != nil {

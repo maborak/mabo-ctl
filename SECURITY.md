@@ -53,6 +53,7 @@ written it into their own `mabo-ctl.yaml`:
 | Signal blast radius | mabo-ctl signalling a process it did not start |
 | Secret handling | credentials reaching a log, `--json`, or an HTTP response that a reader would not expect |
 | **The `mabo-ctl serve` web console** | any bypass of its token, `Host`/`Origin`, or method checks |
+| **`mabo-ctl mcp`** | a mutating tool reachable without `--allow-mutate`, a credential in a tool result the web console would redact, or protocol input that reaches anything but the declared tools |
 | **The console's Terminal tab** | a shell reachable when disabled, remotely without explicit permission, by a shared-link user, or from an origin other than the bound address |
 
 ### `mabo-ctl serve` deserves particular attention
@@ -191,6 +192,21 @@ The controls, as of the current `main`:
   authenticated `/api-docs` page, which sends `SAMEORIGIN` and
   `frame-ancestors 'self'` so the console's API tab can frame it. The console
   page itself still sends `frame-ancestors 'none'`.
+
+- **Bounded resources.** Every request a reader (including a shared link)
+  can make has a ceiling, so a slow or hostile client cannot grow `serve`
+  without limit:
+  - a log tail replays at most 5000 lines and 8 MiB of history per request
+    (older lines become one omission marker);
+  - any single log line is kept to 256 KiB (the rest is marked truncated);
+  - a log stream holds at most 16 lines between the tailer and a slow reader;
+  - at most 8 start/stop/restart operations run at once;
+  - JSON request bodies are capped (8 KiB for access/mirror, 64 KiB for the
+    trusted-origin list, 1 MiB for one terminal input);
+  - at most 16 terminal shells are open at once.
+
+  There is no cap on how many log requests run concurrently; each is bounded
+  as above.
 
 Audit these against the code (`internal/web/`), not against this list.
 

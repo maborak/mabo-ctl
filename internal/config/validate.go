@@ -75,6 +75,7 @@ func (c *Config) validate() error {
 
 	v.checkDurations()
 	v.checkConsoleAddr()
+	v.checkTerminalScrollback()
 	v.checkServices()
 	v.checkDependencies()
 	v.checkPortCollisions()
@@ -137,6 +138,14 @@ func (v *validator) checkConsoleAddr() {
 	}
 	if host == "" {
 		v.addf("console_addr %q must name a host, not just a port (write e.g. 127.0.0.1:%s)", v.cfg.ConsoleAddr, port)
+	}
+}
+
+// checkTerminalScrollback keeps console_terminal_scrollback finite: the
+// history lives in the browser, once per open shell.
+func (v *validator) checkTerminalScrollback() {
+	if n := v.cfg.ConsoleTerminalScrollback; n < 0 || n > MaxTerminalScrollback {
+		v.addf("console_terminal_scrollback must be between 0 and %d lines, got %d", MaxTerminalScrollback, n)
 	}
 }
 
