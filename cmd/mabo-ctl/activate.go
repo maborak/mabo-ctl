@@ -168,7 +168,11 @@ func hookSummary(root string) string {
 			continue
 		}
 		rec, err := d.ReadPIDRecord(svc)
-		if err == nil && rec.PID > 0 && supervisor.CheckIdentity(rec.PID, rec.StartedAt) == nil {
+		// A live leader that passes the identity check, or a leader that has
+		// exited while its group lives on (a crashed wrapper's server). The
+		// hook is display only, so the cheap group test is enough here.
+		if err == nil && rec.PID > 0 && (supervisor.CheckIdentity(rec.PID, rec.StartedAt) == nil ||
+			(!state.Alive(rec.PID) && supervisor.GroupAlive(rec.PID))) {
 			running = append(running, svc)
 		} else {
 			stopped = append(stopped, svc)

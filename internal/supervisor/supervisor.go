@@ -429,8 +429,28 @@ func (s *Supervisor) readyTimeoutFor(in service.Instance) time.Duration {
 // start — the pid was recycled by an unrelated process while the file survived.
 var ErrStalePID = errors.New("stale pid file")
 
-// livePID returns the recorded pid for svc when a process with that pid is
-// still alive AND mabo-ctl started it, and 0 otherwise. A malformed pid file is
+// liveRec is a live service's pid record. Survivors is set when the recorded
+// pid — the group leader — has exited while processes it started still run in
+// its group, such as the server a crashed shell wrapper started: they are what
+// is alive, and PID still names their group.
+type liveRec struct {
+	state.PIDRecord
+	Survivors []int
+}
+
+// ownsPID reports whether pid is svc's live process or a member of its process
+// group: a port is usually held by the server a wrapper or `npm run dev`
+// started, not by the recorded leader itself.
+func (s *Supervisor) ownsPID(svc string, pid int) bool {
+	rec, err := s.liveRecord(svc)
+	if err != nil || rec.PID <= 0 || pid <= 0 {
+		return false
+	}
+	return pid == rec.PID || InGroup(pid, rec.PID)
+}
+
+// liveRecord returns the pid record for svc when a process with that pid is
+// still alive AND mabo-ctl started it, and a zero record otherwise. A malformed pid file is
 // reported as an error rather than silently treated as "not running": a corrupt
 // pid must never be acted on, and it must never be ignored either. A live pid
 // that is provably NOT ours is reported as ErrStalePID.
@@ -446,13 +466,6 @@ var ErrStalePID = errors.New("stale pid file")
 // The ownership test is the one Setsid gives us for free: every process mabo-ctl
 // spawns is its own process-group leader, so pgid == pid. Anything else is not
 // ours, whatever the pid file says.
-func (s *Supervisor) livePID(svc string) (int, error) {
-	rec, err := s.liveRecord(svc)
-	return rec.PID, err
-}
-
-// liveRecord is livePID with the spawn time attached, for the callers that need
-// to know how long the process has been up as well as that it is.
 //
 // The spawn time comes off DISK rather than out of memory, and it has to: every
 // one-shot `mabo-ctl status`, and every poll of the web console behind it, is a
@@ -460,13 +473,35 @@ func (s *Supervisor) livePID(svc string) (int, error) {
 // enough that not answering is a problem?" — the question [PhaseDegraded]
 // answers — is unanswerable without it. A zero StartedAt means "unknown" (a pid
 // file written before mabo-ctl recorded spawn times), never the epoch.
-func (s *Supervisor) liveRecord(svc string) (state.PIDRecord, error) {
+//
+// A record whose pid has exited is still live while its process group is: a
+// shell wrapper that crashed leaves the server it started running and holding
+// the port, and reading that as stopped let a start spawn a second copy into a
+// port the first still held. The survivors count only once leaderlessGroup
+// ties them to this service; a group it cannot tie is reported as an error,
+// not as stopped, so nothing starts over it and nothing signals it. See
+// docs/LANDMINES.md §39.
+func (s *Supervisor) liveRecord(svc string) (liveRec, error) {
 	rec, err := s.st.ReadPIDRecord(svc)
 	if err != nil {
-		return state.PIDRecord{}, fmt.Errorf("read pid for %s: %w", svc, err)
+		return liveRec{}, fmt.Errorf("read pid for %s: %w", svc, err)
 	}
-	if rec.PID <= 0 || !state.Alive(rec.PID) {
-		return state.PIDRecord{}, nil
+	if rec.PID <= 0 {
+		return liveRec{}, nil
+	}
+	if !state.Alive(rec.PID) {
+		if !groupAlive(rec.PID) {
+			return liveRec{}, nil
+		}
+		members, err := s.leaderlessGroup(svc, rec.PID)
+		if err != nil {
+			return liveRec{}, fmt.Errorf("%w; mabo-ctl will neither start %s over it nor signal it — "+
+				"stop those processes yourself, or clear the record with mabo-ctl reset", err, svc)
+		}
+		if len(members) == 0 {
+			return liveRec{}, nil
+		}
+		return liveRec{PIDRecord: rec, Survivors: members}, nil
 	}
 	// The structural half of the recycled-pid guard — group leader, not init.
 	// The pid record's spawn time is deliberately NOT checked against the
@@ -476,13 +511,19 @@ func (s *Supervisor) liveRecord(svc string) (state.PIDRecord, error) {
 	// anyway. Display is not authority; verifyGroup's full check fires on the
 	// signalling path.
 	if _, err := verifyGroup(rec.PID, time.Time{}); err != nil {
-		return state.PIDRecord{}, fmt.Errorf("%w: %s names pid %d, which mabo-ctl did not start: %w",
+		return liveRec{}, fmt.Errorf("%w: %s names pid %d, which mabo-ctl did not start: %w",
 			ErrStalePID, s.st.PIDPath(svc), rec.PID, err)
 	}
-	return rec, nil
+	return liveRec{PIDRecord: rec}, nil
 }
 
-// clearStalePID removes a pid file that livePID proved is not ours, so the next
+// survivorsNote explains a live service whose recorded pid has exited.
+func survivorsNote(rec liveRec) string {
+	return fmt.Sprintf("pid %d has exited; %d process(es) it started still run in its group (pids %s)",
+		rec.PID, len(rec.Survivors), joinPIDs(rec.Survivors))
+}
+
+// clearStalePID removes a pid file that liveRecord proved is not ours, so the next
 // operation is not blocked by it. Reporting without repairing is what turned a
 // correct diagnosis into a permanent wedge.
 func (s *Supervisor) clearStalePID(svc string, cause error, ev chan<- Event) {
@@ -597,6 +638,9 @@ func (s *Supervisor) status(ctx context.Context, withHolders bool) []Status {
 		if !rec.StartedAt.IsZero() {
 			st.Uptime = time.Since(rec.StartedAt)
 		}
+		if rec.Survivors != nil {
+			st.Detail = survivorsNote(rec)
+		}
 
 		if in.Health == "" {
 			// Alive with nothing to probe. "running" is the honest answer;
@@ -625,7 +669,7 @@ func (s *Supervisor) status(ctx context.Context, withHolders bool) []Status {
 			// Name the dial failure verbatim. This text is why `mabo-ctl health`
 			// used to be worth running separately; it belongs on the one path
 			// that derives a phase, not on a second one beside it.
-			out[idx].Detail = probeFailure(res)
+			out[idx].Detail = joinDetail(out[idx].Detail, probeFailure(res))
 		}(i, in)
 	}
 
@@ -1111,8 +1155,11 @@ func (s *Supervisor) startOne(ctx context.Context, in service.Instance, ev chan<
 		return PhaseFailed, err
 	} else if rec.PID > 0 {
 		phase := s.runningPhase(ctx, in, rec.StartedAt)
-		emit(ev, Event{Service: in.Name, Phase: phase,
-			Msg: fmt.Sprintf("already running (pid %d)", rec.PID)})
+		msg := fmt.Sprintf("already running (pid %d)", rec.PID)
+		if rec.Survivors != nil {
+			msg = "already running: " + survivorsNote(rec)
+		}
+		emit(ev, Event{Service: in.Name, Phase: phase, Msg: msg})
 		return phase, nil
 	}
 
@@ -1664,8 +1711,7 @@ func (s *Supervisor) PortConflicts(names []string) ([]PortConflict, error) {
 		m.Lock()
 		h := s.lookupPortHolder(in.Port)
 		if h.PID > 0 {
-			pid, liveErr := s.livePID(in.Name)
-			if liveErr != nil || pid != h.PID {
+			if !s.ownsPID(in.Name, h.PID) {
 				conflicts = append(conflicts, PortConflict{
 					Service: in.Name,
 					Port:    in.Port,
@@ -1777,7 +1823,7 @@ func (s *Supervisor) reapPort(ctx context.Context, in service.Instance, force bo
 	// Ours, and started since the Stop above — so it is not an orphan at all.
 	// Killing it here would be mabo-ctl destroying its own live service and then
 	// deleting the record that proved it existed.
-	if pid, err := s.livePID(in.Name); err == nil && pid == h.PID {
+	if s.ownsPID(in.Name, h.PID) {
 		emit(ev, Event{Service: in.Name, Msg: fmt.Sprintf(
 			"port %d is held by pid %d, which mabo-ctl started while this reset was running — left alone",
 			in.Port, h.PID)})

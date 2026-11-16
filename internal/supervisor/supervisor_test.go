@@ -2763,3 +2763,83 @@ func TestStatusCarriesTheGroupUsageOfLiveServices(t *testing.T) {
 		t.Errorf("usage was read %d times for one status, want 1", calls.Load())
 	}
 }
+
+// TestStatusAndStartSeeTheSurvivorsOfADeadLeader is the regression for
+// docs/LANDMINES.md §39: a wrapper that died left its server running, and
+// status called the service stopped while start spawned a second copy.
+func TestStatusAndStartSeeTheSurvivorsOfADeadLeader(t *testing.T) {
+	pidFile := filepath.Join(t.TempDir(), "server.pid")
+	sup, st := fixture(t, service.Instance{
+		Name: "wrapped",
+		Cmd:  helperCmd(),
+		Env:  helperEnvFor("wrapper", "MABOCTL_HELPER_PIDFILE="+pidFile),
+	})
+	ev, collect := drain(t)
+	server := startWrapperThenKillIt(t, sup, st, pidFile, ev)
+	leader, _ := st.ReadPID("wrapped")
+
+	got := sup.StatusNoPorts(context.Background())[0]
+	if got.Phase != PhaseRunning || got.PID != leader {
+		t.Errorf("status = %s pid %d, want running under group %d", got.Phase, got.PID, leader)
+	}
+	if !strings.Contains(got.Detail, "has exited") || !strings.Contains(got.Detail, strconv.Itoa(server)) {
+		t.Errorf("status detail does not name the survivor %d: %q", server, got.Detail)
+	}
+	if !sup.ownsPID("wrapped", server) {
+		t.Error("ownsPID does not recognise the server in the service's group")
+	}
+	if sup.ownsPID("wrapped", os.Getpid()) {
+		t.Error("ownsPID claimed the test binary")
+	}
+
+	if err := sup.Start(context.Background(), nil, ev); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if pid, _ := st.ReadPID("wrapped"); pid != leader {
+		t.Errorf("start replaced the record (%d → %d): it spawned a second copy", leader, pid)
+	}
+
+	if err := sup.Stop(context.Background(), nil, ev); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	events := collect()
+	sup.Wait()
+	if !hasMsg(events, "already running: pid") {
+		t.Errorf("start did not say the group is already running; events = %v", msgs(events))
+	}
+	if state.Alive(server) {
+		t.Errorf("server %d outlived the stop", server)
+	}
+}
+
+// TestStatusAndStartRefuseAnUntiedLeaderlessGroup: survivors that hold no port
+// and work outside the checkout cannot be tied to the service. They are not
+// read as stopped (start would run a second copy) nor as ours (stop would
+// signal them): status names them and start refuses.
+func TestStatusAndStartRefuseAnUntiedLeaderlessGroup(t *testing.T) {
+	pidFile := filepath.Join(t.TempDir(), "server.pid")
+	sup, st := fixture(t, service.Instance{
+		Name: "wrapped",
+		Cmd:  helperCmd(),
+		Env:  helperEnvFor("wrapper", "MABOCTL_HELPER_PIDFILE="+pidFile, "MABOCTL_HELPER_CHDIR=/"),
+	})
+	ev, collect := drain(t)
+	server := startWrapperThenKillIt(t, sup, st, pidFile, ev)
+	leader, _ := st.ReadPID("wrapped")
+
+	got := sup.StatusNoPorts(context.Background())[0]
+	if got.PID != 0 || !strings.Contains(got.Detail, "will neither start") {
+		t.Errorf("status = %s pid %d %q, want the unverified group named", got.Phase, got.PID, got.Detail)
+	}
+	if err := sup.Start(context.Background(), nil, ev); err == nil {
+		t.Error("start ran over a group it could not verify")
+	}
+	collect()
+	sup.Wait()
+	if pid, _ := st.ReadPID("wrapped"); pid != leader {
+		t.Errorf("the record changed (%d → %d)", leader, pid)
+	}
+	if !state.Alive(server) {
+		t.Error("something signalled the untied group")
+	}
+}

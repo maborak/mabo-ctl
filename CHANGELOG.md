@@ -8,6 +8,20 @@ contract and service phase names are stable.
 
 ## [Unreleased]
 
+### Fixed
+
+- A service whose shell wrapper had crashed, while the server it started kept
+  running, read as `exited` in `status`. `start` then spawned a second copy,
+  which failed on the port the first still held, or ran twice when no port was
+  declared. Status, start, reload and reset now treat the surviving processes
+  as the running service once one of them holds its port or works inside the
+  checkout. `status` names their pids and probes, and measures CPU and memory
+  across them. Survivors that cannot be tied to the service are reported and
+  left alone, and `mabo-ctl reset` clears the record. `doctor` no longer calls
+  that record a stale pid file. The shell hook shows the service as running.
+- `reset` and `doctor` no longer treat a port held by a child of a running
+  service (the server a wrapper or `npm run dev` started) as a foreign holder.
+
 ## [1.5.0] - 2026-11-16
 
 ### Added
