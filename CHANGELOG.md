@@ -8,6 +8,8 @@ contract and service phase names are stable.
 
 ## [Unreleased]
 
+## [1.5.1] - 2026-11-16
+
 ### Fixed
 
 - A service whose shell wrapper had crashed, while the server it started kept
