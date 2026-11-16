@@ -29,6 +29,10 @@ func CheckIdentity(int, time.Time) error { return errPlatform }
 
 func signalGroup(int, syscall.Signal) error { return errPlatform }
 
+func groupAlive(int) bool { return false }
+
+func groupMembers(int) ([]int, error) { return nil, errPlatform }
+
 func signalPID(int, syscall.Signal) error { return errPlatform }
 
 var (
