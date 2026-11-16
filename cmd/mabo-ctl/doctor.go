@@ -135,6 +135,12 @@ func (a *app) diagnoseService(inst service.Instance) diagFinding {
 	case err != nil:
 		f.status = worst(f.status, ui.DoctorFail)
 		f.detail = joinDetail(f.detail, "pid file unreadable: "+err.Error())
+	case rec.PID > 0 && !state.Alive(rec.PID) && supervisor.GroupAlive(rec.PID):
+		f.status = worst(f.status, ui.DoctorWarn)
+		f.detail = joinDetail(f.detail, fmt.Sprintf(
+			"pid %d has exited, but processes it started still run in its group; "+
+				"`mabo-ctl status` says whether they are this service's, and `mabo-ctl stop %s` stops them",
+			rec.PID, inst.Name))
 	case rec.PID > 0 && !state.Alive(rec.PID):
 		f.status = worst(f.status, ui.DoctorWarn)
 		f.detail = joinDetail(f.detail,
@@ -150,7 +156,9 @@ func (a *app) diagnoseService(inst service.Instance) diagFinding {
 	// a zero Holder when nothing listens — the same generous reading start
 	// makes, so doctor never calls a stopped service's free port a finding.
 	if inst.Port > 0 {
-		if h := supervisor.PortHolder(inst.Port); h.PID != 0 && h.PID != rec.PID {
+		// The holder is ours when it is the recorded pid or a member of its
+		// group: a wrapper or `npm run dev` leaves the port to its child.
+		if h := supervisor.PortHolder(inst.Port); h.PID != 0 && h.PID != rec.PID && !supervisor.InGroup(h.PID, rec.PID) {
 			f.status = worst(f.status, ui.DoctorWarn)
 			f.detail = joinDetail(f.detail, fmt.Sprintf(
 				"port %d is held by pid %d (%s) — inspect with: %s",

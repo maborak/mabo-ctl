@@ -69,3 +69,29 @@ func joinPIDs(pids []int) string {
 	}
 	return strings.Join(s, ", ")
 }
+
+// joinDetail joins two status details with "; ", skipping an empty one.
+func joinDetail(a, b string) string {
+	switch {
+	case a == "":
+		return b
+	case b == "":
+		return a
+	}
+	return a + "; " + b
+}
+
+// GroupAlive reports whether any process is left in process group pgid, for
+// read-only callers (doctor, the shell hook) that judge a pid record: a record
+// whose pid has exited may still name a live group, such as the server a
+// crashed shell wrapper started.
+func GroupAlive(pgid int) bool { return groupAlive(pgid) }
+
+// InGroup reports whether pid is a member of process group pgid.
+func InGroup(pid, pgid int) bool {
+	if pid <= 0 || pgid <= 1 {
+		return false
+	}
+	g, err := processGroup(pid)
+	return err == nil && g == pgid
+}

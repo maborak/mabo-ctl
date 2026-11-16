@@ -1073,3 +1073,34 @@ the stop refuses, names the pids and keeps the pid file.
 ```bash
 go test ./internal/supervisor -race -run 'TestStopWaitsForTheWholeGroup|TestStopReachesTheGroupOfADeadLeader|TestStopRefusesALeaderlessGroupItCannotTie|TestStopEscalatesToSIGKILL'
 ```
+
+## 39. A dead wrapper's server read as stopped, and start ran a second copy
+
+**Shape.** Liveness was the recorded pid alone, which is the group leader. When
+a shell wrapper crashed or was killed, the server it started kept running in
+the same process group, holding the port. `status` reported `exited` (or
+`stopped`). `start` saw no live pid, cleared nothing, spawned a second copy,
+and then failed on the port the first copy still held. With no port declared it
+succeeded and ran two copies. `doctor` called the record a stale pid file and
+advised `reset`, and the shell hook showed the service stopped. #38 taught
+`stop` to reach such a group; every other reader still judged by the leader.
+
+**Where it bit us.** `internal/supervisor/supervisor.go` (`liveRecord`), found
+in the follow-up to #38: a live repro had the v1.5.0 `status` print `exited`
+while Python held the service's port.
+
+**Fix.** `liveRecord` treats a leader that has exited while its group lives on
+as live, once `leaderlessGroup` ties the survivors to the service (they hold its
+port, or work inside the checkout). `Status`, `start`, reload and `reset` all
+read liveness through it. `status` names the surviving pids, and its probe,
+CPU and memory cover them. A group it cannot tie is an error, not "stopped":
+start refuses and nothing signals it, and `mabo-ctl reset` clears it. A port
+held by a member of the service's group now counts as the service's own
+(`ownsPID`), not as a foreign holder. `doctor` and the shell hook check the
+group too (`GroupAlive`, `InGroup`).
+
+**Detector.**
+```bash
+go test ./internal/supervisor -race -run 'TestStatusAndStartSeeTheSurvivorsOfADeadLeader|TestStatusAndStartRefuseAnUntiedLeaderlessGroup'
+go test ./cmd/mabo-ctl -race -run 'LiveGroupBehindAnExitedLeader'
+```
