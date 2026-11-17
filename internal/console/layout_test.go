@@ -6,19 +6,18 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
+
+	"github.com/maborak/mabo-ctl/internal/supervisor"
 )
 
-// The tests in this file cover the web console's structure in the terminal:
-// the sidebar, the top and tab bars, the service card, the output toolbar,
-// and the mouse driving every drawn control.
+// The tests in this file cover the htop-shaped console: header, meters,
+// table, pane, notice and key bar; the function keys; the action and sort
+// menus; and the mouse driving the same actions.
 
-// wide resizes m to a terminal that gets the sidebar.
-func wide(t *testing.T, m Model) Model {
+// sized resizes m.
+func sized(t *testing.T, m Model, w, h int) Model {
 	t.Helper()
-	m, _ = send(t, m, tea.WindowSizeMsg{Width: 160, Height: 40})
-	if !m.frame().wide {
-		t.Fatal("160x40 did not get the wide layout")
-	}
+	m, _ = send(t, m, tea.WindowSizeMsg{Width: w, Height: h})
 	return m
 }
 
@@ -39,213 +38,236 @@ func spanFor(t *testing.T, spans []span, action string) span {
 	return span{}
 }
 
-func TestWideLayoutMirrorsTheWebConsole(t *testing.T) {
+func TestLayoutIsHtopShaped(t *testing.T) {
 	t.Parallel()
-	m := wide(t, booted(t, &fakeCtrl{}))
-	view := m.View()
-	lines := strings.Split(view, "\n")
+	m := sized(t, booted(t, &fakeCtrl{}), 130, 32)
+	lines := strings.Split(m.View(), "\n")
 	f := m.frame()
-	for i, want := range map[int][]string{
-		0:            {"mabo-ctl", "CONSOLE", "CONFIG", "[a Start all]", "[R Restart all]", "[S Stop all]", "2/3 up"},
-		1:            {"SERVICES", "[f filter by name]", "OUTPUT", "CONFIG", "1 ● ready", "1 ◐ slow", "1 ○ stopped", "3 services"},
-		2:            {"SERVICE", "PORT", "PID", "UPTIME", "PROBE", "┌ website ● ready", "[s Start]", "[x Stop]", "[r Restart]"},
-		3:            {"website", "7100", "PID", "READY IN", "CPU · MEM"},
-		f.tool.y:     {"OUTPUT · website", "[m All services]", "[p Pause]", "[G Follow tail]", "[c Clear]", "[/ filter lines…]"},
-		f.tool.y + 1: {"[✓ All]", "[Err]", "[Warn]", "[Info]", "[Dbg]", "[ ] Separators", "[ ] Pretty JSON", "lines"},
-		f.sys.y:      {"SYSTEM"},
+	for row, want := range map[int][]string{
+		f.head.y:   {"mabo-ctl", "repo", "3 services", "1 ready", "1 slow", "1 stopped", "● LIVE"},
+		f.meters.y: {"CPU[", "MEM", "config"},
+		f.thead.y:  {"SERVICE", "STATE", "PORT", "PID", "UPTIME", "CPU%", "MEM", "PROBE", "DETAIL"},
+		f.table.y:  {"website", "● ready", "7100", "101", "200"},
+		f.phead.y:  {"website · OUTPUT", "following", "level all", "Output", "Detail", "Config", "Tab"},
+		f.keys.y:   {"F1", "Help", "F2", "Config", "F3", "Search", "F6", "Sort", "F9", "Action", "F10", "Quit"},
 	} {
 		for _, w := range want {
-			if !strings.Contains(lines[i], w) {
-				t.Errorf("row %d lacks %q:\n%s", i, w, lines[i])
+			if !strings.Contains(lines[row], w) {
+				t.Errorf("row %d lacks %q:\n%s", row, w, lines[row])
 			}
 		}
 	}
-	// The sidebar and the main column are divided by one rule on every row.
-	for i, l := range lines {
-		if !strings.Contains(l, "│") {
-			t.Errorf("row %d has no column rule: %q", i, l)
-		}
+	if f.keys.y != len(lines)-1 || f.notice.y != len(lines)-2 {
+		t.Errorf("the key bar (%d) and notice (%d) are not the last two rows of %d", f.keys.y, f.notice.y, len(lines))
 	}
 }
 
 // TestEveryRowIsExactlyTheTerminalWide: a row one column too wide wraps and
-// pushes the bottom of the layout off the screen. Wide characters count two
-// columns, so an emoji in a log line or a service's detail must not shift the
-// rule or the card's border.
+// pushes the key bar off the screen. Wide characters count two columns, so
+// emoji and CJK in a log line or a service's detail must not shift anything.
 func TestEveryRowIsExactlyTheTerminalWide(t *testing.T) {
 	t.Parallel()
 	sts := threeServices()
 	sts[0].Detail = "🔵 ready · 日本語 · €"
 	m := booted(t, &fakeCtrl{statuses: sts})
 	m.setLines("18:55:09 🔵 INFO  httpx | GET /collections 日本語", `{"level":"warn","msg":"🚀 deployed"}`)
-	for _, size := range []tea.WindowSizeMsg{{Width: 160, Height: 40}, {Width: 120, Height: 30}, {Width: 90, Height: 30}, {Width: 60, Height: 20}} {
-		m, _ = send(t, m, size)
-		for _, mode := range []string{"", "i", "C"} {
+	for _, size := range [][2]int{{160, 40}, {120, 30}, {90, 30}, {60, 20}, {40, 10}} {
+		m = sized(t, m, size[0], size[1])
+		for _, mode := range []string{"", "i", "C", "enter", "f6"} {
 			mm := m
 			if mode != "" {
-				mm, _ = send(t, mm, key(mode))
+				mm, _ = send(t, mm, keyFor(mode))
 			}
 			lines := strings.Split(mm.View(), "\n")
-			if len(lines) != size.Height {
-				t.Errorf("%dx%d %q: %d rows, want %d", size.Width, size.Height, mode, len(lines), size.Height)
+			if len(lines) != size[1] {
+				t.Errorf("%dx%d %q: %d rows, want %d", size[0], size[1], mode, len(lines), size[1])
 			}
 			for i, l := range lines {
-				if w := ansi.StringWidth(l); w != size.Width {
-					t.Errorf("%dx%d %q: row %d is %d columns, want %d: %q", size.Width, size.Height, mode, i, w, size.Width, l)
+				if w := ansi.StringWidth(l); w != size[0] {
+					t.Errorf("%dx%d %q: row %d is %d columns, want %d: %q", size[0], size[1], mode, i, w, size[0], l)
 				}
 			}
 		}
 	}
 }
 
-func TestNarrowLayoutStacksTheSameParts(t *testing.T) {
+func TestFunctionKeysAndTheirLetters(t *testing.T) {
 	t.Parallel()
-	m := booted(t, &fakeCtrl{})
-	m, _ = send(t, m, tea.WindowSizeMsg{Width: 90, Height: 30})
-	if m.frame().wide {
-		t.Fatal("90 columns got the sidebar")
-	}
-	view := m.View()
-	for _, want := range []string{"CONFIG", "[a Start all]", "OUTPUT", "SERVICE", "┌ website", "[x Stop]", "[m All services]", "[✓ All]", "SYSTEM", "q quit"} {
-		if !strings.Contains(view, want) {
-			t.Errorf("the narrow layout lacks %q:\n%s", want, view)
-		}
-	}
-	// The phase chips go compact rather than losing the last ones.
-	tabs, _ := m.tabBar(70)
-	for _, want := range []string{"◆0", "●1", "○1"} {
-		if !strings.Contains(tabs, want) {
-			t.Errorf("compact chips lack %q: %s", want, tabs)
+	for _, tc := range []struct {
+		fkey, letter string
+		check        func(Model) bool
+	}{
+		{"f1", "?", func(m Model) bool { return m.help }},
+		{"f2", "C", func(m Model) bool { return m.pane == paneConfig }},
+		{"f3", "/", func(m Model) bool { return m.filtering }},
+		{"f4", "f", func(m Model) bool { return m.nameFiltering }},
+		{"f5", "m", func(m Model) bool { return m.all }},
+		{"f6", "<", func(m Model) bool { return m.menu != nil && m.menu.title == "Sort by" }},
+		{"f7", "i", func(m Model) bool { return m.pane == paneDetail }},
+		{"f8", "p", func(m Model) bool { return m.paused }},
+		{"f9", "enter", func(m Model) bool { return m.menu != nil && m.menu.title == "Actions" }},
+		{"f10", "q", func(m Model) bool { return m.Quitting() }},
+	} {
+		for _, k := range []string{tc.fkey, tc.letter} {
+			m := booted(t, &fakeCtrl{})
+			m, _ = send(t, m, keyFor(k))
+			if !tc.check(m) {
+				t.Errorf("%s did not do what %s does", k, tc.fkey)
+			}
 		}
 	}
 }
 
-func TestClickingAServiceRowSelectsIt(t *testing.T) {
-	t.Parallel()
-	f := &fakeCtrl{}
-	m := wide(t, booted(t, f))
-	fr := m.frame()
-	m, cmd := send(t, m, clickAt(5, fr.side.y+fr.sideRowsTop()+2))
-	if m.SelectedService() != "worker" || cmd == nil {
-		t.Fatalf("clicking the third row selected %q (cmd %v)", m.SelectedService(), cmd != nil)
-	}
-	f.tailFor(t, "worker")
-
-	// Narrow: the same click lands on the stacked table.
-	m, _ = send(t, m, tea.WindowSizeMsg{Width: 90, Height: 30})
-	fr = m.frame()
-	m, _ = send(t, m, clickAt(5, fr.side.y+fr.sideRowsTop()))
-	if m.SelectedService() != "website" {
-		t.Errorf("narrow click selected %q, want website", m.SelectedService())
-	}
-}
-
-func TestClickingTheCardButtonsRunsTheirOperation(t *testing.T) {
+func TestActionsMenuRunsTheChosenOperation(t *testing.T) {
 	t.Parallel()
 	f := &fakeCtrl{block: make(chan struct{})}
 	defer close(f.block)
-	m := wide(t, booted(t, f))
-	fr := m.frame()
-	_, spans := m.cardHead(fr.card.w)
-	stop := spanFor(t, spans, "x")
-	_, _ = send(t, m, clickAt(fr.card.x+stop.x0, fr.card.y))
-	waitFor(t, "the stop to reach the supervisor", func() bool { return len(f.opCalls()) == 1 })
+	m := booted(t, f)
+
+	m, _ = send(t, m, key("enter"))
+	if m.menu == nil || m.menu.items[m.menu.cursor].key != "r" {
+		t.Fatalf("enter on a running service did not open the menu on Restart: %+v", m.menu)
+	}
+	if v := m.View(); !strings.Contains(v, "Actions") || !strings.Contains(v, "Restart website") {
+		t.Errorf("the menu is not drawn:\n%s", v)
+	}
+	m, _ = send(t, m, key("down")) // Show detail
+	m, _ = send(t, m, key("up"))   // back to Restart
+	m, _ = send(t, m, key("up"))   // Stop
+	_, _ = send(t, m, key("enter"))
+	waitFor(t, "the stop", func() bool { return len(f.opCalls()) == 1 })
 	if got := f.opCalls()[0]; got.kind != opStop || strings.Join(got.names, ",") != "website" {
-		t.Errorf("clicking Stop ran %s %v, want stop website", got.kind, got.names)
+		t.Errorf("the menu ran %s %v, want stop website", got.kind, got.names)
+	}
+
+	// A listed key runs its entry straight from the menu; esc only closes.
+	m = booted(t, &fakeCtrl{})
+	m, _ = send(t, m, keyFor("f9"))
+	m, _ = send(t, m, key("esc"))
+	if m.menu != nil || m.Quitting() {
+		t.Error("esc did not just close the menu")
+	}
+	m, _ = send(t, m, keyFor("f9"))
+	m, _ = send(t, m, key("i"))
+	if m.menu != nil || m.pane != paneDetail {
+		t.Error("i in the menu did not open the DETAIL pane")
 	}
 }
 
-func TestClickingTheToolbarTogglesTheLogControls(t *testing.T) {
+func TestSortMenuOrdersTheTable(t *testing.T) {
 	t.Parallel()
-	m := wide(t, booted(t, &fakeCtrl{}))
-	m.setLines(`{"level":"error","msg":"x"}`, `{"level":"info","msg":"y"}`)
-	fr := m.frame()
+	sts := threeServices()
+	sts[0].Usage = supervisor.Usage{CPU: 1, RSS: 10 << 20}
+	sts[1].Usage = supervisor.Usage{CPU: 9, RSS: 50 << 20}
+	m := booted(t, &fakeCtrl{statuses: sts})
 
-	click := func(row func(int) (string, []span), y int, action string) {
-		t.Helper()
-		_, spans := row(fr.tool.w)
-		s := spanFor(t, spans, action)
-		m, _ = send(t, m, clickAt(fr.tool.x+s.x0, y))
+	names := func(m Model) string {
+		var out []string
+		for _, i := range m.listIndices() {
+			out = append(out, m.statuses[i].Name)
+		}
+		return strings.Join(out, ",")
 	}
-	click(m.levelBar, fr.tool.y+1, "J")
-	click(m.levelBar, fr.tool.y+1, "|")
-	click(m.levelBar, fr.tool.y+1, "level:error")
-	if !m.pretty || !m.separators || m.levelFilter != "error" || len(m.rows()) != 4 {
-		t.Errorf("after the clicks: pretty %v, separators %v, level %q, %d rows", m.pretty, m.separators, m.levelFilter, len(m.rows()))
+	m, _ = send(t, m, keyFor("f6"))
+	for m.menu.items[m.menu.cursor].action != "sort:cpu" {
+		m, _ = send(t, m, key("down"))
 	}
-	click(m.toolBar, fr.tool.y, "p")
-	if !m.paused {
-		t.Error("clicking Pause did not pause")
+	m, _ = send(t, m, key("enter"))
+	if got := names(m); got != "backend,website,worker" {
+		t.Errorf("sorted by CPU: %s", got)
 	}
-	click(m.toolBar, fr.tool.y, "/")
-	if !m.filtering {
-		t.Error("clicking the filter box did not open the filter")
+	if head, _ := m.theadLine(m.width); !strings.Contains(head, "CPU%▼") {
+		t.Errorf("the sort column is not marked: %s", head)
 	}
-	// A click elsewhere commits what was typed.
-	m, _ = send(t, m, key("x"))
-	m, _ = send(t, m, clickAt(fr.log.x+2, fr.log.y+1))
-	if m.filtering || m.filter != "x" {
-		t.Errorf("a click did not commit the filter: filtering %v, filter %q", m.filtering, m.filter)
+	// The selection follows the table's order, not the declared one.
+	m, _ = send(t, m, keyFor("home"))
+	if m.SelectedService() != "backend" {
+		t.Errorf("home selected %q, want the first row, backend", m.SelectedService())
 	}
 }
 
-func TestClickingTabsAndPhaseChips(t *testing.T) {
+func TestPanesSwitchAndScroll(t *testing.T) {
 	t.Parallel()
-	m := wide(t, booted(t, &fakeCtrl{}))
-	fr := m.frame()
-	_, spans := m.tabBar(fr.tabs.w)
-	cfg := spanFor(t, spans, "tab:config")
-	m, _ = send(t, m, clickAt(fr.tabs.x+cfg.x0, fr.tabs.y))
-	if !m.showConfig {
-		t.Fatal("clicking CONFIG did not open the tab")
+	m := booted(t, &fakeCtrl{})
+	m, _ = send(t, m, keyFor("f7"))
+	if m.pane != paneDetail || m.focus != focusLog {
+		t.Fatalf("F7: pane %d focus %d; want DETAIL with the keyboard", m.pane, m.focus)
 	}
-	m, _ = send(t, m, clickAt(fr.tabs.x+spanFor(t, spans, "tab:output").x0, fr.tabs.y))
-	if m.showConfig {
-		t.Fatal("clicking OUTPUT did not return")
+	m, _ = send(t, m, key("j"))
+	if m.SelectedService() != "website" {
+		t.Error("j moved the selection while the pane had the keyboard")
 	}
+	m, _ = send(t, m, key("tab"))
+	m, _ = send(t, m, key("j"))
+	if m.SelectedService() != "backend" || m.pane != paneDetail {
+		t.Errorf("after tab, j: selected %q, pane %d; want backend's DETAIL", m.SelectedService(), m.pane)
+	}
+	if !strings.Contains(m.View(), "backend · DETAIL") {
+		t.Errorf("the DETAIL pane does not follow the selection:\n%s", m.View())
+	}
+	m, _ = send(t, m, keyFor("f7"))
+	if m.pane != paneOutput {
+		t.Error("F7 again did not return to OUTPUT")
+	}
+}
 
-	// The slow chip is the fourth phase.
-	slow := spanFor(t, spans, "key:4")
-	m, _ = send(t, m, clickAt(fr.tabs.x+slow.x0, fr.tabs.y))
-	if len(m.listIndices()) != 1 || m.SelectedService() != "backend" {
-		t.Errorf("the slow chip shows %d services, selected %q", len(m.listIndices()), m.SelectedService())
+func TestMouseRunsTheSameActions(t *testing.T) {
+	t.Parallel()
+	f := &fakeCtrl{block: make(chan struct{})}
+	defer close(f.block)
+	m := sized(t, booted(t, f), 130, 32)
+	fr := m.frame()
+
+	// A row selects.
+	m, _ = send(t, m, clickAt(3, fr.table.y+2))
+	if m.SelectedService() != "worker" {
+		t.Errorf("clicking the third row selected %q", m.SelectedService())
+	}
+	// A column header sorts.
+	_, spans := m.theadLine(fr.thead.w)
+	m, _ = send(t, m, clickAt(spanFor(t, spans, "sort:name").x0, fr.thead.y))
+	if m.sortBy != "name" {
+		t.Errorf("clicking SERVICE sorted by %q", m.sortBy)
+	}
+	// A pane name switches the pane.
+	_, spans = m.pheadLine(fr.phead.w)
+	m, _ = send(t, m, clickAt(spanFor(t, spans, "pane:config").x0, fr.phead.y))
+	if m.pane != paneConfig {
+		t.Error("clicking Config did not switch the pane")
+	}
+	// A key-bar label presses its key, and a menu entry runs.
+	_, spans = m.keyBar(fr.keys.w)
+	m, _ = send(t, m, clickAt(spanFor(t, spans, "f9").x0, fr.keys.y))
+	if m.menu == nil {
+		t.Fatal("clicking F9 did not open the actions menu")
+	}
+	_, box := m.menuBox()
+	stop := 0
+	for i, it := range m.menu.items {
+		if it.key == "x" {
+			stop = i
+		}
+	}
+	_, _ = send(t, m, clickAt(box.x+3, box.y+1+stop))
+	waitFor(t, "the stop", func() bool { return len(f.opCalls()) == 1 })
+	if got := f.opCalls()[0]; got.kind != opStop {
+		t.Errorf("clicking Stop in the menu ran %s", got.kind)
 	}
 }
 
 func TestTheWheelScrollsWhatIsUnderThePointer(t *testing.T) {
 	t.Parallel()
-	m := wide(t, booted(t, &fakeCtrl{}))
+	m := sized(t, booted(t, &fakeCtrl{}), 130, 32)
 	for range 200 {
 		m.appendLine("line")
 	}
 	fr := m.frame()
-	m, _ = send(t, m, tea.MouseMsg{X: fr.log.x + 3, Y: fr.log.y + 2, Action: tea.MouseActionPress, Button: tea.MouseButtonWheelUp})
+	m, _ = send(t, m, tea.MouseMsg{X: 3, Y: fr.pane.y + 2, Action: tea.MouseActionPress, Button: tea.MouseButtonWheelUp})
 	if m.follow {
-		t.Error("wheel up over the log did not leave the tail")
+		t.Error("wheel up over the pane did not leave the tail")
 	}
-	m, _ = send(t, m, tea.MouseMsg{X: 3, Y: fr.side.y + fr.sideRowsTop(), Action: tea.MouseActionPress, Button: tea.MouseButtonWheelDown})
+	m, _ = send(t, m, tea.MouseMsg{X: 3, Y: fr.table.y, Action: tea.MouseActionPress, Button: tea.MouseButtonWheelDown})
 	if m.SelectedService() != "backend" {
-		t.Errorf("wheel down over the list selected %q, want backend", m.SelectedService())
-	}
-}
-
-func TestConfigTabKeepsTheSidebarKeysWorking(t *testing.T) {
-	t.Parallel()
-	f := &fakeCtrl{block: make(chan struct{})}
-	defer close(f.block)
-	m := wide(t, booted(t, f))
-	m, _ = send(t, m, key("C"))
-	m, _ = send(t, m, key("j"))
-	if !m.showConfig || m.cfgOffset != 1 || m.SelectedService() != "website" {
-		t.Errorf("j on CONFIG: tab %v, offset %d, selected %q; want it to scroll the config", m.showConfig, m.cfgOffset, m.SelectedService())
-	}
-	m, _ = send(t, m, key("x"))
-	waitFor(t, "the stop", func() bool { return len(f.opCalls()) == 1 })
-	if !m.showConfig {
-		t.Error("a service key closed the CONFIG tab")
-	}
-	m, _ = send(t, m, key("esc"))
-	if m.showConfig {
-		t.Error("esc did not return to OUTPUT")
+		t.Errorf("wheel down over the table selected %q, want backend", m.SelectedService())
 	}
 }

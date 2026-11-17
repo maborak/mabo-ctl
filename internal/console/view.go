@@ -24,13 +24,11 @@ var errRenderer = &ui.Renderer{}
 // name; lipgloss resolves them against the terminal's colour profile, and
 // degrades to plain text when there is none — as in a test.
 var (
-	dimStyle      = lipgloss.NewStyle().Faint(true)
-	cursorStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("13"))
-	selectedStyle = lipgloss.NewStyle().Bold(true)
-	noticeStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
-	errorStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("9"))
-	filterStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("14"))
-	helpKeyStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("14"))
+	dimStyle     = lipgloss.NewStyle().Faint(true)
+	noticeStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
+	errorStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("9"))
+	filterStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("14"))
+	helpKeyStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("14"))
 )
 
 // View renders the whole console as one string.
@@ -38,7 +36,7 @@ var (
 // It is a pure function of the model: no clock is read, no file is opened and
 // nothing is measured against the real terminal, so a test can assert on a
 // frame at any size. Every line is exactly the model's width, because a
-// wrapped line would push the bottom of the layout off the screen.
+// wrapped line would push the key bar off the bottom of the screen.
 func (m Model) View() string {
 	if m.quit {
 		return ""
@@ -51,49 +49,25 @@ func (m Model) View() string {
 	}
 
 	f := m.frame()
-	var main []string
-	top, _ := m.topBar(f.top.w)
-	tabs, _ := m.tabBar(f.tabs.w)
-	main = append(main, top, tabs)
-	if !f.wide {
-		main = append(main, m.sideLines(f)...)
+	lines := make([]string, 0, m.height)
+	lines = append(lines, m.headLine(f.head.w))
+	if f.meters.h > 0 {
+		lines = append(lines, m.meterLine(f.meters.w))
 	}
-	if m.showConfig {
-		main = append(main, m.configLines(f.body)...)
-	} else {
-		main = append(main, m.cardLines(f.card)...)
-		if f.tool.h > 0 {
-			l1, _ := m.toolBar(f.tool.w)
-			main = append(main, l1)
-		}
-		if f.tool.h > 1 {
-			l2, _ := m.levelBar(f.tool.w)
-			main = append(main, l2)
-		}
-		if f.sys.h > 0 {
-			main = append(main, m.systemLine(f.sys.w))
-		}
-		main = append(main, m.logLines(f.log)...)
+	thead, _ := m.theadLine(f.thead.w)
+	lines = append(lines, thead)
+	lines = append(lines, m.tableLines(f.table)...)
+	phead, _ := m.pheadLine(f.phead.w)
+	lines = append(lines, phead)
+	lines = append(lines, m.paneLines(f.pane)...)
+	lines = append(lines, m.noticeLine(f.notice.w))
+	keys, _ := m.keyBar(f.keys.w)
+	lines = append(lines, keys)
+	if m.menu != nil {
+		box, r := m.menuBox()
+		lines = overlay(lines, box, r)
 	}
-	if !f.wide {
-		main = append(main, fit(m.hintsView(), f.hints.w))
-		return strings.Join(clip(main, m.height), "\n")
-	}
-
-	side := m.sideLines(f)
-	rule := ruleStyle.Render("│")
-	lines := make([]string, m.height)
-	for y := range lines {
-		l, r := strings.Repeat(" ", f.side.w), strings.Repeat(" ", f.top.w)
-		if y < len(side) {
-			l = side[y]
-		}
-		if y < len(main) {
-			r = main[y]
-		}
-		lines[y] = l + rule + r
-	}
-	return strings.Join(lines, "\n")
+	return strings.Join(clip(lines, m.height), "\n")
 }
 
 // clip keeps at most n lines. Cutting the frame is better than overflowing
@@ -106,16 +80,14 @@ func clip(lines []string, n int) []string {
 	return lines
 }
 
-// titleView is the top bar's text, for callers that want the console's
-// heading as one line.
+// titleView is the console's first row, the heading the overlays keep.
 func (m Model) titleView() string {
-	s, _ := m.topBar(m.width)
-	return s
+	return m.headLine(m.width)
 }
 
 // logHeight is how many log rows show.
 func (m Model) logHeight() int {
-	return max(1, m.frame().log.h)
+	return max(1, m.frame().pane.h)
 }
 
 // listWindow is the first shown row of idx, scrolled so the selection stays
@@ -184,47 +156,24 @@ func (m Model) logRowView(r logRow, labelW, w int) string {
 	return m.nameStyle(r.svc).Render(pad(r.svc, labelW)) + dimStyle.Render(" · ") + paint(truncate(text, room))
 }
 
-// hints is the narrow layout's key legend, longest form first. The first one
-// that fits the terminal is used, so a narrow window loses hints rather than
-// wrapping the layout. The wide layout needs none: every control is drawn,
-// with its key.
-var hints = []string{
-	"↑/↓ select · tab log · s/x/r · a/R/S all · m merge · p pause · / filter · v level · J json · i more · C config · ? help · q quit",
-	"↑/↓ select · s/x/r · a/R/S all · m merge · / filter · C config · ? help · q quit",
-	"↑/↓ · s/x/r · a/R/S · / filter · ? help · q quit",
-	"? help · q quit",
-}
-
-// hintsView renders the key legend that fits the current width.
-func (m Model) hintsView() string {
-	for _, h := range hints {
-		if ansi.StringWidth(h) <= m.width {
-			return dimStyle.Render(h)
-		}
-	}
-	return dimStyle.Render(truncate(hints[len(hints)-1], m.width))
-}
-
 // helpLines is the help overlay. The last paragraph is the important one: a
 // user who believes quitting stops their services spends the next session
 // wondering who is holding every port.
 var helpLines = []struct{ key, what string }{
-	{"↑/k, ↓/j", "select a service (scroll the log pane when it has focus)"},
-	{"s, x, r", "start, stop or restart the selected service"},
-	{"a, R, S", "start every service (autostart or not) · restart the running ones · stop all"},
-	{"L", "reload mabo-ctl.yaml after asking: restarts the services an edit changes, stops removed ones"},
-	{"l, tab", "focus the log pane; tab or esc returns to the list"},
-	{"/, v", "filter log lines (enter applies, esc cancels) · cycle the level: all, error, warn, info, debug"},
-	{"m", "merge every service's log into one labelled pane; m again returns to one service"},
-	{"p, c", "pause the pane (lines keep arriving within the same cap) · clear it"},
-	{"J, |", "pretty-print JSON lines (whitespace only) · separators between entries"},
-	{"g, G, pgup/dn", "top or bottom of the log (G resumes following) · page it"},
-	{"i", "open the card's log file, command & arguments: log, cmd, dir, deps, env"},
-	{"f, 1-7, 0", "filter the list by name · show one phase (again clears) · 0 clears it"},
-	{"e, C", "activity: recent operations and errors · the CONFIG tab (C or esc returns)"},
-	{"mouse", "click any row, tab, chip, button or toggle; the wheel scrolls · hold Shift (Option on macOS) to select text"},
-	{"?", "toggle this help"},
-	{"q, ctrl-c", "quit the console (during a reload: once it finishes; press again to quit now)"},
+	{"↑↓ jk home end", "move the selection bar (the pane's scroll, when Tab gave it the keyboard)"},
+	{"tab, esc", "move the keyboard between the table and the pane · esc backs out one level"},
+	{"F9 enter", "actions menu for the selected service: start, stop, restart, all services, reload"},
+	{"s x r · a R S", "start, stop, restart it · start all, restart the running, stop all (no menu)"},
+	{"F7 i · F2 C", "the pane shows DETAIL or CONFIG (again, or esc, returns to OUTPUT)"},
+	{"F3 / · F4 f", "filter the output's lines · filter the table by name (enter applies, esc cancels)"},
+	{"F5 m · F8 p", "merge every service's output into one pane · pause it (lines keep arriving, capped)"},
+	{"F6 < >", "sort the table: name, state, port, pid, uptime, CPU%, memory, or declared order"},
+	{"v J | c G", "level all/error/warn/info/debug · pretty JSON · separators · clear · follow again"},
+	{"1-7, 0", "show one phase in the table (again clears) · 0 clears it"},
+	{"e · L", "activity history · reload mabo-ctl.yaml (asks first)"},
+	{"mouse", "click a row, a column header (sorts), a pane name or a key; the wheel scrolls"},
+	{"F1 ?", "toggle this help"},
+	{"F10 q, ctrl-c", "quit the console (during a reload: once it finishes; press again to quit now)"},
 }
 
 // helpNote is printed under the key table, and is the reason the overlay

@@ -10,20 +10,20 @@ contract and service phase names are stable.
 
 ### Changed
 
-- The interactive console is laid out like the web console:
-  - a sidebar with the service table and its name filter;
-  - a top bar with the config in force and Start all, Restart all and Stop all;
-  - OUTPUT and CONFIG tabs, with a count chip per phase that filters the list;
-  - the selected service's card: phase, Start, Stop, Restart, the detail grid,
-    and the command block on `i`;
-  - the output toolbar: merge, pause, follow, clear, the filter, level chips,
-    separators and pretty JSON;
-  - a SYSTEM line, and log lines coloured by level.
+- The interactive console is organised like htop:
+  - a header with the phase counts, and meters for the stack's CPU and memory;
+  - a full-width service table (state, port, pid, uptime, CPU%, memory, probe,
+    detail) with a selection bar, sortable by any column (F6 or a click on its
+    header);
+  - a pane for the selected service's OUTPUT or DETAIL, or the CONFIG, that
+    Tab gives the keyboard;
+  - a notice line, and htop's F1–F10 key bar. Every F-key also has a letter.
 
-  Every control shows its key and can be clicked, and the wheel scrolls. Below
-  120 columns the parts stack vertically. The configuration view is now the
-  CONFIG tab, not an overlay. Text widths are measured in terminal columns, so
-  emoji and CJK text no longer push a row past the edge.
+  F9 or Enter opens an actions menu: start, stop and restart the service, the
+  all-services operations, and the reload. The mouse clicks rows, column
+  headers, pane names, key-bar labels and menu entries, and the wheel scrolls.
+  Text widths are measured in terminal columns, so emoji and CJK text no
+  longer push a row past the edge.
 
 ## [1.5.1] - 2026-11-16
 

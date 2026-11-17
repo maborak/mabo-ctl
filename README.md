@@ -417,7 +417,7 @@ child doing the work — summed from one `ps` per status read. They are
 observation only; mabo-ctl sets no limits. CPU is `ps`'s %CPU (100% is one
 core): a lifetime average on Linux, a recent one on macOS. `status --json`
 carries them as `cpu_percent` and `rss_bytes`, appended to each record; the web
-console and the TUI service card show them too.
+console and the TUI (columns, and the DETAIL pane) show them too.
 
 > **`--json` contract change.** `degraded` and `exited` are new phase values,
 > `failed` is newly reachable in `status` output rather than only in the live
@@ -573,64 +573,63 @@ verbatim: they are evidence, and a pager can show them raw.
 
 ## Interactive console
 
-Running the bare binary on a terminal opens a console laid out like the web
-console. `mabo-ctl start -a` opens the same console with the stack already
-coming up in it.
+Running the bare binary on a terminal opens a console organised like htop.
+`mabo-ctl start -a` opens the same console with the stack already coming up in
+it.
 
 ```
-▣ mabo-ctl CONSOLE              │CONFIG …/my-app/mabo-ctl.yaml  [a Start all] [R Restart all] [S Stop all] 3/3 up ● LIVE
-SERVICES [f filter by name]     │OUTPUT CONFIG │ 0 ✕ failed 0 ⊘ exited 0 ⚠ degraded 0 ◐ slow 0 ○ stopped 1 ◆ running 2 ● ready
-   SERVICE  PORT   PID UPTIME   │┌ api ● ready ─────────────────────────────────── [s Start] [x Stop] [r Restart] ┐
-▸● api      7471 30698  8m08s   ││ PID     PORT   UPTIME   READY IN   CPU · MEM    RUNTIME   HEALTH                │
- ◆ worker      - 30898  8m08s   ││ 30698   7471   8m08s    1ms        0.0% · 21M   system    http://…:7471/ 200    │
- ● web      7472 30697  8m08s   ││ ▸ log file, command & arguments  i                                              │
-                                │└────────────────────────────────────────────────────────────────────────────────┘
-                                │OUTPUT · api ● live [m All services] [p Pause] [G Follow tail] [c Clear] [/ filter lines…]
-                                │v [✓ All] [Err] [Warn] [Info] [Dbg]   [ ] Separators |  [ ] Pretty JSON J   510 lines
-                                │SYSTEM starting api: done
-                                │{"level": "warn", "msg": "tick", "n": 14}
+mabo-ctl · my-app  3 services ◆ 1 running ● 2 ready                              3/3 up ● LIVE
+CPU[|                     0.2%]  MEM 49M  config …/my-app/mabo-ctl.yaml
+ SERVICE STATE       PORT    PID  UPTIME   CPU%    MEM PROBE  DETAIL
+ api     ● ready     7471  30698  11m08s    0.0    21M 200                       ← selection bar
+ worker  ◆ running      -  30898  11m08s    0.2     3M none
+ web     ● ready     7472  30697  11m08s    0.0    24M 200
+─ api · OUTPUT ─ following · level all ─────────────────────── Output Detail Config Tab ─
+{"level": "warn", "msg": "tick", "n": 14}
+{"level": "info", "msg": "GET /"}
+ starting api: done
+F1Help   F2Config F3Search F4Filter F5Merge  F6Sort   F7Detail F8Pause  F9Action F10Quit
 ```
 
-The parts are the web console's:
-- **Sidebar:** the services, with a name filter.
-- **Top bar:** the config in force and the all-services buttons.
-- **Tabs:** OUTPUT and CONFIG, then one count chip per phase. A chip filters the list.
-- **Service card:** name, phase, buttons and the detail grid. Its command block opens with `i`.
-- **Output toolbar:** level chips, separators and pretty JSON.
-- **SYSTEM line:** the latest operation or error.
-- **Log:** each line coloured by its level.
+From top to bottom:
+- **Header:** the project, a count per phase, and liveness.
+- **Meters:** the stack's CPU and memory, the sort and filters in force, and the config file.
+- **Table:** one row per service. The selection bar moves with ↑/↓, Home and End.
+- **Pane:** shows the selected service's OUTPUT, its DETAIL (everything the web console's card shows), or the CONFIG with its start order.
+- **Notice line:** the newest operation or error.
+- **Key bar:** htop's F1–F10.
 
-Every control is drawn with its key, and every control can be clicked. The
-wheel scrolls the list, the log or the config, whichever is under the pointer.
-Mouse capture means text is selected with Shift held (Option in macOS Terminal
-and iTerm2). Below 120 columns, the same parts stack vertically, with the
-service table above the card.
+Tab moves the keyboard between the table and the pane. F9 or Enter opens a menu
+of actions for the selected service: start, stop, restart, then the
+all-services operations and the reload. F6 opens the sort menu. Every function
+key has a letter, because macOS terminals often keep the F-keys for themselves:
 
 ```
-↑/↓ or j/k  select         s/x/r  start/stop/restart the selected service
-a  start all (autostart or not)   R  restart the running ones   S  stop all
-l or tab  focus the log pane      g/G  top/bottom   pgup/pgdn  page
-/  filter log lines        v  level: all/error/warn/info/debug
-m  merge every service's log into one labelled pane
-p  pause   c  clear   J  pretty JSON   |  separators between entries
-i  the card's log file, command & arguments (log, cmd, dir, deps, env)
-f  filter the list by name   1-7  show one phase   0  clear the phase
-e  activity history          C  the CONFIG tab (C or esc returns)
-L  reload mabo-ctl.yaml (asks first)          ?  help      q  quit
+F1 ?    help                F6 < >   sort: name, state, port, pid, uptime, CPU%, memory
+F2 C    CONFIG pane         F7 i     DETAIL pane (again, or esc, returns to OUTPUT)
+F3 /    filter the output   F8 p     pause the output (lines keep arriving, capped)
+F4 f    filter the table    F9 ⏎     actions menu
+F5 m    merge every output  F10 q    quit
+s x r   start / stop / restart the selected service     a R S   start all / restart running / stop all
+v J | c G   level · pretty JSON · separators · clear · follow again
+1-7 0   show one phase · clear it        e  activity history       L  reload mabo-ctl.yaml (asks first)
 ```
+
+The mouse reaches the same actions: click a row, a column header (to sort), a
+pane name, a key-bar label or a menu entry, and use the wheel to scroll.
+Text selection needs Shift held (Option in macOS Terminal and iTerm2).
 
 Level classification, pretty-JSON indentation (whitespace only) and the merged
-pane behave the same here as in the browser. The log buffer keeps the newest
-5000 lines and 4 MiB, and a paused pane keeps receiving within that same cap.
-Health URLs are redacted on this screen as in the browser, because a terminal
-gets shared and recorded. The Terminal and API tabs, and sharing, stay
-browser-only.
+output behave the same here as in the browser. The output keeps the newest 5000
+lines and 4 MiB, and a paused pane keeps receiving within that same cap. Health
+URLs are redacted on this screen as in the browser, because a terminal gets
+shared and recorded. Terminals, API docs and sharing stay browser-only.
 
 Quitting does **not** stop the supervised services. They were spawned with
 `setsid` and mabo-ctl is not their parent.
 
 When `mabo-ctl.yaml` — or an `env_file` it names — no longer matches the
-configuration in force, the top bar says `YAML changed · L reloads`. `L` asks
+configuration in force, the header says `YAML changed · L reloads`. `L` asks
 before it does anything, then restarts each running service whose command,
 directory, environment, port or `tty` changed, stops each running service the
 file no longer declares, and leaves everything else running; a colour, probe or

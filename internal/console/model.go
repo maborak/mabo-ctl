@@ -22,6 +22,18 @@ const maxEvents = 200
 // focusArea is which half of the console the arrow keys drive.
 type focusArea int
 
+// paneKind is what the lower pane shows for the selected service: its
+// output, its detail, or the configuration — htop's split, where the table
+// stays on top and the pane under it changes.
+type paneKind int
+
+// The three panes. OUTPUT is the default and the one esc returns to.
+const (
+	paneOutput paneKind = iota
+	paneDetail
+	paneConfig
+)
+
 // The two focusable areas. The service list has focus at startup because
 // selecting a service is what the console is opened to do.
 const (
@@ -99,12 +111,19 @@ type Model struct {
 	pretty      bool
 	separators  bool
 
-	// showDetail opens the selected service's detail block under the list:
-	// uptime, readiness, health, command, directory, dependencies and env.
-	// cfgView is the redacted configuration it and the config view read,
-	// rebuilt when the controller changes.
-	showDetail bool
+	// pane is what the lower pane shows, and paneOffset how far the DETAIL
+	// or CONFIG pane is scrolled (OUTPUT keeps its own offset). cfgView is
+	// the redacted configuration both read, rebuilt when the controller
+	// changes.
+	pane       paneKind
+	paneOffset int
 	cfgView    ui.ConfigView
+
+	// menu is the open popup — the actions menu (F9, enter) or the sort menu
+	// (F6) — or nil. sortBy is the table's sort column, "" for the order
+	// mabo-ctl.yaml declares.
+	menu   *menu
+	sortBy string
 
 	// The service list's filters: nameFilter is a substring of the name
 	// (nameFiltering while it is typed into nameDraft), phaseFilter keeps one
@@ -115,11 +134,9 @@ type Model struct {
 	phaseFilter   supervisor.Phase
 
 	// events is the activity history, newest last, and showEvents its
-	// overlay. showConfig is the configuration view, scrolled to cfgOffset.
+	// overlay.
 	events     []string
 	showEvents bool
-	showConfig bool
-	cfgOffset  int
 
 	// filter selects which log lines are shown. filtering reports whether the
 	// user is typing one right now, in which case filterDraft holds the
@@ -539,19 +556,27 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.help, m.showEvents = false, false
 		return m, nil
 	}
-	if m.showConfig {
-		return m.configKey(msg)
+	if m.menu != nil {
+		return m.menuKey(msg)
 	}
 
+	// Function keys arrive as "f1" … "f10", htop's bar; each has a letter too,
+	// because macOS terminals often keep the F-keys for themselves.
 	switch k := msg.String(); k {
+	case "enter", "f9":
+		return m.openActions()
+
+	case "f6", "<", ">":
+		return m.openSort()
+
 	case "R":
 		return m.restartAlive()
 
-	case "m":
+	case "f5", "m":
 		m.all = !m.all
 		return m.syncTailModel()
 
-	case "p":
+	case "f8", "p":
 		m.togglePause()
 		return m, nil
 
@@ -573,22 +598,19 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.repin()
 		return m, nil
 
-	case "i":
-		m.showDetail = !m.showDetail
-		m.clampOffset()
+	case "f7", "i":
+		m.togglePane(paneDetail)
 		return m, nil
 
 	case "e":
 		m.showEvents = true
 		return m, nil
 
-	case "C":
-		// The CONFIG tab, as in the web console; C again returns to OUTPUT.
-		m.showConfig = true
-		m.cfgOffset = 0
+	case "f2", "C":
+		m.togglePane(paneConfig)
 		return m, nil
 
-	case "f":
+	case "f4", "f":
 		m.nameFiltering = true
 		m.nameDraft = m.nameFilter
 		return m, nil
@@ -614,38 +636,60 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.requestQuit()
 
 	case "esc":
-		// Escape backs out of the log pane rather than quitting, so the key
+		// Escape backs out one level — a DETAIL or CONFIG pane to OUTPUT,
+		// then the pane's focus to the table — before it quits, so the key
 		// that cancels a filter cannot also end the session by one keystroke.
-		if m.focus == focusLog {
+		switch {
+		case m.pane != paneOutput:
+			m.pane, m.paneOffset = paneOutput, 0
+			return m, nil
+		case m.focus == focusLog:
 			m.focus = focusList
 			return m, nil
 		}
 		return m.requestQuit()
 
-	case "?":
+	case "f10":
+		return m.requestQuit()
+
+	case "f1", "?":
 		m.help = true
 		return m, nil
 
 	case "up", "k":
 		if m.focus == focusLog {
-			m.scroll(-1)
+			m.scrollPane(-1)
 			return m, nil
 		}
 		return m.move(-1)
 
 	case "down", "j":
 		if m.focus == focusLog {
-			m.scroll(1)
+			m.scrollPane(1)
 			return m, nil
 		}
 		return m.move(1)
 
 	case "pgup":
-		m.scroll(-m.logHeight())
+		m.scrollPane(-m.logHeight())
 		return m, nil
 
 	case "pgdown":
-		m.scroll(m.logHeight())
+		m.scrollPane(m.logHeight())
+		return m, nil
+
+	case "home":
+		if m.focus == focusList {
+			return m.move(-len(m.statuses))
+		}
+		m.scrollPane(-1 << 30)
+		return m, nil
+
+	case "end":
+		if m.focus == focusList {
+			return m.move(len(m.statuses))
+		}
+		m.scrollPane(1 << 30)
 		return m, nil
 
 	case "tab":
@@ -673,7 +717,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.follow = true
 		return m, nil
 
-	case "/":
+	case "f3", "/":
 		m.filtering = true
 		m.filterDraft = m.filter
 		m.focus = focusLog
@@ -821,8 +865,9 @@ func (m Model) viewOffset(n int) int {
 	return min(max(m.offset, 0), bottom)
 }
 
-// listIndices is the indices into statuses the list shows: every service, or
-// those the name and phase filters keep.
+// listIndices is the indices into statuses the list shows, in the order it
+// shows them: every service, or those the name and phase filters keep, sorted
+// by the sort in force.
 func (m Model) listIndices() []int {
 	needle := strings.ToLower(m.nameFilter)
 	out := make([]int, 0, len(m.statuses))
@@ -835,6 +880,7 @@ func (m Model) listIndices() []int {
 		}
 		out = append(out, i)
 	}
+	m.sortIndices(out)
 	return out
 }
 
@@ -882,37 +928,27 @@ func (m Model) restartAlive() (tea.Model, tea.Cmd) {
 	return m.launch(opRestart, names)
 }
 
-// configKey handles a keypress on the CONFIG tab: the scroll keys scroll the
-// configuration, C or esc return to OUTPUT, and every other key does what it
-// does on OUTPUT — the sidebar and the all-services keys still work, as the
-// web console's do on its CONFIG tab.
-func (m Model) configKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	page := max(1, m.frame().body.h-2)
-	switch msg.String() {
-	case "j", "down":
-		m.cfgOffset++
-	case "k", "up":
-		m.cfgOffset = max(0, m.cfgOffset-1)
-	case "pgup":
-		m.cfgOffset = max(0, m.cfgOffset-page)
-	case "pgdown", " ":
-		m.cfgOffset += page
-	case "g":
-		m.cfgOffset = 0
-	case "C", "esc":
-		m.showConfig = false
-	default:
-		m.showConfig = false
-		mm, cmd := m.handleKey(msg)
-		out := mm.(Model)
-		// Keys that do not leave the tab on purpose keep it open.
-		if k := msg.String(); k != "tab" && k != "l" && k != "/" && k != "m" && k != "p" && k != "c" &&
-			k != "v" && k != "J" && k != "|" && k != "G" {
-			out.showConfig = !out.help && !out.showEvents && !out.quit && !out.confirmReload
-		}
-		return out, cmd
+// togglePane shows p in the lower pane, or OUTPUT again when p is already
+// shown. Opening a pane gives it the keyboard, so the arrows scroll it.
+func (m *Model) togglePane(p paneKind) {
+	if m.pane == p {
+		m.pane = paneOutput
+	} else {
+		m.pane = p
+		m.focus = focusLog
 	}
-	return m, nil
+	m.paneOffset = 0
+	m.clampOffset()
+}
+
+// scrollPane scrolls whatever the lower pane shows: the log, or the DETAIL or
+// CONFIG text.
+func (m *Model) scrollPane(delta int) {
+	if m.pane == paneOutput {
+		m.scroll(delta)
+		return
+	}
+	m.paneOffset = min(max(0, m.paneOffset+delta), max(0, len(m.paneText())-m.logHeight()))
 }
 
 // clampOffset keeps the viewport inside the buffer.

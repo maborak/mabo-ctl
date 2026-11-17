@@ -629,7 +629,7 @@ func TestViewShowsRootPhaseAndHints(t *testing.T) {
 	m := booted(t, f)
 	view := m.View()
 
-	for _, want := range []string{"/repo", "ready", "slow", "stopped", "7100", " 101 ", "q quit"} {
+	for _, want := range []string{"repo", "ready", "slow", "stopped", "7100", " 101 ", "Quit"} {
 		if !strings.Contains(view, want) {
 			t.Errorf("view does not contain %q:\n%s", want, view)
 		}
@@ -649,7 +649,7 @@ func TestHelpOverlaySaysQuittingDoesNotStopServices(t *testing.T) {
 	if !strings.Contains(view, "Quitting does NOT stop the supervised services") {
 		t.Errorf("help does not state that quitting leaves services running:\n%s", view)
 	}
-	for _, want := range []string{"start the selected service", "filter log lines", "setsid"} {
+	for _, want := range []string{"actions menu for the selected service", "filter the output's lines", "setsid"} {
 		if !strings.Contains(view, want) {
 			t.Errorf("help does not mention %q:\n%s", want, view)
 		}
@@ -738,8 +738,9 @@ func TestWindowResizeGivesTheLogPaneTheRemainingHeight(t *testing.T) {
 	} {
 		mm, _ := send(t, m, size)
 		f := mm.frame()
-		if got := f.log.y + f.log.h; got != size.Height-boolInt(!f.wide) {
-			t.Errorf("at %dx%d: log pane ends at row %d, want the bottom", size.Width, size.Height, got)
+		if got := f.pane.y + f.pane.h; got != f.notice.y || f.keys.y != size.Height-1 {
+			t.Errorf("at %dx%d: pane ends at row %d, notice at %d, keys at %d; want pane, notice, keys at the bottom",
+				size.Width, size.Height, got, f.notice.y, f.keys.y)
 		}
 		if lines := strings.Split(mm.View(), "\n"); len(lines) != size.Height {
 			t.Errorf("at %dx%d: the frame is %d lines, want %d", size.Width, size.Height, len(lines), size.Height)

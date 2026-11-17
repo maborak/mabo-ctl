@@ -6,13 +6,15 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-// wheelStep is how many rows one wheel notch scrolls the log or the config.
+// wheelStep is how many rows one wheel notch scrolls the pane.
 const wheelStep = 3
 
-// handleMouse answers a mouse event. A click runs exactly what the clicked
-// control's key runs — the buttons are drawn with their keys, and a click is
-// that key — so the mouse and the keyboard cannot drift apart. The wheel
-// scrolls whatever is under the pointer.
+// handleMouse answers a mouse event. The keyboard is the console's primary
+// interface; the mouse is a shortcut to the same actions. A click on a control
+// runs exactly what that control's key runs, so the two cannot drift apart:
+// a table row selects, a column header sorts, a pane name switches the pane,
+// a key-bar label presses its key, a menu entry runs. The wheel scrolls what
+// is under the pointer.
 func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if m.confirmReload {
 		// The reload question is answered with y or another key, never by a
@@ -30,6 +32,14 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		m.help, m.showEvents = false, false
 		return m, nil
 	}
+	if m.menu != nil {
+		_, r := m.menuBox()
+		if i := y - r.y - 1; r.has(x, y) && i >= 0 && i < len(m.menu.items) {
+			return m.runMenu(i)
+		}
+		m.menu = nil
+		return m, nil
+	}
 	// A click elsewhere commits a filter being typed, as enter would: the
 	// draft is what the operator meant, and dropping it would lose it.
 	var pre tea.Cmd
@@ -41,10 +51,9 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	return mm, tea.Batch(pre, cmd)
 }
 
-// wheel scrolls what is under the pointer: the service list, the config or
-// the log.
+// wheel scrolls what is under the pointer: the table or the pane.
 func (m Model) wheel(x, y int, up bool) (tea.Model, tea.Cmd) {
-	if m.help || m.showEvents {
+	if m.help || m.showEvents || m.menu != nil {
 		return m, nil
 	}
 	f := m.frame()
@@ -53,12 +62,10 @@ func (m Model) wheel(x, y int, up bool) (tea.Model, tea.Cmd) {
 		step = -wheelStep
 	}
 	switch {
-	case f.side.has(x, y):
+	case f.table.has(x, y):
 		return m.move(step / wheelStep)
-	case m.showConfig && f.body.has(x, y):
-		m.cfgOffset = max(0, m.cfgOffset+step)
-	case f.log.has(x, y):
-		m.scroll(step)
+	case f.pane.has(x, y):
+		m.scrollPane(step)
 	}
 	return m, nil
 }
@@ -66,122 +73,102 @@ func (m Model) wheel(x, y int, up bool) (tea.Model, tea.Cmd) {
 // click answers a left click at (x, y).
 func (m Model) click(x, y int) (tea.Model, tea.Cmd) {
 	f := m.frame()
-	at := func(r rect, spans []span) string {
+	at := func(spans []span) string {
 		for _, s := range spans {
-			if x-r.x >= s.x0 && x-r.x < s.x1 {
+			if x >= s.x0 && x < s.x1 {
 				return s.action
 			}
 		}
 		return ""
 	}
 	switch {
-	case f.top.has(x, y):
-		_, spans := m.topBar(f.top.w)
-		return m.act(at(f.top, spans))
-	case f.tabs.has(x, y):
-		_, spans := m.tabBar(f.tabs.w)
-		return m.act(at(f.tabs, spans))
-	case f.side.has(x, y):
-		return m.clickSide(f, x, y)
-	case f.card.has(x, y):
-		switch y - f.card.y {
-		case 0:
-			_, spans := m.cardHead(f.card.w)
-			return m.act(at(f.card, spans))
-		case 3:
-			if f.card.h >= 5 {
-				return m.act("i")
-			}
+	case f.thead.has(x, y):
+		_, spans := m.theadLine(f.thead.w)
+		return m.act(at(spans))
+	case f.table.has(x, y):
+		idx := m.listIndices()
+		j := m.listWindow(idx, f.table.h) + y - f.table.y
+		m.focus = focusList
+		if j < 0 || j >= len(idx) || idx[j] == m.sel {
+			return m, nil
 		}
-	case f.tool.has(x, y):
-		var spans []span
-		if y == f.tool.y {
-			_, spans = m.toolBar(f.tool.w)
-		} else {
-			_, spans = m.levelBar(f.tool.w)
-		}
-		return m.act(at(f.tool, spans))
-	case f.sys.has(x, y):
-		return m.act("e")
-	case f.log.has(x, y):
+		m.sel = idx[j]
+		m.filter = ""
+		return m.syncTailModel()
+	case f.phead.has(x, y):
+		_, spans := m.pheadLine(f.phead.w)
+		return m.act(at(spans))
+	case f.pane.has(x, y):
 		m.focus = focusLog
+	case f.notice.has(x, y):
+		return m.act("e")
+	case f.keys.has(x, y):
+		_, spans := m.keyBar(f.keys.w)
+		return m.act(at(spans))
 	}
 	return m, nil
 }
 
-// clickSide answers a click in the sidebar: the filter box opens the name
-// filter, a service row selects that service, and the footer opens the help.
-func (m Model) clickSide(f frame, x, y int) (tea.Model, tea.Cmd) {
-	row := y - f.side.y
-	if f.wide && row == 1 {
-		_, spans := m.sideFilterBar(f.side.w)
-		for _, s := range spans {
-			if x-f.side.x >= s.x0 && x-f.side.x < s.x1 {
-				return m.act(s.action)
-			}
-		}
-		return m, nil
-	}
-	if f.wide && row == f.side.h-1 {
-		return m.act("?")
-	}
-	top := f.sideRowsTop()
-	if row < top {
-		if !f.wide {
-			return m.act("f")
-		}
-		return m, nil
-	}
-	idx := m.listIndices()
-	room := f.side.h - top
-	if f.wide {
-		room -= sideFoot
-	}
-	j := m.listWindow(idx, room) + row - top
-	if j < 0 || j >= len(idx) || idx[j] == m.sel {
-		m.focus = focusList
-		return m, nil
-	}
-	m.focus = focusList
-	m.sel = idx[j]
-	m.filter = ""
-	return m.syncTailModel()
-}
-
-// act runs a control's action: a key, or one of the few actions with no
-// single key of their own.
+// act runs an action: a key, or one of the few actions with no single key
+// of their own (a pane, a sort order, focusing the pane).
 func (m Model) act(action string) (tea.Model, tea.Cmd) {
 	switch {
 	case action == "":
 		return m, nil
-	case action == "tab:output":
-		m.showConfig = false
-		return m, nil
-	case action == "tab:config":
-		if !m.showConfig {
-			m.showConfig, m.cfgOffset = true, 0
-		}
-		return m, nil
-	case action == "follow":
-		if m.follow && !m.paused {
-			m.follow = false
-			m.offset = m.bottomOffset()
-			return m, nil
-		}
-		if m.paused {
-			m.togglePause()
-		}
-		m.follow = true
-		return m, nil
 	case action == "focus":
-		m.focus = focusLog
+		if m.focus == focusLog {
+			m.focus = focusList
+		} else {
+			m.focus = focusLog
+		}
 		return m, nil
-	case strings.HasPrefix(action, "level:"):
-		m.levelFilter = strings.TrimPrefix(action, "level:")
-		m.follow = true
+	case action == "pane:output":
+		m.pane, m.paneOffset = paneOutput, 0
 		return m, nil
-	case strings.HasPrefix(action, "key:"):
-		action = strings.TrimPrefix(action, "key:")
+	case action == "pane:detail":
+		if m.pane != paneDetail {
+			m.togglePane(paneDetail)
+		}
+		return m, nil
+	case action == "pane:config":
+		if m.pane != paneConfig {
+			m.togglePane(paneConfig)
+		}
+		return m, nil
+	case strings.HasPrefix(action, "sort:"):
+		m.sortBy = strings.TrimPrefix(action, "sort:")
+		return m, nil
 	}
-	return m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(action)})
+	return m.handleKey(keyFor(action))
+}
+
+// keyFor is the keypress an action string names.
+func keyFor(action string) tea.KeyMsg {
+	switch action {
+	case "enter":
+		return tea.KeyMsg{Type: tea.KeyEnter}
+	case "esc":
+		return tea.KeyMsg{Type: tea.KeyEsc}
+	case "f1":
+		return tea.KeyMsg{Type: tea.KeyF1}
+	case "f2":
+		return tea.KeyMsg{Type: tea.KeyF2}
+	case "f3":
+		return tea.KeyMsg{Type: tea.KeyF3}
+	case "f4":
+		return tea.KeyMsg{Type: tea.KeyF4}
+	case "f5":
+		return tea.KeyMsg{Type: tea.KeyF5}
+	case "f6":
+		return tea.KeyMsg{Type: tea.KeyF6}
+	case "f7":
+		return tea.KeyMsg{Type: tea.KeyF7}
+	case "f8":
+		return tea.KeyMsg{Type: tea.KeyF8}
+	case "f9":
+		return tea.KeyMsg{Type: tea.KeyF9}
+	case "f10":
+		return tea.KeyMsg{Type: tea.KeyF10}
+	}
+	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(action)}
 }
