@@ -8,6 +8,23 @@ contract and service phase names are stable.
 
 ## [Unreleased]
 
+### Changed
+
+- The interactive console is laid out like the web console:
+  - a sidebar with the service table and its name filter;
+  - a top bar with the config in force and Start all, Restart all and Stop all;
+  - OUTPUT and CONFIG tabs, with a count chip per phase that filters the list;
+  - the selected service's card: phase, Start, Stop, Restart, the detail grid,
+    and the command block on `i`;
+  - the output toolbar: merge, pause, follow, clear, the filter, level chips,
+    separators and pretty JSON;
+  - a SYSTEM line, and log lines coloured by level.
+
+  Every control shows its key and can be clicked, and the wheel scrolls. Below
+  120 columns the parts stack vertically. The configuration view is now the
+  CONFIG tab, not an overlay. Text widths are measured in terminal columns, so
+  emoji and CJK text no longer push a row past the edge.
+
 ## [1.5.1] - 2026-11-16
 
 ### Fixed

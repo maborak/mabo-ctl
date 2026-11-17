@@ -242,6 +242,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 
+	case tea.MouseMsg:
+		return m.handleMouse(msg)
+
 	case tickMsg:
 		var cmds []tea.Cmd
 		// The list keeps refreshing through a reload: watching services stop
@@ -580,6 +583,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "C":
+		// The CONFIG tab, as in the web console; C again returns to OUTPUT.
 		m.showConfig = true
 		m.cfgOffset = 0
 		return m, nil
@@ -878,27 +882,35 @@ func (m Model) restartAlive() (tea.Model, tea.Cmd) {
 	return m.launch(opRestart, names)
 }
 
-// configKey handles a keypress while the configuration view is open: the
-// scroll keys scroll it, q quits, anything else closes it.
+// configKey handles a keypress on the CONFIG tab: the scroll keys scroll the
+// configuration, C or esc return to OUTPUT, and every other key does what it
+// does on OUTPUT — the sidebar and the all-services keys still work, as the
+// web console's do on its CONFIG tab.
 func (m Model) configKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	page := max(1, m.frame().body.h-2)
 	switch msg.String() {
-	case "up", "k":
-		m.cfgOffset = max(0, m.cfgOffset-1)
-	case "down", "j":
+	case "j", "down":
 		m.cfgOffset++
+	case "k", "up":
+		m.cfgOffset = max(0, m.cfgOffset-1)
 	case "pgup":
-		m.cfgOffset = max(0, m.cfgOffset-max(1, m.height-2))
+		m.cfgOffset = max(0, m.cfgOffset-page)
 	case "pgdown", " ":
-		m.cfgOffset += max(1, m.height-2)
+		m.cfgOffset += page
 	case "g":
 		m.cfgOffset = 0
-	case "q":
-		return m.requestQuit()
-	case "L":
+	case "C", "esc":
 		m.showConfig = false
-		return m.askReload()
 	default:
 		m.showConfig = false
+		mm, cmd := m.handleKey(msg)
+		out := mm.(Model)
+		// Keys that do not leave the tab on purpose keep it open.
+		if k := msg.String(); k != "tab" && k != "l" && k != "/" && k != "m" && k != "p" && k != "c" &&
+			k != "v" && k != "J" && k != "|" && k != "G" {
+			out.showConfig = !out.help && !out.showEvents && !out.quit && !out.confirmReload
+		}
+		return out, cmd
 	}
 	return m, nil
 }

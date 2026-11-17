@@ -2,6 +2,7 @@ package console
 
 import (
 	"errors"
+	tea "github.com/charmbracelet/bubbletea"
 	"strings"
 	"testing"
 
@@ -28,8 +29,8 @@ func TestPrettyJSONExpandsRecordsIntoRows(t *testing.T) {
 	if !m.follow || m.viewOffset(len(m.rows())) != m.bottomOffset() {
 		t.Error("toggling pretty JSON unpinned a following pane")
 	}
-	if !strings.Contains(m.logHeaderView(), "pretty") {
-		t.Error("the header does not say pretty JSON is on")
+	if bar, _ := m.levelBar(m.width); !strings.Contains(bar, "[x] Pretty JSON") {
+		t.Errorf("the toolbar does not show pretty JSON on: %s", bar)
 	}
 }
 
@@ -58,8 +59,8 @@ func TestPauseFreezesThePaneWithinTheSameCap(t *testing.T) {
 	if got := m.visibleTexts(); len(got) != 2 {
 		t.Errorf("paused pane shows %v, want the two lines from before the pause", got)
 	}
-	if !strings.Contains(m.logHeaderView(), "PAUSED +1") {
-		t.Errorf("header does not count the held line: %s", m.logHeaderView())
+	if bar, _ := m.toolBar(200); !strings.Contains(bar, "paused +1") {
+		t.Errorf("the toolbar does not count the held line: %s", bar)
 	}
 	m, _ = send(t, m, key("p"))
 	if got := m.visibleTexts(); len(got) != 3 {
@@ -184,13 +185,16 @@ func TestDetailBlockRedactsTheHealthURL(t *testing.T) {
 	sts[0].Health = "http://admin:hunter2@localhost:7100/health"
 	sts[0].Detail = "probe http://admin:hunter2@localhost:7100/health refused"
 	m := booted(t, &fakeCtrl{statuses: sts})
+	m, _ = send(t, m, tea.WindowSizeMsg{Width: 160, Height: 40})
 	m, _ = send(t, m, key("i"))
 	view := m.View()
 	if strings.Contains(view, "hunter2") {
 		t.Errorf("the console showed a health-URL credential:\n%s", view)
 	}
-	if !strings.Contains(view, "health  http://") || !strings.Contains(view, "uptime") {
-		t.Errorf("the detail block is missing:\n%s", view)
+	for _, want := range []string{"HEALTH", "http://", "UPTIME", "▾ log file, command & arguments", "cmd "} {
+		if !strings.Contains(view, want) {
+			t.Errorf("the card does not show %q:\n%s", want, view)
+		}
 	}
 }
 

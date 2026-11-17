@@ -73,6 +73,8 @@ type logRow struct {
 	text  string
 	// sep marks a separator row between two entries.
 	sep bool
+	// lvl is the record's level, which colours every row of it.
+	lvl string
 }
 
 // matches reports whether r passes the text filter and the level filter.
@@ -118,7 +120,7 @@ func (m Model) rows() []logRow {
 			}
 		}
 		for i, l := range lines {
-			out = append(out, logRow{svc: r.svc, first: i == 0, text: l})
+			out = append(out, logRow{svc: r.svc, first: i == 0, text: l, lvl: r.lvl})
 		}
 	}
 	return out

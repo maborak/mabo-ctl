@@ -8,6 +8,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/maborak/mabo-ctl/internal/supervisor"
 	"github.com/maborak/mabo-ctl/internal/ui"
@@ -23,7 +24,6 @@ var errRenderer = &ui.Renderer{}
 // name; lipgloss resolves them against the terminal's colour profile, and
 // degrades to plain text when there is none — as in a test.
 var (
-	titleStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("15")).Background(lipgloss.Color("238"))
 	dimStyle      = lipgloss.NewStyle().Faint(true)
 	cursorStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("13"))
 	selectedStyle = lipgloss.NewStyle().Bold(true)
@@ -33,16 +33,12 @@ var (
 	helpKeyStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("14"))
 )
 
-// Rows the layout always reserves, whatever the terminal height: the title
-// bar, the log-pane header, the notice line and the key hints.
-const chromeRows = 4
-
 // View renders the whole console as one string.
 //
 // It is a pure function of the model: no clock is read, no file is opened and
 // nothing is measured against the real terminal, so a test can assert on a
-// frame at any size. Every line is truncated to the model's width, because a
-// wrapped line would push the key hints off the bottom of the screen.
+// frame at any size. Every line is exactly the model's width, because a
+// wrapped line would push the bottom of the layout off the screen.
 func (m Model) View() string {
 	if m.quit {
 		return ""
@@ -52,106 +48,80 @@ func (m Model) View() string {
 		return m.helpView()
 	case m.showEvents:
 		return m.eventsView()
-	case m.showConfig:
-		return m.configView()
 	}
 
-	lines := make([]string, 0, m.height)
-	lines = append(lines, m.titleView())
-	lines = append(lines, m.listView()...)
-	lines = append(lines, m.detailView()...)
-	lines = append(lines, m.logHeaderView())
-	lines = append(lines, m.logView()...)
-	lines = append(lines, m.noticeView())
-	lines = append(lines, m.hintsView())
-	// Below about six rows even the minimum layout does not fit. Cutting the
-	// frame is better than overflowing it: an overflowing frame scrolls the
-	// alternate screen and the title bar walks off the top.
-	if m.height > 0 && len(lines) > m.height {
-		lines = lines[:m.height]
+	f := m.frame()
+	var main []string
+	top, _ := m.topBar(f.top.w)
+	tabs, _ := m.tabBar(f.tabs.w)
+	main = append(main, top, tabs)
+	if !f.wide {
+		main = append(main, m.sideLines(f)...)
+	}
+	if m.showConfig {
+		main = append(main, m.configLines(f.body)...)
+	} else {
+		main = append(main, m.cardLines(f.card)...)
+		if f.tool.h > 0 {
+			l1, _ := m.toolBar(f.tool.w)
+			main = append(main, l1)
+		}
+		if f.tool.h > 1 {
+			l2, _ := m.levelBar(f.tool.w)
+			main = append(main, l2)
+		}
+		if f.sys.h > 0 {
+			main = append(main, m.systemLine(f.sys.w))
+		}
+		main = append(main, m.logLines(f.log)...)
+	}
+	if !f.wide {
+		main = append(main, fit(m.hintsView(), f.hints.w))
+		return strings.Join(clip(main, m.height), "\n")
+	}
+
+	side := m.sideLines(f)
+	rule := ruleStyle.Render("│")
+	lines := make([]string, m.height)
+	for y := range lines {
+		l, r := strings.Repeat(" ", f.side.w), strings.Repeat(" ", f.top.w)
+		if y < len(side) {
+			l = side[y]
+		}
+		if y < len(main) {
+			r = main[y]
+		}
+		lines[y] = l + rule + r
 	}
 	return strings.Join(lines, "\n")
 }
 
-// titleView is the top bar: the tool, the config root it is driving, and a
-// count of what is running. The root is there because a console started from
-// the wrong directory looks exactly like one started from the right one.
+// clip keeps at most n lines. Cutting the frame is better than overflowing
+// it: an overflowing frame scrolls the alternate screen and the top bar walks
+// off the top.
+func clip(lines []string, n int) []string {
+	if n > 0 && len(lines) > n {
+		return lines[:n]
+	}
+	return lines
+}
+
+// titleView is the top bar's text, for callers that want the console's
+// heading as one line.
 func (m Model) titleView() string {
-	root := m.root
-	if root == "" {
-		root = "(config root unknown)"
-	}
-	left := "mabo-ctl · " + root
-
-	ready := 0
-	for _, st := range m.statuses {
-		// "Up" counts processes that EXIST, degraded ones included: a service
-		// that is alive and not answering is still one mabo-ctl would have to
-		// stop, and moving it out of the count would make a stack look emptier
-		// than it is. The three states below the line are the ones with no
-		// process behind them at all.
-		switch st.Phase {
-		case supervisor.PhaseReady, supervisor.PhaseRunning,
-			supervisor.PhaseSlow, supervisor.PhaseDegraded:
-			ready++
-		case supervisor.PhaseStopped, supervisor.PhaseFailed, supervisor.PhaseExited:
-		}
-	}
-	right := fmt.Sprintf("%d/%d up", ready, len(m.statuses))
-	// An edited mabo-ctl.yaml is announced here rather than on the notice
-	// line: it stays true until the operator acts, and on the notice line it
-	// either hid every operation's progress or was hidden by it.
-	if m.configChanged && m.reload == nil {
-		right = "YAML changed · L reloads · " + right
-	}
-
-	// The root gives way first: the right-hand side is the part that changes.
-	left = truncate(left, max(1, m.width-utf8.RuneCountInString(right)-1))
-	gap := m.width - utf8.RuneCountInString(left) - utf8.RuneCountInString(right)
-	text := left + strings.Repeat(" ", max(gap, 1)) + right
-	return titleStyle.Render(truncate(text, m.width))
+	s, _ := m.topBar(m.width)
+	return s
 }
 
-// listHeight is how many service rows fit. The list keeps at least one row
-// even on a very short terminal, and never takes so much space that the log
-// pane disappears entirely. A list filter that is open or set takes one more
-// row for its own line.
-func (m Model) listHeight() int {
-	n := max(1, len(m.listIndices())) + m.listFilterRows()
-	avail := max(1, m.height-chromeRows-1)
-	return min(n, avail)
-}
-
-// listFilterRows is 1 when the list shows its filter line, else 0.
-func (m Model) listFilterRows() int {
-	if m.nameFiltering || m.nameFilter != "" || m.phaseFilter != "" {
-		return 1
-	}
-	return 0
-}
-
-// detailRows is the number of rows the detail block takes: detailLines when
-// it is open and the terminal is tall enough to keep a useful log pane.
-func (m Model) detailRows() int {
-	if !m.showDetail || m.selectedName() == "" || m.height-chromeRows-m.listHeight()-detailLines < 3 {
-		return 0
-	}
-	return detailLines
-}
-
-// detailLines is the fixed height of the detail block, so the log pane does
-// not jump as services with more or fewer facts are selected.
-const detailLines = 5
-
-// logHeight is how many log rows fit under the list and the detail block.
+// logHeight is how many log rows show.
 func (m Model) logHeight() int {
-	return max(1, m.height-chromeRows-m.listHeight()-m.detailRows())
+	return max(1, m.frame().log.h)
 }
 
 // listWindow is the first shown row of idx, scrolled so the selection stays
 // visible when the list is taller than the space for it.
 func (m Model) listWindow(idx []int, h int) int {
-	if len(idx) <= h {
+	if len(idx) <= h || h <= 0 {
 		return 0
 	}
 	at := 0
@@ -161,170 +131,6 @@ func (m Model) listWindow(idx []int, h int) int {
 		}
 	}
 	return min(max(at-h/2, 0), len(idx)-h)
-}
-
-// listView renders the service rows, padded to exactly listHeight lines so the
-// panes below never move as services appear and disappear.
-func (m Model) listView() []string {
-	h := m.listHeight()
-	if len(m.statuses) == 0 {
-		rows := make([]string, h)
-		rows[0] = dimStyle.Render(truncate("  no services configured", m.width))
-		for i := 1; i < h; i++ {
-			rows[i] = ""
-		}
-		return rows
-	}
-
-	wName, wPhase, wPort, wPID := 0, 0, 0, 0
-	for _, st := range m.statuses {
-		glyph, word := ui.PhaseLabel(st.Phase)
-		wName = max(wName, utf8.RuneCountInString(st.Name))
-		wPhase = max(wPhase, utf8.RuneCountInString(glyph)+1+utf8.RuneCountInString(word))
-		wPort = max(wPort, utf8.RuneCountInString(portCell(st)))
-		wPID = max(wPID, utf8.RuneCountInString(pidCell(st)))
-	}
-
-	rows := make([]string, 0, h)
-	if m.listFilterRows() > 0 {
-		rows = append(rows, m.listFilterLine())
-	}
-	idx := m.listIndices()
-	if len(idx) == 0 {
-		rows = append(rows, dimStyle.Render(truncate("  no service matches the list filter · f edits it, 0 clears the phase", m.width)))
-	}
-	room := h - len(rows)
-	start := m.listWindow(idx, room)
-	for j := start; j < len(idx) && len(rows) < h; j++ {
-		i := idx[j]
-		rows = append(rows, m.serviceRow(m.statuses[i], i == m.sel, wName, wPhase, wPort, wPID))
-	}
-	for len(rows) < h {
-		rows = append(rows, "")
-	}
-	return rows[:h]
-}
-
-// listFilterLine shows the list filters in force, or the name being typed.
-func (m Model) listFilterLine() string {
-	var parts []string
-	switch {
-	case m.nameFiltering:
-		parts = append(parts, "name: "+m.nameDraft+"█")
-	case m.nameFilter != "":
-		parts = append(parts, "name: "+m.nameFilter)
-	}
-	if m.phaseFilter != "" {
-		_, word := ui.PhaseLabel(m.phaseFilter)
-		parts = append(parts, "phase: "+word)
-	}
-	shown := len(m.listIndices())
-	parts = append(parts, fmt.Sprintf("%d of %d shown", shown, len(m.statuses)))
-	return filterStyle.Render(truncate("  "+strings.Join(parts, " · "), m.width))
-}
-
-// detailView is the selected service's detail block (i): what the web
-// console's detail pane shows, in detailLines rows. Everything comes from the
-// redacted status snapshot and the redacted configuration view.
-func (m Model) detailView() []string {
-	n := m.detailRows()
-	if n == 0 {
-		return nil
-	}
-	st := m.statuses[m.sel]
-	var cs ui.ConfigService
-	for _, s := range m.cfgView.Services {
-		if s.Name == st.Name {
-			cs = s
-		}
-	}
-	or := func(v, alt string) string {
-		if v == "" {
-			return alt
-		}
-		return v
-	}
-	facts := []string{
-		"pid " + or(strings.TrimPrefix(pidCell(st), "pid "), "-"),
-		"port " + portCell(st),
-		"uptime " + or(ui.ShortDuration(st.Uptime), "-"),
-		"ready in " + or(ui.ShortDuration(st.Elapsed), "-"),
-		"runtime " + or(cs.Runtime, "system"),
-	}
-	if st.PID > 0 && st.Usage.RSS > 0 {
-		facts = append(facts, "cpu "+ui.FormatCPU(st.Usage.CPU)+" · mem "+ui.FormatBytes(st.Usage.RSS))
-	}
-	health := or(st.Health, "no probe declared")
-	if st.HTTP != 0 {
-		health += fmt.Sprintf(" · HTTP %d", st.HTTP)
-	}
-	env := make([]string, 0, len(cs.Env))
-	for _, v := range cs.Env {
-		env = append(env, v.Key+"="+v.Value)
-	}
-	lines := []string{
-		strings.Join(facts, " · "),
-		"health  " + health,
-		"cmd     " + or(cs.CmdLine, "-"),
-		"dir     " + or(cs.Dir, "-") + " · log " + or(st.LogPath, "-"),
-		"deps    " + or(strings.Join(cs.DependsOn, ", "), "none") + " · env " + or(strings.Join(env, " "), "none"),
-	}
-	out := make([]string, 0, n)
-	for _, l := range lines[:n] {
-		out = append(out, dimStyle.Render(truncate("  "+sanitize(l), m.width)))
-	}
-	return out
-}
-
-// serviceRow renders one service: cursor, name in the service's colour, the
-// phase glyph AND word — colour is never the only signal — then port, pid and
-// whatever the supervisor had to say.
-func (m Model) serviceRow(st supervisor.Status, selected bool, wName, wPhase, wPort, wPID int) string {
-	glyph, word := ui.PhaseLabel(st.Phase)
-
-	cursor := "  "
-	if selected {
-		cursor = cursorStyle.Render("▸ ")
-	}
-
-	name := m.nameStyle(st.Name).Render(pad(st.Name, wName))
-	phase := phaseStyle(st.Phase).Render(pad(glyph+" "+word, wPhase))
-	port := pad(portCell(st), wPort)
-	pid := pad(pidCell(st), wPID)
-
-	head := cursor + name + "  " + phase + "  " + port + "  " + pid
-	used := lipgloss.Width(head)
-
-	detail := detailCell(st)
-	if kind, ok := m.pending[st.Name]; ok {
-		detail = strings.TrimSpace(string(kind) + "… " + detail)
-	}
-	if detail != "" {
-		if avail := m.width - used - 2; avail > 4 {
-			head += "  " + dimStyle.Render(truncate(detail, avail))
-		}
-	}
-	if selected {
-		return selectedStyle.Render(truncateStyled(head, m.width))
-	}
-	return truncateStyled(head, m.width)
-}
-
-// portCell is the port column: "-" for a portless service, never "0", which
-// reads as a real port number.
-func portCell(st supervisor.Status) string {
-	if st.Port <= 0 {
-		return "-"
-	}
-	return ":" + strconv.Itoa(st.Port)
-}
-
-// pidCell is the pid column, "-" when nothing is running.
-func pidCell(st supervisor.Status) string {
-	if st.PID <= 0 {
-		return "-"
-	}
-	return "pid " + strconv.Itoa(st.PID)
 }
 
 // detailCell is the one-line summary of a status. A multi-line Detail — the
@@ -341,8 +147,6 @@ func detailCell(st supervisor.Status) string {
 		return fmt.Sprintf("HTTP %d %s", st.HTTP, detail)
 	case detail != "":
 		return detail
-	case st.HTTP != 0:
-		return fmt.Sprintf("HTTP %d", st.HTTP)
 	case st.Phase == supervisor.PhaseSlow && st.Health != "":
 		return "waiting for " + st.Health
 	case st.Phase == supervisor.PhaseDegraded && st.Health != "":
@@ -352,150 +156,41 @@ func detailCell(st supervisor.Status) string {
 	}
 }
 
-// logHeaderView is the separator between the list and the log pane. It carries
-// the state a reader needs to trust what is below it: which service, whether
-// the pane is following the newest line, and which filter is hiding lines.
-func (m Model) logHeaderView() string {
-	svc := m.tailSvc
-	if svc == "" {
-		svc = m.selectedName()
-	}
-	label := "logs"
-	switch {
-	case m.all:
-		label = "logs: all services"
-	case svc != "":
-		label = "logs: " + svc
-	}
-
-	var flags []string
-	if m.focus == focusLog {
-		flags = append(flags, "focus")
-	}
-	switch {
-	case m.paused:
-		flags = append(flags, fmt.Sprintf("PAUSED +%d", m.pausedNew))
-	case m.follow:
-		flags = append(flags, "follow")
-	default:
-		n := len(m.rows())
-		flags = append(flags, fmt.Sprintf("line %d/%d", m.viewOffset(n)+1, max(n, 1)))
-	}
-	if m.levelFilter != "" {
-		flags = append(flags, "level "+m.levelFilter)
-	}
-	if m.pretty {
-		flags = append(flags, "pretty")
-	}
-	if m.separators {
-		flags = append(flags, "sep")
-	}
-
-	// The pieces are measured and clipped as plain text, then styled: styling
-	// first would mean measuring escape sequences, and a header one column too
-	// wide wraps and pushes the key hints off the bottom of the screen.
-	right := ""
-	switch {
-	case m.filtering:
-		right = "/" + m.filterDraft + "█"
-	case m.filter != "":
-		right = "filter: " + m.filter
-	}
-
-	left := "── " + label + " (" + strings.Join(flags, ", ") + ") "
-	if utf8.RuneCountInString(left) >= m.width {
-		return dimStyle.Render(truncate(left, m.width))
-	}
-	room := m.width - utf8.RuneCountInString(left)
-	right = truncate(right, room)
-	fill := room - utf8.RuneCountInString(right)
-	return dimStyle.Render(left+strings.Repeat("─", fill)) + filterStyle.Render(right)
-}
-
-// logView renders exactly logHeight lines of the selected service's log,
-// padding with blanks so the notice and hint lines stay where they were.
-func (m Model) logView() []string {
-	h := m.logHeight()
-	visible := m.rows()
-
-	out := make([]string, 0, h)
-	if len(visible) == 0 {
-		msg := "  (no output yet)"
-		if (m.filter != "" || m.levelFilter != "") && len(m.recs) > 0 {
-			msg = fmt.Sprintf("  (no line matches the filter; %d hidden)", len(m.recs))
-		}
-		out = append(out, dimStyle.Render(truncate(msg, m.width)))
-	}
-
-	labelW := 0
-	if m.all {
-		for _, st := range m.statuses {
-			labelW = max(labelW, utf8.RuneCountInString(st.Name))
-		}
-	}
-	start := m.viewOffset(len(visible))
-	for i := start; i < len(visible) && len(out) < h; i++ {
-		out = append(out, m.logRowView(visible[i], labelW))
-	}
-	for len(out) < h {
-		out = append(out, "")
-	}
-	return out[:h]
-}
-
-// logRowView draws one row: a separator rule, or the text — in merged mode
-// after the service label on an entry's first row and indented past it on
-// the rest, so a pretty-printed record reads as one block.
-func (m Model) logRowView(r logRow, labelW int) string {
+// logRowView draws one row: a separator rule, or the text coloured by its
+// level — in merged mode after the service label on an entry's first row and
+// indented past it on the rest, so a pretty-printed record reads as one
+// block.
+func (m Model) logRowView(r logRow, labelW, w int) string {
 	if r.sep {
-		return dimStyle.Render(strings.Repeat("┄", max(1, m.width)))
+		return dimStyle.Render(strings.Repeat("┄", max(1, w)))
 	}
 	text := sanitize(r.text)
-	if labelW == 0 {
-		return truncate(text, m.width)
+	paint := func(s string) string {
+		if st, ok := levelStyle(r.lvl); ok {
+			return st.Render(s)
+		}
+		return s
 	}
-	room := m.width - labelW - 3
+	if labelW == 0 {
+		return paint(truncate(text, w))
+	}
+	room := w - labelW - 3
 	if room < 4 {
-		return truncate(text, m.width)
+		return paint(truncate(text, w))
 	}
 	if !r.first {
-		return strings.Repeat(" ", labelW+3) + truncate(text, room)
+		return strings.Repeat(" ", labelW+3) + paint(truncate(text, room))
 	}
-	return m.nameStyle(r.svc).Render(pad(r.svc, labelW)) + dimStyle.Render(" · ") + truncate(text, room)
+	return m.nameStyle(r.svc).Render(pad(r.svc, labelW)) + dimStyle.Render(" · ") + paint(truncate(text, room))
 }
 
-// noticeView is the single line above the key hints: the reload question
-// while it is open, else the newest error — an operation's, then a reload's —
-// else the newest supervisor event. An error is never dropped silently — that
-// is the failure mode this whole tool exists to stop.
-func (m Model) noticeView() string {
-	if m.confirmReload {
-		return errorStyle.Render(truncate(
-			"Reload mabo-ctl.yaml? y reloads, any other key cancels · changed running services restart, removed ones stop",
-			m.width))
-	}
-	for _, err := range []error{m.err, m.reloadErr} {
-		if err == nil {
-			continue
-		}
-		text := errRenderer.Error(err)
-		if i := strings.IndexByte(text, '\n'); i >= 0 {
-			text = text[:i] + " …"
-		}
-		return errorStyle.Render(truncate(text, m.width))
-	}
-	if m.notice != "" {
-		return noticeStyle.Render(truncate(m.notice, m.width))
-	}
-	return dimStyle.Render(truncate("ready · ? for help", m.width))
-}
-
-// hints is the key legend, longest form first. The first one that fits the
-// terminal is used, so a narrow window loses hints rather than wrapping the
-// layout.
+// hints is the narrow layout's key legend, longest form first. The first one
+// that fits the terminal is used, so a narrow window loses hints rather than
+// wrapping the layout. The wide layout needs none: every control is drawn,
+// with its key.
 var hints = []string{
-	"↑/↓ select · s/x/r start/stop/restart · a/R/S all · m merge · p pause · / filter · v level · J json · i detail · C config · ? help · q quit",
-	"↑/↓ select · s/x/r start/stop/restart · a/R/S all · m merge · / filter · i detail · ? help · q quit",
+	"↑/↓ select · tab log · s/x/r · a/R/S all · m merge · p pause · / filter · v level · J json · i more · C config · ? help · q quit",
+	"↑/↓ select · s/x/r · a/R/S all · m merge · / filter · C config · ? help · q quit",
 	"↑/↓ · s/x/r · a/R/S · / filter · ? help · q quit",
 	"? help · q quit",
 }
@@ -503,7 +198,7 @@ var hints = []string{
 // hintsView renders the key legend that fits the current width.
 func (m Model) hintsView() string {
 	for _, h := range hints {
-		if utf8.RuneCountInString(h) <= m.width {
+		if ansi.StringWidth(h) <= m.width {
 			return dimStyle.Render(h)
 		}
 	}
@@ -524,9 +219,10 @@ var helpLines = []struct{ key, what string }{
 	{"p, c", "pause the pane (lines keep arriving within the same cap) · clear it"},
 	{"J, |", "pretty-print JSON lines (whitespace only) · separators between entries"},
 	{"g, G, pgup/dn", "top or bottom of the log (G resumes following) · page it"},
-	{"i", "the selected service's details: uptime, health, command, dir, deps, env"},
+	{"i", "open the card's log file, command & arguments: log, cmd, dir, deps, env"},
 	{"f, 1-7, 0", "filter the list by name · show one phase (again clears) · 0 clears it"},
-	{"e, C", "activity: recent operations and errors · the configuration and start order"},
+	{"e, C", "activity: recent operations and errors · the CONFIG tab (C or esc returns)"},
+	{"mouse", "click any row, tab, chip, button or toggle; the wheel scrolls · hold Shift (Option on macOS) to select text"},
 	{"?", "toggle this help"},
 	{"q, ctrl-c", "quit the console (during a reload: once it finishes; press again to quit now)"},
 }
@@ -564,18 +260,6 @@ func (m Model) eventsView() string {
 		body = append(body, "  "+e)
 	}
 	return m.overlayView(body, len(body), "any key returns · q quits")
-}
-
-// configView is the configuration overlay (C): the same view `mabo-ctl
-// config` prints, redacted, then the start order.
-func (m Model) configView() string {
-	r := &ui.Renderer{}
-	text := r.ConfigBlock(m.cfgView, "") + "\n\n" + r.ConfigGraph(m.cfgView)
-	if m.cfgView.Source.Path == "" {
-		text = "this console cannot describe its configuration"
-	}
-	return m.overlayView(strings.Split(text, "\n"), m.cfgOffset,
-		"↑/↓ pgup/pgdn scroll · L reloads · any other key returns · q quits")
 }
 
 // helpView renders the help overlay over the whole screen.
@@ -711,37 +395,21 @@ func parseColor(c string) (lipgloss.Color, bool) {
 
 // pad right-pads s to w columns.
 func pad(s string, w int) string {
-	if n := w - utf8.RuneCountInString(s); n > 0 {
+	if n := w - ansi.StringWidth(s); n > 0 {
 		return s + strings.Repeat(" ", n)
 	}
 	return s
 }
 
-// truncate shortens plain text to at most w columns, marking the cut with an
-// ellipsis. A w of 0 or less yields "".
+// truncate shortens s to at most w columns, marking the cut with an ellipsis.
+// Columns, not characters: an emoji or a CJK character takes two, and
+// counting it as one pushed every line it was on past the edge. A w of 0 or
+// less yields "".
 func truncate(s string, w int) string {
 	if w <= 0 {
 		return ""
 	}
-	if utf8.RuneCountInString(s) <= w {
-		return s
-	}
-	if w == 1 {
-		return "…"
-	}
-	return string([]rune(s)[:w-1]) + "…"
-}
-
-// truncateStyled shortens a string that may already carry style escapes. It
-// only ever cuts, never re-styles, so a row that fits is returned untouched.
-func truncateStyled(s string, w int) string {
-	if w <= 0 {
-		return ""
-	}
-	if lipgloss.Width(s) <= w {
-		return s
-	}
-	return lipgloss.NewStyle().MaxWidth(w).Render(s)
+	return ansi.Truncate(s, w, "…")
 }
 
 // sanitize makes a line from a supervised process safe to draw.

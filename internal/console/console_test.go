@@ -629,7 +629,7 @@ func TestViewShowsRootPhaseAndHints(t *testing.T) {
 	m := booted(t, f)
 	view := m.View()
 
-	for _, want := range []string{"/repo", "ready", "slow", "stopped", ":7100", "pid 101", "q quit"} {
+	for _, want := range []string{"/repo", "ready", "slow", "stopped", "7100", " 101 ", "q quit"} {
 		if !strings.Contains(view, want) {
 			t.Errorf("view does not contain %q:\n%s", want, view)
 		}
@@ -730,11 +730,19 @@ func TestWindowResizeGivesTheLogPaneTheRemainingHeight(t *testing.T) {
 	f := &fakeCtrl{}
 	m := booted(t, f)
 
-	for _, size := range []tea.WindowSizeMsg{{Width: 80, Height: 24}, {Width: 80, Height: 40}, {Width: 80, Height: 8}} {
+	// The log pane takes every row the frame does not give to something else,
+	// and the frame always fills the screen exactly.
+	for _, size := range []tea.WindowSizeMsg{
+		{Width: 80, Height: 24}, {Width: 80, Height: 40}, {Width: 80, Height: 8},
+		{Width: 160, Height: 45}, {Width: 120, Height: 14},
+	} {
 		mm, _ := send(t, m, size)
-		want := size.Height - chromeRows - mm.listHeight()
-		if got := mm.logHeight(); got != max(1, want) {
-			t.Errorf("at height %d: log pane is %d rows, want %d", size.Height, got, max(1, want))
+		f := mm.frame()
+		if got := f.log.y + f.log.h; got != size.Height-boolInt(!f.wide) {
+			t.Errorf("at %dx%d: log pane ends at row %d, want the bottom", size.Width, size.Height, got)
+		}
+		if lines := strings.Split(mm.View(), "\n"); len(lines) != size.Height {
+			t.Errorf("at %dx%d: the frame is %d lines, want %d", size.Width, size.Height, len(lines), size.Height)
 		}
 	}
 
