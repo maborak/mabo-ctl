@@ -1104,3 +1104,30 @@ group too (`GroupAlive`, `InGroup`).
 go test ./internal/supervisor -race -run 'TestStatusAndStartSeeTheSurvivorsOfADeadLeader|TestStatusAndStartRefuseAnUntiedLeaderlessGroup'
 go test ./cmd/mabo-ctl -race -run 'LiveGroupBehindAnExitedLeader'
 ```
+
+## 40. The terminal sanitiser cut emoji and accented text into U+FFFD
+
+**Shape.** `ui.Sanitize` strips C1 controls (U+0080–U+009F) from a child's
+output before it reaches a terminal. It did so byte by byte, removing every
+byte 0x80–0x9F. Those same bytes are UTF-8 continuation bytes: 🔵 is
+`F0 9F 94 B5`, € is `E2 82 AC`, 日 is `E6 97 A5`. The strip removed them from
+inside the character and left an invalid fragment, so emoji, €, —, … and most
+CJK text rendered as `�`. Meanwhile a C1 control in its UTF-8 form (`C2 9B`,
+which a UTF-8 terminal acts on) lost only its second byte, which neutralised
+it by accident and left `\xc2` junk.
+
+**Where it bit us.** `internal/ui/sanitize.go`, since 431b8a0 (2026-08-28).
+A user's TUI log pane showed `18:55:09 ���� INFO httpx | …` for a Python logger
+that prints an emoji level marker. The `logs` CLI and the MCP `logs` tool use
+the same function. The web console renders logs through its own path and was
+not affected.
+
+**Fix.** The strip decodes characters. ASCII is copied byte by byte. A whole
+character is copied unchanged unless it is U+0080–U+009F. A bare byte that is
+not part of any character is dropped only when it is 0x80–0x9F, the 8-bit C1
+form.
+
+**Detector.**
+```bash
+go test ./internal/ui -run 'TestSanitizeKeepsMultibyteText|TestSanitizeStripsEncodedC1|TestSanitizeStripsTheHostileChannels'
+```

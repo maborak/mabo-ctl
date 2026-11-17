@@ -1,6 +1,9 @@
 package ui
 
-import "strings"
+import (
+	"strings"
+	"unicode/utf8"
+)
 
 // Sanitize makes one line of supervised-child output safe to render on a
 // terminal. Everything mabo-ctl composes is redacted at the source, but a
@@ -14,8 +17,13 @@ import "strings"
 //   - DCS / APC / PM / SOS (`ESC P`, `ESC _`, `ESC ^`, `ESC X`) — payload
 //     channels with no legitimate dev-server use. An unterminated one is
 //     swallowed to end of line rather than leaking its tail.
-//   - Bare C1 controls (0x80–0x9F) — single-byte introducers some terminals
-//     treat as OSC/CSI, a parsing hazard with no printable use.
+//   - C1 controls, U+0080–U+009F — introducers some terminals treat as
+//     OSC/CSI, a parsing hazard with no printable use. Both forms go: the
+//     UTF-8 encoding (C2 80–C2 9F) a UTF-8 terminal acts on, and a bare byte
+//     0x80–0x9F that is not part of a valid character, which an 8-bit
+//     terminal acts on. The strip works on characters, never on bytes: 0x80–
+//     0x9F are also UTF-8 continuation bytes, and removing them from inside
+//     an emoji or a € destroyed the character (docs/LANDMINES.md §40).
 //   - Stray ESC bytes and non-CSI escape introducers (`ESC ( B` charsets and
 //     friends), so no half-sequence survives as junk.
 //
@@ -62,12 +70,23 @@ func Sanitize(s string) string {
 		case c == 0x1b:
 			// Any other two-byte escape.
 			i += 2
-		case c >= 0x80 && c < 0xa0:
-			// Bare C1 control.
-			i++
-		default:
+		case c < utf8.RuneSelf:
 			b.WriteByte(c)
 			i++
+		default:
+			r, size := utf8.DecodeRuneInString(s[i:])
+			switch {
+			case r == utf8.RuneError && size == 1 && c < 0xa0:
+				// A bare byte 0x80–0x9F, not part of any character: an 8-bit
+				// C1 control.
+			case r >= 0x80 && r < 0xa0:
+				// A C1 control encoded as UTF-8.
+			default:
+				// A whole character, or an invalid byte that is not a C1
+				// control, copied as it was.
+				b.WriteString(s[i : i+size])
+			}
+			i += size
 		}
 	}
 	return b.String()
@@ -88,7 +107,10 @@ func swallowString(i int, s string) int {
 	return len(s)
 }
 
-// hasC1 reports whether s contains any C1 control byte.
+// hasC1 reports whether s may contain a C1 control: any byte 0x80–0x9F. That
+// over-matches — the same bytes continue most multibyte characters — which
+// only sends such a line down the slow path, where characters are decoded
+// whole.
 func hasC1(s string) bool {
 	for i := 0; i < len(s); i++ {
 		if s[i] >= 0x80 && s[i] < 0xa0 {

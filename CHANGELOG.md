@@ -8,6 +8,14 @@ contract and service phase names are stable.
 
 ## [Unreleased]
 
+### Fixed
+
+- Emoji, `€`, `—`, `…` and most non-Latin text rendered as `�` in the TUI, in
+  `mabo-ctl logs` and in the MCP `logs` tool. The filter that strips terminal
+  control bytes removed bytes that are also part of multibyte characters. It
+  now works on whole characters, and still strips C1 controls in both their
+  UTF-8 and single-byte forms.
+
 ## [1.5.1] - 2026-11-16
 
 ### Fixed

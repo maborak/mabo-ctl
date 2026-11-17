@@ -56,3 +56,35 @@ func TestSanitizeKeepsOrdinaryText(t *testing.T) {
 		}
 	}
 }
+
+// TestSanitizeKeepsMultibyteText is the regression for docs/LANDMINES.md §40:
+// the C1 strip ran on bytes, and 0x80–0x9F are also UTF-8 continuation
+// bytes, so every emoji and many symbols lost bytes and rendered as U+FFFD.
+func TestSanitizeKeepsMultibyteText(t *testing.T) {
+	for _, in := range []string{
+		"18:55:09 \U0001F535 INFO  httpx | HTTP Request: GET /collections \"HTTP/1.1 200 OK\"",
+		"price 12 € · señal · 日本語 · — · …",
+		"\x1b[32m✅ ready\x1b[0m",            // colour and an emoji together (slow path)
+		"\x1b[1m\U0001F680 deployed\x1b[0m", // 🚀: F0 9F 9A 80
+	} {
+		if got := Sanitize(in); got != in {
+			t.Errorf("Sanitize(%q) = %q, want unchanged", in, got)
+		}
+	}
+}
+
+// TestSanitizeStripsEncodedC1: U+0080–U+009F encoded as UTF-8 (C2 80–C2 9F)
+// are the C1 controls a UTF-8 terminal acts on; they go, whole, and the text
+// around them stays.
+func TestSanitizeStripsEncodedC1(t *testing.T) {
+	for in, want := range map[string]string{
+		"\u009b31mnot-csi":      "31mnot-csi",
+		"a\u009d0;title\u009cb": "a0;titleb",
+		"\x9b31mraw":            "31mraw",
+		"é\x9bé":                "éé",
+	} {
+		if got := Sanitize(in); got != want {
+			t.Errorf("Sanitize(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
