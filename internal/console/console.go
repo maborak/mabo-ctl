@@ -191,7 +191,10 @@ func RunWith(ctrl Controller, opt Options) error {
 	}
 
 	m := New(ctrl, opt)
-	p := tea.NewProgram(m, tea.WithAltScreen())
+	// Cell-motion mouse reporting makes every drawn control clickable and the
+	// wheel scroll; terminals still select text with Shift (Option in
+	// macOS Terminal and iTerm2) held.
+	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
 
 	// Both defers run during a panic unwind as well as on a normal return.
 	// Kill cancels the program's context so the terminal is restored even if

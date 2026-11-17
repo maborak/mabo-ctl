@@ -8,6 +8,23 @@ contract and service phase names are stable.
 
 ## [Unreleased]
 
+### Changed
+
+- The interactive console is organised like htop:
+  - a header with the phase counts, and meters for the stack's CPU and memory;
+  - a full-width service table (state, port, pid, uptime, CPU%, memory, probe,
+    detail) with a selection bar, sortable by any column (F6 or a click on its
+    header);
+  - a pane for the selected service's OUTPUT or DETAIL, or the CONFIG, that
+    Tab gives the keyboard;
+  - a notice line, and htop's F1–F10 key bar. Every F-key also has a letter.
+
+  F9 or Enter opens an actions menu: start, stop and restart the service, the
+  all-services operations, and the reload. The mouse clicks rows, column
+  headers, pane names, key-bar labels and menu entries, and the wheel scrolls.
+  Text widths are measured in terminal columns, so emoji and CJK text no
+  longer push a row past the edge.
+
 ## [1.5.1] - 2026-11-16
 
 ### Fixed
